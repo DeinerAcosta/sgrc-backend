@@ -63,25 +63,23 @@ export async function crearAsignacion(data, userCtx) {
       }
     }
 
-    // ---- RN-16: condición de carrera ----
-    // Advisory lock a nivel de transacción serializado por (recurso + semana + día).
-    // A diferencia de SELECT FOR UPDATE, este lock funciona aunque NO existan
-    // filas previas — así dos coordinadores que intenten la PRIMERA asignación
-    // del mismo recurso el mismo día se serializan correctamente. Se libera
-    // automáticamente al COMMIT o ROLLBACK de la transacción.
-    await tx.$executeRawUnsafe(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      `asig:${data.recursoId}:${data.semanaId}:${data.diaSemana}`
-    )
-    if (data.auxiliarId) {
-      await tx.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock(hashtext($1))`,
-        `asig:${data.auxiliarId}:${data.semanaId}:${data.diaSemana}`
-      )
+    // ---- RN-16: condición de carrera (MySQL — lock de fila FOR UPDATE) ----
+    // Bloqueamos la fila del recurso (y del auxiliar si aplica) con FOR UPDATE.
+    // InnoDB serializa las transacciones concurrentes para el mismo recurso y
+    // LIBERA el lock recién en el COMMIT/ROLLBACK — así NO hay ventana entre la
+    // validación y el insert (el bug que tendría GET_LOCK, que se libera antes del
+    // commit). Funciona aunque no existan asignaciones previas, porque la fila del
+    // recurso siempre existe. Orden de ids consistente = sin deadlocks.
+    const lockIds = data.auxiliarId
+      ? [data.recursoId, data.auxiliarId].sort()
+      : [data.recursoId]
+    for (const id of lockIds) {
+      // $queryRawUnsafe (no $executeRawUnsafe) para que el SELECT ... FOR UPDATE
+      // se ejecute como consulta y tome el lock de fila en InnoDB.
+      await tx.$queryRawUnsafe(`SELECT id FROM recursos WHERE id = ? FOR UPDATE`, id)
     }
 
     // ---- VALIDACIÓN 2: recurso libre en franja ese día (RN-08) ----
-
     const conflictoRecurso = await tx.asignacion.findFirst({
       where: {
         semanaId: data.semanaId,
@@ -198,5 +196,8 @@ export async function crearAsignacion(data, userCtx) {
     })
 
     return { asignacion: nueva, fueSupervisor: userCtx.rol === 'supervisor' && semana.estado === 'cerrada' }
-  })
+  }, { isolationLevel: 'ReadCommitted' })
+  // READ COMMITTED: tras esperar el FOR UPDATE, la 2ª transacción ve el INSERT ya
+  // commiteado por la 1ª y detecta el conflicto. En REPEATABLE READ (default de
+  // MySQL) leería un snapshot viejo y dejaría pasar la asignación duplicada.
 }

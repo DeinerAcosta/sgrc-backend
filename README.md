@@ -5,7 +5,7 @@ API REST del Sistema de Gestión de Recursos Clínicos.
 ## Stack
 
 - **Node.js 20** + **Express 4** (ESM)
-- **PostgreSQL 15** + **Prisma 6**
+- **MySQL 8** + **Prisma 6**
 - **JWT** (8h) + **Refresh token** (7d) + **bcrypt**
 - **Zod** para validación de inputs
 - **Helmet** + **express-rate-limit** para seguridad
@@ -29,22 +29,22 @@ backend/
 
 ## Setup (primera vez)
 
-### 1. Instalar PostgreSQL 15+
+### 1. Instalar MySQL 8+
 
 **Opción A — Instalador oficial (recomendado en Windows):**
-1. Descargar de https://www.postgresql.org/download/windows/
-2. Ejecutar el instalador. Anotar la **contraseña del usuario `postgres`** que pongas.
-3. Puerto: dejar `5432`.
+1. Descargar de https://dev.mysql.com/downloads/installer/
+2. Ejecutar el instalador. Anotar la **contraseña del usuario `root`** que pongas.
+3. Puerto: dejar `3306`.
 
 **Opción B — Docker:**
 ```powershell
-docker run --name sgrc-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:15
+docker run --name sgrc-mysql -e MYSQL_ROOT_PASSWORD=Admin123 -p 3306:3306 -d mysql:8
 ```
 
 ### 2. Crear la base de datos
-Desde DBeaver (conexión PostgreSQL al `localhost:5432` con usuario `postgres`) o desde psql:
+Desde MySQL Workbench / DBeaver (conexión MySQL a `localhost:3306` con usuario `root`) o desde la consola `mysql`:
 ```sql
-CREATE DATABASE sgrc;
+CREATE DATABASE sgrc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
 ### 3. Instalar dependencias
@@ -54,9 +54,9 @@ npm install
 ```
 
 ### 4. Configurar variables de entorno
-Editar `backend/.env` y reemplazar `CAMBIAR_PASSWORD` por la contraseña real del usuario `postgres`:
+Editar `backend/.env` y reemplazar `TU_PASSWORD` por la contraseña real del usuario `root`:
 ```
-DATABASE_URL="postgresql://postgres:TU_PASSWORD@localhost:5432/sgrc?schema=public"
+DATABASE_URL="mysql://root:TU_PASSWORD@localhost:3306/sgrc"
 ```
 
 ### 5. Migrar y sembrar
@@ -95,7 +95,7 @@ Ver `src/routes/index.js`. Todos los endpoints requieren `Authorization: Bearer 
   4. Auxiliar libre (HTTP 409)
   5. ≤10h diarias (HTTP 400)
   6. >42h semanales → flag `es_horas_extras` (no bloquea)
-- **RN-16 condición de carrera**: `pg_advisory_xact_lock` (lock por recurso+semana+día) antes del INSERT, dentro de la transacción
+- **RN-16 condición de carrera**: `SELECT ... FOR UPDATE` sobre la fila del recurso + aislamiento `READ COMMITTED` (serializa sin ventana de carrera; InnoDB libera el lock al commit)
 - **RN-01 anticipación de 3 días** para crear semana
 - **RN-11 cálculo de capacidad** (FLOOR con almuerzo si jornada ≥ 6h)
 - **RN-17 eliminación con ejecución**: marca como cancelada en lugar de eliminar
@@ -108,11 +108,11 @@ Ver `src/routes/index.js`. Todos los endpoints requieren `Authorization: Bearer 
 
 ## Despliegue en producción (nube)
 
-El backend se despliega como un servicio Node independiente (Railway, Render, Fly.io o un VPS con Docker), con una base de datos **PostgreSQL gestionada**.
+El backend se despliega como un servicio Node independiente (Railway, Render, Fly.io o un VPS con Docker), con una base de datos **MySQL 8 gestionada**.
 
 ### 1. Variables de entorno (en el panel del proveedor, NO en un archivo)
 ```
-DATABASE_URL=postgresql://USER:PASS@HOST:5432/sgrc?schema=public&connection_limit=20&pool_timeout=20
+DATABASE_URL=mysql://USER:PASS@HOST:3306/sgrc?connection_limit=20&pool_timeout=20
 JWT_SECRET=<cadena aleatoria de 32+ caracteres>
 REFRESH_SECRET=<otra cadena aleatoria distinta>
 JWT_EXPIRES_IN=8h
@@ -148,10 +148,10 @@ docker run -p 3001:3001 --env-file .env sgrc-backend
 ## Notas de escalabilidad (100+ usuarios concurrentes)
 
 El stack aguanta 100 usuarios concurrentes sin colapsar. Para que sea sólido bajo carga:
-- **Pool de conexiones**: fija `connection_limit` en `DATABASE_URL` (arriba). Si crece mucho, añade **PgBouncer**.
+- **Pool de conexiones**: fija `connection_limit` en `DATABASE_URL` (arriba). Si crece mucho, añade **ProxySQL** delante de MySQL.
 - **Varias instancias**: Node usa 1 CPU por proceso → corre 2+ réplicas detrás del balanceador del proveedor (o PM2 en cluster en un VPS).
 - **Índices**: ya están definidos en `schema.prisma` para todas las tablas calientes.
-- **Informes**: el dashboard y el comparativo hacen varias consultas por request; si hay mucha concurrencia conviene cachearlos unos segundos (mejora futura, no bloqueante).
+- **Informes**: el dashboard y el comparativo ya están cacheados en memoria unos segundos (anti-stampede) para absorber picos de concurrencia.
 
 ## Funcionalidad ya implementada
 

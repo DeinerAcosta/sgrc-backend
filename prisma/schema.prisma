@@ -1,13 +1,14 @@
 // SGRC — Sistema de Gestión de Recursos Clínicos
 // Schema basado en Levantamiento §11 + Especificación §2.3
-// 15 tablas con UUIDs, ENUMs, JSONB para auditoría
+// 15 tablas con UUIDs, ENUMs y JSON para auditoría
+// Motor: MySQL 8 (alineado con el estándar de la clínica)
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
