@@ -3,6 +3,12 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { generarPDF, generarExcel } from '../services/exportService.js'
 import { errors } from '../lib/errors.js'
 import { getSemanaActual, getSemanaAnterior } from '../lib/semana.js'
+import { withCache, keyDeQuery } from '../lib/cache.js'
+
+// TTL de caché para lecturas analíticas. Suficientemente corto para que los datos
+// se sientan "en vivo" y suficientemente largo para absorber picos de concurrencia.
+const TTL_INFORME = 30_000
+const TTL_DASHBOARD = 20_000
 
 const hhmmAMinutos = (hhmm) => {
   const [h, m] = hhmm.split(':').map(Number)
@@ -325,12 +331,20 @@ const GENERADORES = {
 // ENDPOINTS GET (handlers delgados)
 // ============================================================
 
-export const ocupacion = async (req, res) => res.json(await dataOcupacion(req.query))
-export const productividad = async (req, res) => res.json(await dataProductividad(req.query))
-export const ausentismo = async (req, res) => res.json(await dataAusentismo(req.query))
-export const subutilizacion = async (req, res) => res.json(await dataSubutilizacion(req.query))
-export const impacto = async (req, res) => res.json(await dataImpacto(req.query))
-export const horasProgEjec = async (req, res) => res.json(await dataHorasProgEjec(req.query))
+// Cada informe se cachea por su combinación de filtros (sede/tipo/fechas) durante
+// TTL_INFORME. Si 100 usuarios abren el mismo informe, se calcula una sola vez.
+export const ocupacion = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:ocupacion', req.query), TTL_INFORME, () => dataOcupacion(req.query)))
+export const productividad = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:productividad', req.query), TTL_INFORME, () => dataProductividad(req.query)))
+export const ausentismo = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:ausentismo', req.query), TTL_INFORME, () => dataAusentismo(req.query)))
+export const subutilizacion = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:subutilizacion', req.query), TTL_INFORME, () => dataSubutilizacion(req.query)))
+export const impacto = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:impacto', req.query), TTL_INFORME, () => dataImpacto(req.query)))
+export const horasProgEjec = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:horas-prog-ejec', req.query), TTL_INFORME, () => dataHorasProgEjec(req.query)))
 
 /**
  * Resuelve la sede principal del recurso ausente mirando sus asignaciones
@@ -376,7 +390,7 @@ async function impactadosDeSemana(semana) {
  * GET /informes/dashboard — KPIs del dashboard ejecutivo (HU-D-01).
  * Shape alineado con DASH_DIRECTIVO del frontend. Datos reales de la BD.
  */
-export async function dashboard(req, res) {
+async function computeDashboard() {
   // "Semana actual" = la que contiene hoy. NO la futura recién creada (RN).
   const semanaActual = await getSemanaActual()
   const semanaAnterior = await getSemanaAnterior()
@@ -432,7 +446,7 @@ export async function dashboard(req, res) {
     }))
   )
 
-  res.json({
+  return {
     pacientes_programados: pacientesProgramados,
     delta_pacientes: deltaPacientes,
     impactados_ausencias: impactadosActual,
@@ -443,7 +457,12 @@ export async function dashboard(req, res) {
     sedes_ocupacion: sedesOcupacion,
     ausencias_activas: ausenciasTop,
     costo_total_ausentismo: costoTotalAusentismo,
-  })
+  }
+}
+
+/** GET /informes/dashboard — KPIs ejecutivos (HU-D-01). Cacheado TTL_DASHBOARD. */
+export async function dashboard(req, res) {
+  res.json(await withCache('dashboard', TTL_DASHBOARD, computeDashboard))
 }
 
 /**
@@ -505,8 +524,8 @@ async function metricasDeSemana(semana) {
  *
  * Query: ?semana_b=<uuid> (opcional — si no se pasa, usa la semana anterior)
  */
-export async function comparativo(req, res) {
-  const { semana_b: semanaBSpec } = req.query
+async function computeComparativo(query) {
+  const { semana_b: semanaBSpec } = query
 
   // Últimas 12 semanas (la más reciente primero) — solo las ya iniciadas.
   // Una semana futura no tiene historial real para comparar.
@@ -553,7 +572,7 @@ export async function comparativo(req, res) {
     })
   )
 
-  res.json({
+  return {
     semana_a: semanaA
       ? { label: fmtLabel(semanaA), ...(metA ?? { pacientes: 0, horas_ejec: 0, ocupacion: 0, ausencias: 0, costo_ausentismo: 0 }) }
       : null,
@@ -561,7 +580,18 @@ export async function comparativo(req, res) {
       ? { label: fmtLabel(semanaB), ...(metB ?? { pacientes: 0, horas_ejec: 0, ocupacion: 0, ausencias: 0, costo_ausentismo: 0 }) }
       : null,
     ultimas_12: ultimas12,
-  })
+  }
+}
+
+/** GET /informes/comparativo — HU-D-06. Cacheado TTL_INFORME por semana comparada. */
+export async function comparativo(req, res) {
+  res.json(
+    await withCache(
+      keyDeQuery('comparativo', { semana_b: req.query.semana_b }),
+      TTL_INFORME,
+      () => computeComparativo(req.query),
+    ),
+  )
 }
 
 /**

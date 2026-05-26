@@ -9,6 +9,8 @@ import routes from './routes/index.js'
 import { errorHandler } from './middleware/error.js'
 import { snakeBodyToCamel, camelResponseToSnake } from './middleware/caseConverter.js'
 import { iniciarJobs } from './jobs/index.js'
+import { prisma } from './lib/prisma.js'
+import { limpiarCacheExpirado } from './lib/cache.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -66,8 +68,42 @@ app.use(errorHandler)
 // 404
 app.use((req, res) => res.status(404).json({ message: 'Ruta no encontrada' }))
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 SGRC Backend escuchando en http://localhost:${PORT}/api`)
   console.log(`   Health check: http://localhost:${PORT}/health`)
   iniciarJobs()
 })
+
+// Limpieza periódica del caché en memoria para que no crezca indefinidamente.
+const limpiezaCache = setInterval(limpiarCacheExpirado, 60_000)
+limpiezaCache.unref?.() // no impedir que el proceso termine por este timer
+
+// ============ APAGADO ELEGANTE (graceful shutdown) ============
+// En la nube, al desplegar/escalar, el orquestador envía SIGTERM. Cerramos el
+// servidor (deja de aceptar conexiones nuevas y espera a las en curso) y luego
+// desconectamos Prisma. Evita cortar peticiones a medias y fugas de conexiones.
+let apagando = false
+async function apagar(signal) {
+  if (apagando) return
+  apagando = true
+  console.log(`\n${signal} recibido — cerrando servidor...`)
+  clearInterval(limpiezaCache)
+  server.close(async () => {
+    try {
+      await prisma.$disconnect()
+      console.log('Conexiones cerradas. Adiós.')
+      process.exit(0)
+    } catch (e) {
+      console.error('Error al desconectar Prisma:', e)
+      process.exit(1)
+    }
+  })
+  // Si algo se cuelga, forzar salida a los 10s
+  setTimeout(() => {
+    console.error('Cierre forzado tras timeout.')
+    process.exit(1)
+  }, 10_000).unref?.()
+}
+
+process.on('SIGTERM', () => apagar('SIGTERM'))
+process.on('SIGINT', () => apagar('SIGINT'))
