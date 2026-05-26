@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.*.local
+.git
+.gitignore
+.vscode
+.idea
+*.md
+prisma/migrations/*/migration_lock.toml
+prisma/dev.db
+.eslintcache
+coverage
+.nyc_output
+.diag-tmp.mjs

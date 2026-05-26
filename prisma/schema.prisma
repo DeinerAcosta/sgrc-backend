@@ -1,0 +1,445 @@
+// SGRC — Sistema de Gestión de Recursos Clínicos
+// Schema basado en Levantamiento §11 + Especificación §2.3
+// 15 tablas con UUIDs, ENUMs, JSONB para auditoría
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+enum Rol {
+  recurso
+  coordinador
+  directivo
+  supervisor
+}
+
+enum TipoRecurso {
+  oftalmologo
+  optometra
+  anestesiologo
+  auxiliar
+  tecnico
+}
+
+enum EsquemaPago {
+  por_paciente
+  fijo
+  mixto
+}
+
+enum Especialidad {
+  oftalmologia
+  optometria
+  anestesiologia
+  diagnostico
+}
+
+enum EstadoSemana {
+  abierta
+  cerrada
+}
+
+enum DiaSemana {
+  lunes
+  martes
+  miercoles
+  jueves
+  viernes
+  sabado
+  domingo
+}
+
+enum EstadoEjecucion {
+  completa
+  parcial
+  no_ejecutada
+}
+
+enum TipoAusencia {
+  enfermedad
+  calamidad
+  academico
+  familiar
+  vacaciones
+  no_presentacion
+  licencia_remunerada
+  licencia_no_remunerada
+  otra
+}
+
+enum EstadoAusencia {
+  pendiente
+  confirmada
+  rechazada
+}
+
+enum CanalNotificacion {
+  app
+  email
+  whatsapp
+}
+
+enum EstadoAsignacion {
+  activa
+  cancelada
+  sin_cobertura
+}
+
+// ============ USUARIOS ============
+model Usuario {
+  id           String    @id @default(uuid())
+  nombre       String    @db.VarChar(150)
+  email        String    @unique @db.VarChar(200)
+  celular      String?   @db.VarChar(20)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  rol          Rol
+  recursoId    String?   @unique @map("recurso_id")
+  activo       Boolean   @default(true)
+  ultimoLogin  DateTime? @map("ultimo_login")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  recurso        Recurso?        @relation(fields: [recursoId], references: [id])
+  sedes          UsuarioSede[]
+  notificaciones Notificacion[]
+  acciones       Auditoria[]
+  passwordResets PasswordReset[]
+
+  @@index([rol])
+  @@map("usuarios")
+}
+
+// ============ PASSWORD RESETS (HU-R-09) ============
+model PasswordReset {
+  id        String   @id @default(uuid())
+  usuarioId String   @map("usuario_id")
+  token     String   @unique @db.VarChar(128)
+  expiraEn  DateTime @map("expira_en")
+  usado     Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("password_resets")
+}
+
+// Relación N:N entre coordinadores y sedes
+model UsuarioSede {
+  usuarioId String @map("usuario_id")
+  sedeId    String @map("sede_id")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sede    Sede    @relation(fields: [sedeId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, sedeId])
+  @@map("usuarios_sedes")
+}
+
+// ============ SEDES ============
+model Sede {
+  id        String   @id @default(uuid())
+  nombre    String   @db.VarChar(150)
+  ciudad    String   @db.VarChar(100)
+  direccion String?  @db.Text
+  activa    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  consultorios           Consultorio[]
+  usuarios               UsuarioSede[]
+  asignacionesBackoffice AsignacionBackoffice[]
+
+  @@index([ciudad])
+  @@index([activa])
+  @@map("sedes")
+}
+
+// ============ CONSULTORIOS ============
+model Consultorio {
+  id               String       @id @default(uuid())
+  sedeId           String       @map("sede_id")
+  nombre           String       @db.VarChar(100)
+  especialidad     Especialidad
+  requiereAuxiliar Boolean      @map("requiere_auxiliar")
+  activo           Boolean      @default(true)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  sede         Sede         @relation(fields: [sedeId], references: [id])
+  asignaciones Asignacion[]
+
+  @@index([sedeId])
+  @@index([activo])
+  @@map("consultorios")
+}
+
+// ============ RECURSOS ============
+model Recurso {
+  id                 String      @id @default(uuid())
+  nombre             String      @db.VarChar(150)
+  tipo               TipoRecurso
+  especialidad       String?     @db.VarChar(100)
+  intervaloMinutos   Int?        @map("intervalo_minutos")
+  esquemaPago        EsquemaPago @map("esquema_pago")
+  horasMaxSemana     Int         @default(42) @map("horas_max_semana")
+  horasMaxDia        Int         @default(10) @map("horas_max_dia")
+  activo             Boolean     @default(true)
+  motivoInactivacion String?     @map("motivo_inactivacion") @db.Text
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  usuario                Usuario?
+  asignacionesPrincipal  Asignacion[]           @relation("RecursoPrincipal")
+  asignacionesAuxiliar   Asignacion[]           @relation("RecursoAuxiliar")
+  ausencias              Ausencia[]
+  asignacionesBackoffice AsignacionBackoffice[]
+
+  @@index([tipo])
+  @@index([activo])
+  @@map("recursos")
+}
+
+// ============ SEMANAS ============
+model Semana {
+  id          String       @id @default(uuid())
+  fechaInicio DateTime     @unique @map("fecha_inicio") @db.Date
+  fechaFin    DateTime     @map("fecha_fin") @db.Date
+  estado      EstadoSemana @default(abierta)
+  cerradaPor  String?      @map("cerrada_por")
+  cerradaEn   DateTime?    @map("cerrada_en")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  asignaciones Asignacion[]
+
+  @@index([estado])
+  @@map("semanas")
+}
+
+// ============ ASIGNACIONES (tabla central — RN-08, RN-09, RN-13, RN-16) ============
+model Asignacion {
+  id                  String           @id @default(uuid())
+  semanaId            String           @map("semana_id")
+  recursoId           String           @map("recurso_id")
+  auxiliarId          String?          @map("auxiliar_id")
+  consultorioId       String           @map("consultorio_id")
+  diaSemana           DiaSemana        @map("dia_semana")
+  horaInicio          String           @map("hora_inicio") @db.VarChar(5)
+  horaFin             String           @map("hora_fin") @db.VarChar(5)
+  pacientesCapacidad  Int              @map("pacientes_capacidad")
+  esHorasExtras       Boolean          @default(false) @map("es_horas_extras")
+  tieneHorasNocturnas Boolean          @default(false) @map("tiene_horas_nocturnas")
+  esReemplazo         Boolean          @default(false) @map("es_reemplazo")
+  ausenciaCubiertaId  String?          @map("ausencia_cubierta_id")
+  estado              EstadoAsignacion @default(activa)
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  semana           Semana      @relation(fields: [semanaId], references: [id])
+  recurso          Recurso     @relation("RecursoPrincipal", fields: [recursoId], references: [id])
+  auxiliar         Recurso?    @relation("RecursoAuxiliar", fields: [auxiliarId], references: [id])
+  consultorio      Consultorio @relation(fields: [consultorioId], references: [id])
+  ausenciaCubierta Ausencia?   @relation("AsignacionesReemplazo", fields: [ausenciaCubiertaId], references: [id])
+  ejecucion        Ejecucion?
+
+  // Índices críticos para validación de conflictos (Especificación §6.2)
+  @@index([recursoId, diaSemana, horaInicio])
+  @@index([auxiliarId, diaSemana, horaInicio])
+  @@index([consultorioId, diaSemana])
+  @@index([semanaId])
+  @@map("asignaciones")
+}
+
+// ============ EJECUCIÓN ============
+model Ejecucion {
+  id                 String          @id @default(uuid())
+  asignacionId       String          @unique @map("asignacion_id")
+  pacientesAtendidos Int             @map("pacientes_atendidos")
+  estadoJornada      EstadoEjecucion @default(completa) @map("estado_jornada")
+  observaciones      String?         @db.Text
+  registradoPor      String          @map("registrado_por")
+  registradoEn       DateTime        @default(now()) @map("registrado_en")
+  bloqueado          Boolean         @default(false)
+
+  asignacion Asignacion @relation(fields: [asignacionId], references: [id], onDelete: Cascade)
+
+  @@index([registradoEn])
+  @@map("ejecucion")
+}
+
+// ============ AUSENCIAS ============
+model Ausencia {
+  id                       String         @id @default(uuid())
+  recursoId                String         @map("recurso_id")
+  fechaInicio              DateTime       @map("fecha_inicio") @db.Date
+  fechaFin                 DateTime       @map("fecha_fin") @db.Date
+  esParcial                Boolean        @default(false) @map("es_parcial")
+  horaInicioAusencia       String?        @map("hora_inicio_ausencia") @db.VarChar(5)
+  horaFinAusencia          String?        @map("hora_fin_ausencia") @db.VarChar(5)
+  tipo                     TipoAusencia
+  motivo                   String?        @db.Text
+  archivoAdjunto           String?        @map("archivo_adjunto") @db.VarChar(500)
+  esProgramada             Boolean        @default(false) @map("es_programada")
+  anticipacionDias         Int            @default(0) @map("anticipacion_dias")
+  estado                   EstadoAusencia @default(pendiente)
+  pacientesImpactados      Int?           @map("pacientes_impactados")
+  costoOportunidad         Decimal?       @map("costo_oportunidad") @db.Decimal(12, 2)
+  costoPersonalInactivo    Decimal?       @map("costo_personal_inactivo") @db.Decimal(12, 2)
+  quejasRegistradas        Int?           @map("quejas_registradas")
+  accionTomada             String?        @map("accion_tomada") @db.Text
+  impactoPorDia            Json?          @map("impacto_por_dia")
+  motivoRechazo            String?        @map("motivo_rechazo") @db.Text
+  registradoPorCoordinador Boolean        @default(false) @map("registrado_por_coordinador")
+  reportadoPor             String         @map("reportado_por")
+  reportadoEn              DateTime       @default(now()) @map("reportado_en")
+  confirmadoPor            String?        @map("confirmado_por")
+  confirmadoEn             DateTime?      @map("confirmado_en")
+
+  recurso               Recurso                @relation(fields: [recursoId], references: [id])
+  asignacionesReemplazo Asignacion[]           @relation("AsignacionesReemplazo")
+  backofficeOrigen      AsignacionBackoffice[]
+
+  @@index([recursoId])
+  @@index([estado])
+  @@index([fechaInicio])
+  @@map("ausencias")
+}
+
+// ============ PARÁMETROS DE COSTO (versionados) ============
+model ParametroCosto {
+  id                  String       @id @default(uuid())
+  tipoConsulta        Especialidad @map("tipo_consulta")
+  costoCita           Decimal      @map("costo_cita") @db.Decimal(12, 2)
+  costoReprogramacion Decimal      @map("costo_reprogramacion") @db.Decimal(12, 2)
+  vigenteDesde        DateTime     @map("vigente_desde") @db.Date
+  configuradoPor      String       @map("configurado_por")
+  createdAt           DateTime     @default(now()) @map("created_at")
+
+  @@index([tipoConsulta, vigenteDesde])
+  @@map("parametros_costo")
+}
+
+// ============ PARÁMETROS DEL SISTEMA (metas, semáforo, base horas) ============
+model ParametroSistema {
+  clave     String   @id @db.VarChar(100)
+  valor     Json
+  motivo    String?  @db.Text
+  updatedBy String?  @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("parametros_sistema")
+}
+
+// ============ TAREAS BACKOFFICE ============
+model TareaBackoffice {
+  id                    String   @id @default(uuid())
+  nombre                String   @db.VarChar(150)
+  descripcion           String?  @db.Text
+  tiempoEstimadoMinutos Int      @map("tiempo_estimado_minutos")
+  activa                Boolean  @default(true)
+  creadaPor             String   @map("creada_por")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  asignaciones AsignacionBackoffice[]
+
+  @@index([activa])
+  @@map("tareas_backoffice")
+}
+
+// ============ ASIGNACIONES BACKOFFICE ============
+model AsignacionBackoffice {
+  id                String   @id @default(uuid())
+  auxiliarId        String   @map("auxiliar_id")
+  sedeId            String   @map("sede_id")
+  tareaBackofficeId String   @map("tarea_backoffice_id")
+  ausenciaOrigenId  String?  @map("ausencia_origen_id")
+  dia               DateTime @db.Date
+  horaInicio        String   @map("hora_inicio") @db.VarChar(5)
+  horaFin           String   @map("hora_fin") @db.VarChar(5)
+  asignadoPor       String   @map("asignado_por")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  auxiliar       Recurso               @relation(fields: [auxiliarId], references: [id])
+  sede           Sede                  @relation(fields: [sedeId], references: [id])
+  tarea          TareaBackoffice       @relation(fields: [tareaBackofficeId], references: [id])
+  ausenciaOrigen Ausencia?             @relation(fields: [ausenciaOrigenId], references: [id])
+  ejecuciones    EjecucionBackoffice[]
+
+  @@index([auxiliarId, dia])
+  @@map("asignaciones_backoffice")
+}
+
+// ============ EJECUCIÓN BACKOFFICE ============
+model EjecucionBackoffice {
+  id                     String   @id @default(uuid())
+  asignacionBackofficeId String   @map("asignacion_backoffice_id")
+  tareaId                String   @map("tarea_id")
+  unidadesCompletadas    Int      @map("unidades_completadas")
+  tiempoRealMinutos      Int      @map("tiempo_real_minutos")
+  observaciones          String?  @db.Text
+  registradoPor          String   @map("registrado_por")
+  registradoEn           DateTime @default(now()) @map("registrado_en")
+
+  asignacion AsignacionBackoffice @relation(fields: [asignacionBackofficeId], references: [id], onDelete: Cascade)
+
+  @@index([asignacionBackofficeId])
+  @@map("ejecucion_backoffice")
+}
+
+// ============ FESTIVOS ============
+model Festivo {
+  fecha       DateTime @id @db.Date
+  descripcion String   @db.VarChar(200)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("festivos")
+}
+
+// ============ NOTIFICACIONES ============
+model Notificacion {
+  id           String            @id @default(uuid())
+  usuarioId    String            @map("usuario_id")
+  tipo         String            @db.VarChar(50)
+  titulo       String            @db.VarChar(200)
+  mensaje      String            @db.Text
+  canal        CanalNotificacion
+  leida        Boolean           @default(false)
+  enviada      Boolean           @default(false)
+  referenciaId String?           @map("referencia_id")
+  creadaEn     DateTime          @default(now()) @map("creada_en")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, leida])
+  @@map("notificaciones")
+}
+
+// ============ AUDITORÍA ============
+model Auditoria {
+  id            String   @id @default(uuid())
+  usuarioId     String   @map("usuario_id")
+  accion        String   @db.VarChar(100)
+  entidad       String   @db.VarChar(50)
+  entidadId     String   @map("entidad_id")
+  valorAnterior Json?    @map("valor_anterior")
+  valorNuevo    Json?    @map("valor_nuevo")
+  motivo        String?  @db.Text
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  creadaEn      DateTime @default(now()) @map("creada_en")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([accion])
+  @@index([entidad, entidadId])
+  @@index([creadaEn])
+  @@map("auditoria")
+}
