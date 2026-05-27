@@ -10,7 +10,7 @@ import { errorHandler } from './middleware/error.js'
 import { snakeBodyToCamel, camelResponseToSnake } from './middleware/caseConverter.js'
 import { iniciarJobs } from './jobs/index.js'
 import { prisma } from './lib/prisma.js'
-import { limpiarCacheExpirado } from './lib/cache.js'
+import { limpiarCacheExpirado, invalidarCache } from './lib/cache.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -78,6 +78,19 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 // ============ CASE CONVERTERS (frontend snake_case ↔ backend camelCase) ============
 // Aplica solo a /api — health check y otros endpoints no se tocan
 app.use('/api', snakeBodyToCamel, camelResponseToSnake)
+
+// Invalidar el caché de informes tras cualquier mutación exitosa (POST/PUT/DELETE)
+// → los dashboards e informes reflejan los cambios al instante, sin esperar el TTL.
+// Las lecturas concurrentes siguen protegidas: el caché se reconstruye en la
+// siguiente petición.
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) invalidarCache()
+    })
+  }
+  next()
+})
 
 // ============ API ROUTES ============
 app.use('/api', routes)

@@ -119,6 +119,7 @@ r.get('/informes/subutilizacion', requireRol('coordinador', 'directivo', 'superv
 r.get('/informes/impacto', requireRol('directivo', 'supervisor'), wrap(inf.impacto))
 r.get('/informes/ausentismo-impacto', requireRol('directivo', 'supervisor'), wrap(inf.ausentismoImpacto))
 r.get('/informes/horas-prog-ejec', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.horasProgEjec))
+r.get('/informes/cierre-semanas', requireRol('directivo', 'supervisor'), wrap(inf.cierreSemanas))
 r.get('/informes/dashboard', requireRol('directivo', 'supervisor'), wrap(inf.dashboard))
 r.get('/informes/comparativo', requireRol('directivo', 'supervisor'), wrap(inf.comparativo))
 r.get('/informes/:tipo/export', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.exportar))

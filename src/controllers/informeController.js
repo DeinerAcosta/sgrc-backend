@@ -360,6 +360,38 @@ export async function dataHorasProgEjec({ sede_id, tipo_recurso } = {}) {
   return filas
 }
 
+/**
+ * Informe de cumplimiento de cierre de semanas (HU-D): quién cerró cada semana,
+ * cuándo, y si fue a tiempo. "A tiempo" = la semana se cerró en o antes de su
+ * fecha de inicio (la programación quedó lista antes de arrancar la semana).
+ */
+export async function dataCierreSemanas() {
+  const semanas = await prisma.semana.findMany({
+    where: { estado: 'cerrada' },
+    orderBy: { fechaInicio: 'desc' },
+    take: 24,
+  })
+  const ids = [...new Set(semanas.map((s) => s.cerradaPor).filter(Boolean))]
+  const usuarios = ids.length
+    ? await prisma.usuario.findMany({ where: { id: { in: ids } }, select: { id: true, nombre: true } })
+    : []
+  const nombre = new Map(usuarios.map((u) => [u.id, u.nombre]))
+
+  const DIA = 1000 * 60 * 60 * 24
+  return semanas.map((s) => {
+    const cierre = s.cerradaEn
+    const aTiempo = cierre ? cierre <= s.fechaInicio : false
+    const diasAntic = cierre ? Math.round((s.fechaInicio - cierre) / DIA) : null
+    return {
+      semana: `${s.fechaInicio.toISOString().slice(0, 10)} → ${s.fechaFin.toISOString().slice(0, 10)}`,
+      coordinador: nombre.get(s.cerradaPor) ?? '— sin registro —',
+      fecha_cierre: cierre ? cierre.toISOString().slice(0, 10) : '—',
+      dias_anticipacion: diasAntic ?? '—',
+      estado: !cierre ? 'Sin registro' : aTiempo ? 'A tiempo' : 'Tarde',
+    }
+  })
+}
+
 // Registro central — usado por exportar()
 const GENERADORES = {
   ocupacion: dataOcupacion,
@@ -369,6 +401,7 @@ const GENERADORES = {
   impacto: dataImpacto,
   'ausentismo-impacto': dataAusentismoImpacto,
   'horas-prog-ejec': dataHorasProgEjec,
+  'cierre-semanas': dataCierreSemanas,
 }
 
 // ============================================================
@@ -391,6 +424,8 @@ export const ausentismoImpacto = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:ausentismo-impacto', req.query), TTL_INFORME, () => dataAusentismoImpacto(req.query)))
 export const horasProgEjec = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:horas-prog-ejec', req.query), TTL_INFORME, () => dataHorasProgEjec(req.query)))
+export const cierreSemanas = async (req, res) =>
+  res.json(await withCache('inf:cierre-semanas', TTL_INFORME, dataCierreSemanas))
 
 /**
  * Resuelve la sede principal del recurso ausente mirando sus asignaciones
