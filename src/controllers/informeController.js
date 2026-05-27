@@ -272,6 +272,49 @@ export async function dataImpacto({ sede_id, tipo_recurso } = {}) {
   })
 }
 
+/**
+ * Informe FUSIONADO de ausentismo + impacto económico, agrupado por recurso.
+ * Une el ranking de ausencias (cuántas, días, pacientes afectados) con el
+ * impacto económico (costo de oportunidad + costo de personal inactivo = total).
+ * Ordenado por costo total descendente (los más costosos primero).
+ */
+export async function dataAusentismoImpacto({ desde, hasta, sede_id, tipo_recurso } = {}) {
+  const sedeIds = aLista(sede_id)
+  const tipos = aLista(tipo_recurso)
+
+  const where = { estado: 'confirmada' }
+  if (desde) where.fechaInicio = { gte: new Date(desde) }
+  if (hasta) where.fechaInicio = { ...(where.fechaInicio ?? {}), lte: new Date(hasta) }
+  if (tipos) where.recurso = { tipo: { in: tipos } }
+
+  const ausencias = await prisma.ausencia.findMany({ where, include: { recurso: true } })
+  const mapaSedes = await mapaSedesPorRecurso()
+
+  const porRecurso = new Map()
+  for (const a of ausencias) {
+    const info = mapaSedes.get(a.recursoId)
+    if (!recursoEnSedes(info, sedeIds)) continue
+    const k = a.recursoId
+    if (!porRecurso.has(k)) {
+      porRecurso.set(k, {
+        recurso: a.recurso.nombre, tipo: a.recurso.tipo, sede: nombreSedes(info),
+        ausencias: 0, dias: 0, pac_afectados: 0, costo_oportunidad: 0, costo_personal: 0, total: 0,
+      })
+    }
+    const r = porRecurso.get(k)
+    r.ausencias++
+    r.dias += Math.round((a.fechaFin - a.fechaInicio) / (1000 * 60 * 60 * 24)) + 1
+    r.pac_afectados += a.pacientesImpactados ?? 0
+    const oport = Number(a.costoOportunidad ?? 0)
+    const personal = Number(a.costoPersonalInactivo ?? 0)
+    r.costo_oportunidad += oport
+    r.costo_personal += personal
+    r.total += oport + personal
+  }
+
+  return Array.from(porRecurso.values()).sort((a, b) => b.total - a.total)
+}
+
 export async function dataHorasProgEjec({ sede_id, tipo_recurso } = {}) {
   const sedeIds = aLista(sede_id)
   const tipos = aLista(tipo_recurso)
@@ -324,6 +367,7 @@ const GENERADORES = {
   ausentismo: dataAusentismo,
   subutilizacion: dataSubutilizacion,
   impacto: dataImpacto,
+  'ausentismo-impacto': dataAusentismoImpacto,
   'horas-prog-ejec': dataHorasProgEjec,
 }
 
@@ -343,6 +387,8 @@ export const subutilizacion = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:subutilizacion', req.query), TTL_INFORME, () => dataSubutilizacion(req.query)))
 export const impacto = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:impacto', req.query), TTL_INFORME, () => dataImpacto(req.query)))
+export const ausentismoImpacto = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:ausentismo-impacto', req.query), TTL_INFORME, () => dataAusentismoImpacto(req.query)))
 export const horasProgEjec = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:horas-prog-ejec', req.query), TTL_INFORME, () => dataHorasProgEjec(req.query)))
 

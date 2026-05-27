@@ -117,6 +117,7 @@ r.get('/informes/productividad', requireRol('coordinador', 'directivo', 'supervi
 r.get('/informes/ausentismo', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.ausentismo))
 r.get('/informes/subutilizacion', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.subutilizacion))
 r.get('/informes/impacto', requireRol('directivo', 'supervisor'), wrap(inf.impacto))
+r.get('/informes/ausentismo-impacto', requireRol('directivo', 'supervisor'), wrap(inf.ausentismoImpacto))
 r.get('/informes/horas-prog-ejec', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.horasProgEjec))
 r.get('/informes/dashboard', requireRol('directivo', 'supervisor'), wrap(inf.dashboard))
 r.get('/informes/comparativo', requireRol('directivo', 'supervisor'), wrap(inf.comparativo))
