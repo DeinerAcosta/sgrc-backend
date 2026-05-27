@@ -50,9 +50,10 @@ export async function asignar(req, res) {
 }
 
 export async function listAsignaciones(req, res) {
-  const { auxiliar_id, dia } = req.query
+  const { auxiliar_id, sede_id, dia } = req.query
   const where = {}
   if (auxiliar_id) where.auxiliarId = auxiliar_id
+  if (sede_id) where.sedeId = sede_id
   if (dia) where.dia = new Date(dia)
   const list = await prisma.asignacionBackoffice.findMany({
     where,
