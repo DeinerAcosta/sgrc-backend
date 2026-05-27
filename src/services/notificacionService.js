@@ -89,6 +89,21 @@ export async function notificarCoordinadoresDeSede(sedeId, payload) {
 }
 
 /**
+ * Notifica a TODOS los supervisores activos del sistema.
+ * Usado cuando un coordinador solicita crear una nueva tarea de backoffice:
+ * el alta del catálogo es potestad del supervisor (HU-S-06), así que se le avisa.
+ */
+export async function notificarSupervisores(payload) {
+  const supervisores = await prisma.usuario.findMany({
+    where: { rol: 'supervisor', activo: true },
+  })
+  await Promise.allSettled(
+    supervisores.map((u) => notificar({ ...payload, usuarioId: u.id }))
+  )
+  return supervisores.length
+}
+
+/**
  * Notifica a todos los coordinadores de la ciudad de una sede (RN-05).
  */
 export async function notificarCoordinadoresDeCiudad(sedeId, payload) {
