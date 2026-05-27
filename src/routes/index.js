@@ -56,7 +56,7 @@ r.get('/recursos/sugeridos', requireRol('coordinador', 'supervisor'), wrap(asig.
 r.get('/auxiliares/liberadas', requireRol('coordinador', 'supervisor'), wrap(rec.liberadas))
 r.get('/recursos/:id/horario', wrap(rec.horario))
 r.get('/recursos/:id/ausencias', wrap(rec.ausenciasDelRecurso))
-r.get('/recursos/:id/productividad', wrap(rec.productividad))
+r.get('/recursos/:id/productividad', requireRol('directivo', 'supervisor'), wrap(rec.productividad))
 r.get('/recursos/:id', wrap(rec.getById))
 r.post('/recursos', requireRol('supervisor'), wrap(rec.create))
 r.put('/recursos/:id', requireRol('supervisor'), wrap(rec.update))

@@ -34,19 +34,39 @@ app.use(express.json({ limit: '2mb' }))
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'))
 
 // ============ RATE LIMITING ============
-// Login: 5 intentos por IP en 15 minutos (Especificación §6.1)
+// IMPORTANTE: limitamos por CUENTA/USUARIO, no por IP. En la clínica los ~100
+// usuarios salen por una misma IP pública (NAT corporativo); un límite por IP
+// los trataría como uno solo y los bloquearía a todos. Por eso la clave es el
+// email (login) o el token (resto), no la IP.
+
+// Login: solo cuenta intentos FALLIDOS por cuenta (un login correcto no consume
+// cuota → 100 personas entrando a la vez no se bloquean). Protege cada cuenta de
+// fuerza bruta de forma independiente.
 app.use('/api/auth/login', rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_LOGIN ?? 5),
-  message: { message: 'Demasiados intentos de login. Intenta en 15 minutos.' },
+  max: parseInt(process.env.RATE_LIMIT_LOGIN ?? 10),
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : null
+    return email ? `login:${email}` : `ip:${req.ip}`
+  },
+  validate: false,
+  message: { message: 'Demasiados intentos fallidos para esta cuenta. Intenta en 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
 }))
 
-// Global: 100 req/min por IP
+// Global: por usuario autenticado (token) — cada uno tiene su propia cuota,
+// independiente de cuántos compartan la IP. Sin token (login/health) cae a IP.
 app.use('/api', rateLimit({
   windowMs: 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_GLOBAL ?? 100),
+  max: parseInt(process.env.RATE_LIMIT_GLOBAL ?? 600),
+  keyGenerator: (req) => {
+    const auth = req.headers.authorization
+    if (auth && auth.startsWith('Bearer ')) return `tok:${auth.slice(-32)}`
+    return `ip:${req.ip}`
+  },
+  validate: false,
   message: { message: 'Demasiadas peticiones. Espera un momento.' },
   standardHeaders: true,
   legacyHeaders: false,
