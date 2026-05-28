@@ -70,6 +70,7 @@ r.put('/recursos/:id', requireRol('supervisor'), wrap(rec.update))
 // ============ USUARIOS (admin) ============
 r.get('/usuarios', requireRol('supervisor'), wrap(usr.list))
 r.post('/usuarios', requireRol('supervisor'), wrap(usr.create))
+r.post('/usuarios/bulk', requireRol('supervisor'), wrap(usr.bulkCreate))
 r.put('/usuarios/:id', requireRol('supervisor'), wrap(usr.update))
 // Solicitudes de registro (autorregistro pendiente de aprobación)
 r.get('/usuarios/solicitudes', requireRol('supervisor'), wrap(solReg.list))
