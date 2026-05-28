@@ -94,17 +94,18 @@ enum EstadoAsignacion {
 
 // ============ USUARIOS ============
 model Usuario {
-  id           String    @id @default(uuid())
-  nombre       String    @db.VarChar(150)
-  email        String    @unique @db.VarChar(200)
-  celular      String?   @db.VarChar(20)
-  passwordHash String    @map("password_hash") @db.VarChar(255)
-  rol          Rol
-  recursoId    String?   @unique @map("recurso_id")
-  activo       Boolean   @default(true)
-  ultimoLogin  DateTime? @map("ultimo_login")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id                  String    @id @default(uuid())
+  nombre              String    @db.VarChar(150)
+  email               String    @unique @db.VarChar(200)
+  celular             String?   @db.VarChar(20)
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  rol                 Rol
+  recursoId           String?   @unique @map("recurso_id")
+  activo              Boolean   @default(true)
+  debeCambiarPassword Boolean   @default(false) @map("debe_cambiar_password")
+  ultimoLogin         DateTime? @map("ultimo_login")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   recurso        Recurso?        @relation(fields: [recursoId], references: [id])
   sedes          UsuarioSede[]
@@ -129,6 +130,37 @@ model PasswordReset {
 
   @@index([token])
   @@map("password_resets")
+}
+
+// ============ SOLICITUDES DE REGISTRO ============
+// El empleado se autorregistra (form público) y el supervisor aprueba/rechaza.
+// Al aprobar se crea el Usuario (y Recurso si aplica) con contraseña provisional
+// que llega por email y se obliga a cambiar al primer ingreso.
+model SolicitudRegistro {
+  id               String   @id @default(uuid())
+  nombre           String   @db.VarChar(150)
+  email            String   @db.VarChar(200)
+  celular          String?  @db.VarChar(20)
+  rol              String   @db.VarChar(20) // recurso, coordinador, directivo
+  // Datos opcionales del Recurso (si rol = recurso)
+  tipoRecurso      String?  @map("tipo_recurso") @db.VarChar(30)
+  especialidad     String?  @db.VarChar(100)
+  horasMaxSemana   Int?     @map("horas_max_semana")
+  horasMaxDia      Int?     @map("horas_max_dia")
+  esquemaPago      String?  @map("esquema_pago") @db.VarChar(20)
+  intervaloMinutos Int?     @map("intervalo_minutos")
+  // Sedes que solicita (UUIDs de sedes, JSON array)
+  sedesSolicitadas Json?    @map("sedes_solicitadas")
+  estado           String   @default("pendiente") @db.VarChar(20) // pendiente, aprobada, rechazada
+  motivoRechazo    String?  @map("motivo_rechazo") @db.Text
+  procesadoPor     String?  @map("procesado_por")
+  procesadoEn      DateTime? @map("procesado_en")
+  usuarioCreadoId  String?  @map("usuario_creado_id") // referencia al Usuario creado al aprobar
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([estado])
+  @@index([email])
+  @@map("solicitudes_registro")
 }
 
 // Relación N:N entre coordinadores y sedes

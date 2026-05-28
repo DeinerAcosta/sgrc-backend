@@ -7,6 +7,8 @@ import * as sede from '../controllers/sedeController.js'
 import * as cons from '../controllers/consultorioController.js'
 import * as rec from '../controllers/recursoController.js'
 import * as usr from '../controllers/usuarioController.js'
+import * as solReg from '../controllers/solicitudRegistroController.js'
+import * as horarioDiario from '../controllers/horarioDiarioController.js'
 import * as param from '../controllers/parametroController.js'
 import * as tareasBo from '../controllers/tareaBackofficeController.js'
 import * as fest from '../controllers/festivoController.js'
@@ -28,9 +30,12 @@ r.post('/auth/login', wrap(auth.login))
 r.post('/auth/refresh', wrap(auth.refresh))
 r.post('/auth/forgot-password', wrap(auth.forgotPassword))
 r.post('/auth/reset-password', wrap(auth.resetPassword))
+r.post('/auth/registro', wrap(auth.registro))   // Registro público (queda pendiente de aprobación)
 
 // A partir de aquí — todo requiere autenticación
 r.use(requireAuth)
+
+r.post('/auth/cambiar-password', wrap(auth.cambiarPassword))
 
 // Perfil propio
 r.get('/usuarios/me', wrap(auth.me))
@@ -65,6 +70,10 @@ r.put('/recursos/:id', requireRol('supervisor'), wrap(rec.update))
 r.get('/usuarios', requireRol('supervisor'), wrap(usr.list))
 r.post('/usuarios', requireRol('supervisor'), wrap(usr.create))
 r.put('/usuarios/:id', requireRol('supervisor'), wrap(usr.update))
+// Solicitudes de registro (autorregistro pendiente de aprobación)
+r.get('/usuarios/solicitudes', requireRol('supervisor'), wrap(solReg.list))
+r.post('/usuarios/solicitudes/:id/aprobar', requireRol('supervisor'), wrap(solReg.aprobar))
+r.post('/usuarios/solicitudes/:id/rechazar', requireRol('supervisor'), wrap(solReg.rechazar))
 
 // ============ PARÁMETROS ============
 r.get('/parametros-costo', wrap(param.listCosto))
@@ -129,6 +138,8 @@ r.get('/informes/:tipo/export', requireRol('coordinador', 'directivo', 'supervis
 r.get('/notificaciones', wrap(notif.list))
 r.put('/notificaciones/:id/leer', wrap(notif.leer))
 r.put('/notificaciones/leer-todas', wrap(notif.leerTodas))
+
+r.get('/horario-diario', wrap(horarioDiario.get))
 
 // ============ AUDITORÍA ============
 r.get('/auditoria', requireRol('supervisor'), wrap(audit.list))

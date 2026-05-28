@@ -1,10 +1,12 @@
 import bcrypt from 'bcrypt'
 import crypto from 'crypto'
+import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jwt.js'
 import { errors } from '../lib/errors.js'
 import { loginSchema, refreshSchema, forgotPasswordSchema, resetPasswordSchema } from '../schemas/auth.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
+import { notificarSupervisores } from '../services/notificacionService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 
 /**
@@ -53,6 +55,7 @@ export async function login(req, res) {
       especialidad: usuario.recurso?.especialidad,
       esquema_pago: usuario.recurso?.esquemaPago,
       horas_max_semana: usuario.recurso?.horasMaxSemana,
+      debe_cambiar_password: usuario.debeCambiarPassword,
       sedes,
       sedes_nombres: sedesNombres,
     },
@@ -182,7 +185,109 @@ export async function me(req, res) {
     especialidad: usuario.recurso?.especialidad,
     esquema_pago: usuario.recurso?.esquemaPago,
     horas_max_semana: usuario.recurso?.horasMaxSemana,
+    debe_cambiar_password: usuario.debeCambiarPassword,
     sedes: usuario.sedes.map((s) => s.sede.id),
     sedes_nombres: usuario.sedes.map((s) => s.sede.nombre),
   })
+}
+
+// ============ REGISTRO PÚBLICO + CAMBIO DE CONTRASEÑA ============
+
+const registroSchema = z.object({
+  nombre: z.string().min(3).max(150),
+  email: z.string().email().max(200),
+  celular: z.string().max(20).optional().nullable(),
+  rol: z.enum(['recurso', 'coordinador', 'directivo']),
+  // Datos opcionales si es recurso (los validamos en el servicio cuando aprueben)
+  tipoRecurso: z.enum(['oftalmologo','optometra','anestesiologo','auxiliar','tecnico']).optional().nullable(),
+  especialidad: z.string().max(100).optional().nullable(),
+  horasMaxSemana: z.number().int().min(1).max(60).optional().nullable(),
+  horasMaxDia: z.number().int().min(1).max(24).optional().nullable(),
+  esquemaPago: z.enum(['por_paciente','fijo','mixto']).optional().nullable(),
+  intervaloMinutos: z.number().int().min(5).max(60).optional().nullable(),
+  sedesSolicitadas: z.array(z.string().uuid()).optional().nullable(),
+})
+
+/**
+ * POST /auth/registro (PÚBLICO) — el empleado se autorregistra; queda en
+ * estado 'pendiente' hasta que el supervisor lo apruebe. No crea el Usuario
+ * todavía, solo una SolicitudRegistro. Notifica a los supervisores.
+ */
+export async function registro(req, res) {
+  const data = registroSchema.parse(req.body)
+  const email = data.email.toLowerCase()
+
+  // Evitar registros duplicados (email ya en uso o solicitud pendiente)
+  const usuarioYaExiste = await prisma.usuario.findUnique({ where: { email } })
+  if (usuarioYaExiste) {
+    return res.status(202).json({ message: 'Si los datos son válidos, recibirás una respuesta por email.' })
+  }
+  const yaPendiente = await prisma.solicitudRegistro.findFirst({
+    where: { email, estado: 'pendiente' },
+  })
+  if (yaPendiente) {
+    return res.status(202).json({ message: 'Ya tienes una solicitud pendiente. El supervisor la revisará.' })
+  }
+
+  const sol = await prisma.solicitudRegistro.create({
+    data: {
+      nombre: data.nombre,
+      email,
+      celular: data.celular,
+      rol: data.rol,
+      tipoRecurso: data.tipoRecurso,
+      especialidad: data.especialidad,
+      horasMaxSemana: data.horasMaxSemana,
+      horasMaxDia: data.horasMaxDia,
+      esquemaPago: data.esquemaPago,
+      intervaloMinutos: data.intervaloMinutos,
+      sedesSolicitadas: data.sedesSolicitadas ?? [],
+    },
+  })
+
+  // Avisar al supervisor (app + email) para que la revise
+  await notificarSupervisores({
+    tipo: 'solicitud_registro',
+    titulo: 'Nueva solicitud de registro',
+    mensaje: `${data.nombre} (${data.email}) solicita registrarse como ${data.rol}. Revísala en Usuarios → Solicitudes pendientes.`,
+    criticidad: 'media',
+    referenciaId: sol.id,
+  })
+
+  res.status(201).json({ ok: true, id: sol.id, message: 'Solicitud enviada. Recibirás un email cuando el supervisor la apruebe.' })
+}
+
+const cambiarPasswordSchema = z.object({
+  passwordActual: z.string().min(1),
+  passwordNueva: z.string().min(8).max(80),
+})
+
+/**
+ * POST /auth/cambiar-password (autenticado) — usado por el flujo de "cambio
+ * obligatorio al primer ingreso" (debeCambiarPassword=true). También sirve
+ * para cambios voluntarios.
+ */
+export async function cambiarPassword(req, res) {
+  const { passwordActual, passwordNueva } = cambiarPasswordSchema.parse(req.body)
+  const usuario = await prisma.usuario.findUnique({ where: { id: req.user.id } })
+  if (!usuario) throw errors.notFound()
+
+  const ok = await bcrypt.compare(passwordActual, usuario.passwordHash)
+  if (!ok) throw errors.badRequest('La contraseña actual no coincide')
+
+  const nueva = await bcrypt.hash(passwordNueva, 12)
+  await prisma.usuario.update({
+    where: { id: usuario.id },
+    data: { passwordHash: nueva, debeCambiarPassword: false },
+  })
+
+  await registrarAuditoria({
+    usuarioId: usuario.id,
+    accion: 'cambiar_password',
+    entidad: 'usuarios',
+    entidadId: usuario.id,
+    ipAddress: getIp(req),
+  })
+
+  res.json({ ok: true, message: 'Contraseña actualizada correctamente.' })
 }
