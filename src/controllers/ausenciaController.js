@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { differenceInDays, parseISO, format } from 'date-fns'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
-import { notificar, notificarCoordinadoresDeSede } from '../services/notificacionService.js'
+import { notificar, notificarCoordinadoresDeSede, notificarSupervisores } from '../services/notificacionService.js'
 import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/ausenciaService.js'
 
 const TIPOS = ['enfermedad', 'calamidad', 'academico', 'familiar', 'vacaciones', 'no_presentacion', 'licencia_remunerada', 'licencia_no_remunerada', 'otra']
@@ -77,8 +77,11 @@ export async function create(req, res) {
     })
   }
 
-  // Levantamiento §9: notificar a los coordinadores de las sedes donde el
-  // recurso tiene asignaciones — App + Email + WhatsApp (criticidad alta).
+  // Levantamiento §9: al registrar una ausencia notificamos por App + Email
+  // (y WhatsApp para los coordinadores, criticidad alta) a TRES destinatarios:
+  //   1) Al recurso mismo: confirmación de que su ausencia quedó registrada.
+  //   2) A los coordinadores de las sedes donde tiene asignaciones.
+  //   3) A los supervisores activos (para visibilidad de gestión).
   const asigsRecurso = await prisma.asignacion.findMany({
     where: {
       OR: [{ recursoId: data.recursoId }, { auxiliarId: data.recursoId }],
@@ -88,6 +91,23 @@ export async function create(req, res) {
   })
   const sedeIds = [...new Set(asigsRecurso.map((a) => a.consultorio.sedeId))]
   const fechaTxt = format(fechaInicio, 'd MMM yyyy')
+
+  // 1) Al recurso (si está vinculado a un usuario)
+  const usuarioRecurso = await prisma.usuario.findUnique({
+    where: { recursoId: data.recursoId },
+  })
+  if (usuarioRecurso) {
+    await notificar({
+      usuarioId: usuarioRecurso.id,
+      tipo: 'ausencia_reportada',
+      titulo: 'Se registró tu ausencia',
+      mensaje: `Quedó registrada una ausencia (${data.tipo}) para el ${fechaTxt}. Te avisaremos por correo cuando el coordinador la confirme.`,
+      criticidad: 'media',
+      referenciaId: ausencia.id,
+    })
+  }
+
+  // 2) Coordinadores de cada sede afectada (crit. alta → app + email + whatsapp)
   for (const sedeId of sedeIds) {
     await notificarCoordinadoresDeSede(sedeId, {
       tipo: 'ausencia_reportada',
@@ -97,6 +117,15 @@ export async function create(req, res) {
       referenciaId: ausencia.id,
     })
   }
+
+  // 3) Supervisores activos (crit. media → app + email)
+  await notificarSupervisores({
+    tipo: 'ausencia_reportada',
+    titulo: `Ausencia registrada — ${ausencia.recurso.nombre}`,
+    mensaje: `Se registró una ausencia (${data.tipo}) para ${ausencia.recurso.nombre} el ${fechaTxt}. Está en revisión por el coordinador.`,
+    criticidad: 'media',
+    referenciaId: ausencia.id,
+  })
 
   res.status(201).json(ausencia)
 }
