@@ -84,6 +84,8 @@ r.put('/parametros-sistema', requireRol('supervisor'), wrap(param.updateSistema)
 // ============ TAREAS BACKOFFICE ============
 r.get('/tareas-backoffice', wrap(tareasBo.list))
 r.post('/tareas-backoffice/solicitar', requireRol('coordinador', 'supervisor'), wrap(tareasBo.solicitar))
+r.post('/tareas-backoffice/:id/aprobar', requireRol('supervisor'), wrap(tareasBo.aprobarSolicitud))
+r.post('/tareas-backoffice/:id/rechazar', requireRol('supervisor'), wrap(tareasBo.rechazarSolicitud))
 r.post('/tareas-backoffice', requireRol('supervisor'), wrap(tareasBo.create))
 r.put('/tareas-backoffice/:id', requireRol('supervisor'), wrap(tareasBo.update))
 

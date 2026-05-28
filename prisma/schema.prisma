@@ -382,12 +382,21 @@ model TareaBackoffice {
   tiempoEstimadoMinutos Int      @map("tiempo_estimado_minutos")
   activa                Boolean  @default(true)
   creadaPor             String   @map("creada_por")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  // Flujo de aprobación cuando un coordinador la solicita:
+  //   aprobada (default, supervisor la creó) | pendiente (pidió un coord, falta supervisor) | rechazada
+  estado                String    @default("aprobada") @db.VarChar(20)
+  solicitadaPor         String?   @map("solicitada_por")
+  justificacion         String?   @db.Text
+  motivoRechazo         String?   @map("motivo_rechazo") @db.Text
+  procesadaPor          String?   @map("procesada_por")
+  procesadaEn           DateTime? @map("procesada_en")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
   asignaciones AsignacionBackoffice[]
 
   @@index([activa])
+  @@index([estado])
   @@map("tareas_backoffice")
 }
 
