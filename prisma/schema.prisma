@@ -104,6 +104,9 @@ model Usuario {
   activo              Boolean   @default(true)
   debeCambiarPassword Boolean   @default(false) @map("debe_cambiar_password")
   ultimoLogin         DateTime? @map("ultimo_login")
+  // Heartbeat de presencia (long-polling): se actualiza cada 30s desde el cliente
+  // mientras hay sesión activa. Si está dentro de los últimos 60s se considera "en línea".
+  ultimaActividad     DateTime? @map("ultima_actividad")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 

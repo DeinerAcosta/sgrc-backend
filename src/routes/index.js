@@ -39,6 +39,7 @@ r.post('/auth/cambiar-password', wrap(auth.cambiarPassword))
 
 // Perfil propio
 r.get('/usuarios/me', wrap(auth.me))
+r.put('/usuarios/me/heartbeat', wrap(usr.heartbeat))
 r.put('/usuarios/me', wrap(usr.updateMe))
 
 // ============ SEDES ============

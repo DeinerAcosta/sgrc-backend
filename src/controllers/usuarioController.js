@@ -38,8 +38,23 @@ const SELECT_PUBLIC = {
   recursoId: true,
   activo: true,
   ultimoLogin: true,
+  ultimaActividad: true,
   createdAt: true,
   sedes: { select: { sedeId: true } },
+}
+
+/**
+ * PUT /usuarios/me/heartbeat — el cliente lo llama cada ~30s mientras hay
+ * sesión activa. Se usa para mostrar presencia "en línea" estilo redes
+ * sociales (long-polling). El frontend marca verde si la última actividad
+ * está dentro de los últimos 60s.
+ */
+export async function heartbeat(req, res) {
+  await prisma.usuario.update({
+    where: { id: req.user.id },
+    data: { ultimaActividad: new Date() },
+  })
+  res.json({ ok: true, ts: new Date().toISOString() })
 }
 
 export async function list(req, res) {
