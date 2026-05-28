@@ -351,13 +351,15 @@ model Ausencia {
 
 // ============ PARÁMETROS DE COSTO (versionados) ============
 model ParametroCosto {
-  id                  String       @id @default(uuid())
-  tipoConsulta        Especialidad @map("tipo_consulta")
-  costoCita           Decimal      @map("costo_cita") @db.Decimal(12, 2)
-  costoReprogramacion Decimal      @map("costo_reprogramacion") @db.Decimal(12, 2)
-  vigenteDesde        DateTime     @map("vigente_desde") @db.Date
-  configuradoPor      String       @map("configurado_por")
-  createdAt           DateTime     @default(now()) @map("created_at")
+  id                  String   @id @default(uuid())
+  // Tipo de consulta libre — antes era enum Especialidad pero se desligó para
+  // que el supervisor pueda agregar tipos nuevos (p.ej. "cirugia_general").
+  tipoConsulta        String   @map("tipo_consulta") @db.VarChar(40)
+  costoCita           Decimal  @map("costo_cita") @db.Decimal(12, 2)
+  costoReprogramacion Decimal  @map("costo_reprogramacion") @db.Decimal(12, 2)
+  vigenteDesde        DateTime @map("vigente_desde") @db.Date
+  configuradoPor      String   @map("configurado_por")
+  createdAt           DateTime @default(now()) @map("created_at")
 
   @@index([tipoConsulta, vigenteDesde])
   @@map("parametros_costo")

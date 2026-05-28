@@ -2,8 +2,11 @@ import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 
+// tipoConsulta es un slug libre: minúsculas, letras/dígitos/guion bajo, sin
+// espacios. Antes era un enum de 4 valores; ahora el supervisor puede definir
+// tipos nuevos (p.ej. "cirugia_general", "examen_oct").
 const parametroSchema = z.object({
-  tipoConsulta: z.enum(['oftalmologia', 'optometria', 'anestesiologia', 'diagnostico']),
+  tipoConsulta: z.string().min(3).max(40).regex(/^[a-z0-9_]+$/, 'Solo minúsculas, dígitos y guion bajo'),
   costoCita: z.number().min(0),
   costoReprogramacion: z.number().min(0),
   vigenteDesde: z.string(), // YYYY-MM-DD
