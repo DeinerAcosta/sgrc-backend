@@ -222,16 +222,49 @@ export async function dataSubutilizacion({ sede_id, tipo_recurso } = {}) {
     .filter((r) => recursoEnSedes(mapaSedes.get(r.id), sedeIds))
     .map((r) => {
       const propias = asigs.filter((a) => a.recursoId === r.id || a.auxiliarId === r.id)
-      const horas = propias.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0)
-      const pct = r.horasMaxSemana > 0 ? Math.round((horas / r.horasMaxSemana) * 100) : 0
+      // FIX: para médicos multi-consultorio (cubren varias salas en paralelo)
+      // las horas se cuentan por UNIÓN por día, no por suma. Antes una doctora
+      // con 3 salas 7-13h aparecía con 257% — ahora aparece con su valor real.
+      const horas = r.multiConsultorio
+        ? horasConUnionPorDia(propias)
+        : propias.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0)
+      // Tope al 100% en el porcentaje mostrado, pero registramos el bruto en otra clave.
+      const pctBruto = r.horasMaxSemana > 0 ? Math.round((horas / r.horasMaxSemana) * 100) : 0
+      const pct = Math.min(100, pctBruto)
       return {
         recurso: r.nombre, tipo: r.tipo, sede: nombreSedes(mapaSedes.get(r.id)),
         h_asignadas: Math.round(horas * 10) / 10,
         h_disponibles: r.horasMaxSemana,
         pct_utilizacion: pct,
+        pct_bruto: pctBruto,                  // por si interesa ver el exceso
+        sobreasignado: pctBruto > 100,        // bandera visual para el frontend
         sem_consec: 0,
       }
     }).sort((a, b) => a.pct_utilizacion - b.pct_utilizacion)
+}
+
+// Helper local: minutos efectivos de la UNIÓN de intervalos por día.
+// Si un médico está 7-13h en 3 salas en paralelo, le cuentan 6h, no 18h.
+function horasConUnionPorDia(asignaciones) {
+  const porDia = {}
+  for (const a of asignaciones) {
+    const [h1, m1] = a.horaInicio.split(':').map(Number)
+    const [h2, m2] = a.horaFin.split(':').map(Number)
+    if (!porDia[a.diaSemana]) porDia[a.diaSemana] = []
+    porDia[a.diaSemana].push({ start: h1 * 60 + m1, end: h2 * 60 + m2 })
+  }
+  let totalMin = 0
+  for (const ivs of Object.values(porDia)) {
+    const sorted = ivs.sort((a, b) => a.start - b.start)
+    let curStart = sorted[0].start
+    let curEnd = sorted[0].end
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].start <= curEnd) curEnd = Math.max(curEnd, sorted[i].end)
+      else { totalMin += curEnd - curStart; curStart = sorted[i].start; curEnd = sorted[i].end }
+    }
+    totalMin += curEnd - curStart
+  }
+  return totalMin / 60
 }
 
 export async function dataImpacto({ sede_id, tipo_recurso } = {}) {
@@ -382,12 +415,14 @@ export async function dataCierreSemanas() {
     const cierre = s.cerradaEn
     const aTiempo = cierre ? cierre <= s.fechaInicio : false
     const diasAntic = cierre ? Math.round((s.fechaInicio - cierre) / DIA) : null
+    // cerradaPor=null → cierre automático por el sistema (jobAutoCierreSemana).
+    const responsable = s.cerradaPor ? (nombre.get(s.cerradaPor) ?? '— sin registro —') : '(Sistema)'
     return {
       semana: `${s.fechaInicio.toISOString().slice(0, 10)} → ${s.fechaFin.toISOString().slice(0, 10)}`,
-      coordinador: nombre.get(s.cerradaPor) ?? '— sin registro —',
+      coordinador: responsable,
       fecha_cierre: cierre ? cierre.toISOString().slice(0, 10) : '—',
       dias_anticipacion: diasAntic ?? '—',
-      estado: !cierre ? 'Sin registro' : aTiempo ? 'A tiempo' : 'Tarde',
+      estado: !cierre ? 'Sin registro' : !s.cerradaPor ? 'Auto (Sistema)' : aTiempo ? 'A tiempo' : 'Tarde',
     }
   })
 }

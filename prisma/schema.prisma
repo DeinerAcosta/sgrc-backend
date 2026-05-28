@@ -109,6 +109,7 @@ model Usuario {
 
   recurso        Recurso?        @relation(fields: [recursoId], references: [id])
   sedes          UsuarioSede[]
+  sedesResponsable Sede[]        @relation("SedeResponsable")
   notificaciones Notificacion[]
   acciones       Auditoria[]
   passwordResets PasswordReset[]
@@ -177,14 +178,16 @@ model UsuarioSede {
 
 // ============ SEDES ============
 model Sede {
-  id        String   @id @default(uuid())
-  nombre    String   @db.VarChar(150)
-  ciudad    String   @db.VarChar(100)
-  direccion String?  @db.Text
-  activa    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid())
+  nombre        String   @db.VarChar(150)
+  ciudad        String   @db.VarChar(100)
+  direccion     String?  @db.Text
+  activa        Boolean  @default(true)
+  responsableId String?  @map("responsable_id")  // Usuario responsable de la sede (típicamente el coordinador)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
+  responsable            Usuario? @relation("SedeResponsable", fields: [responsableId], references: [id])
   consultorios           Consultorio[]
   usuarios               UsuarioSede[]
   asignacionesBackoffice AsignacionBackoffice[]

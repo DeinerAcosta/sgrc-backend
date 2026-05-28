@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { jobAlertaOciosos, jobConsultoriosSinAsignar } from './alertas.js'
 import { jobResumenDiario } from './resumenDiario.js'
+import { jobAutoCierreSemana } from './autoCierreSemana.js'
 
 /**
  * Programación de jobs automáticos del SGRC.
@@ -43,7 +44,18 @@ export function iniciarJobs() {
     }
   }, { timezone: TZ })
 
-  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario)')
+  // Auto-cierre de semanas vencidas — todos los días a las 2:00am
+  cron.schedule('0 2 * * *', async () => {
+    console.log('[JOB 2am] Cerrando semanas vencidas automáticamente...')
+    try {
+      const r = await jobAutoCierreSemana()
+      console.log('[JOB 2am] Auto-cierre:', JSON.stringify(r))
+    } catch (e) {
+      console.error('[JOB 2am] Error:', e.message)
+    }
+  }, { timezone: TZ })
+
+  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (2am diario)')
 }
 
 // Mapa para ejecución manual vía endpoint (testing / disparo on-demand)
@@ -51,4 +63,5 @@ export const JOBS_MANUALES = {
   'alerta-ociosos': jobAlertaOciosos,
   'consultorios-sin-asignar': jobConsultoriosSinAsignar,
   'resumen-diario': jobResumenDiario,
+  'auto-cierre-semana': jobAutoCierreSemana,
 }

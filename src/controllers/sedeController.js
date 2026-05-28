@@ -7,6 +7,7 @@ const sedeSchema = z.object({
   ciudad: z.string().min(1).max(100),
   direccion: z.string().optional().nullable(),
   activa: z.boolean().optional(),
+  responsableId: z.string().uuid().optional().nullable(),
 })
 
 export async function list(req, res) {
@@ -14,12 +15,16 @@ export async function list(req, res) {
   const sedes = await prisma.sede.findMany({
     where: activa !== undefined ? { activa: activa === 'true' } : undefined,
     orderBy: [{ ciudad: 'asc' }, { nombre: 'asc' }],
+    include: { responsable: { select: { id: true, nombre: true, email: true, rol: true } } },
   })
   res.json(sedes)
 }
 
 export async function getById(req, res) {
-  const sede = await prisma.sede.findUnique({ where: { id: req.params.id } })
+  const sede = await prisma.sede.findUnique({
+    where: { id: req.params.id },
+    include: { responsable: { select: { id: true, nombre: true, email: true, rol: true } } },
+  })
   if (!sede) throw errors.notFound('Sede no encontrada')
   res.json(sede)
 }
