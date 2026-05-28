@@ -191,6 +191,10 @@ model Recurso {
   esquemaPago        EsquemaPago @map("esquema_pago")
   horasMaxSemana     Int         @default(42) @map("horas_max_semana")
   horasMaxDia        Int         @default(10) @map("horas_max_dia")
+  // Médicos que cubren 2-3 consultorios en paralelo con auxiliares manejando
+  // cada sala. Cuando true: se omite el conflicto RN-08 del recurso y las
+  // horas diarias se calculan por UNIÓN de intervalos (no por suma).
+  multiConsultorio   Boolean     @default(false) @map("multi_consultorio")
   activo             Boolean     @default(true)
   motivoInactivacion String?     @map("motivo_inactivacion") @db.Text
   createdAt          DateTime    @default(now()) @map("created_at")

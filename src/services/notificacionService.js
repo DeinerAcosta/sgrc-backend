@@ -10,8 +10,11 @@ import { enviarWhatsApp } from './whatsappService.js'
  *   - media → app + email
  *   - alta  → app + email + whatsapp
  *
- * RN-28: los directivos NO reciben push/whatsapp — solo consultan su dashboard.
- * Por eso si el destinatario es directivo, se omiten email y whatsapp.
+ * Email llega a TODOS los roles según su criticidad (incluido directivo, para
+ * que las novedades importantes —ausencias, conflictos— le lleguen al correo
+ * asociado a su perfil). WhatsApp se reserva para coordinadores/recursos en
+ * criticidad alta — el directivo no recibe WhatsApp porque su flujo es
+ * consultar dashboards, no responder push.
  *
  * Crea un registro en `notificaciones` por cada canal usado y dispara los
  * envíos en paralelo. Nunca lanza error que tumbe la operación principal.
@@ -30,7 +33,7 @@ export async function notificar({
 
     const esDirectivo = usuario.rol === 'directivo'
     const canales = ['app']
-    if (!esDirectivo && (criticidad === 'media' || criticidad === 'alta')) canales.push('email')
+    if (criticidad === 'media' || criticidad === 'alta') canales.push('email')
     if (!esDirectivo && criticidad === 'alta') canales.push('whatsapp')
 
     // Registrar en BD — un registro por canal
@@ -86,6 +89,21 @@ export async function notificarCoordinadoresDeSede(sedeId, payload) {
     coordinadores.map((id) => notificar({ ...payload, usuarioId: id }))
   )
   return coordinadores.length
+}
+
+/**
+ * Notifica a TODOS los directivos activos del sistema (app + email).
+ * Útil para eventos relevantes a nivel gerencial: ausencias confirmadas,
+ * conflictos no resueltos, picos de horas extras, etc.
+ */
+export async function notificarDirectivos(payload) {
+  const directivos = await prisma.usuario.findMany({
+    where: { rol: 'directivo', activo: true },
+  })
+  await Promise.allSettled(
+    directivos.map((u) => notificar({ ...payload, usuarioId: u.id }))
+  )
+  return directivos.length
 }
 
 /**

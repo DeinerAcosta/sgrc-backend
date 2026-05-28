@@ -17,6 +17,25 @@ const horasDeFranja = (hi, hf) => (hhmmAMinutos(hf) - hhmmAMinutos(hi)) / 60
 const solapan = (a, hi, hf) => !(hf <= a.horaInicio || hi >= a.horaFin)
 
 /**
+ * Minutos efectivos de la UNIÓN de intervalos (no la suma). Útil para médicos
+ * multi-consultorio: si el doctor está físicamente 7–13h cubriendo 3 salas,
+ * cuentan 6h, no 18h.
+ */
+function minutosUnion(intervalos) {
+  if (!intervalos.length) return 0
+  const sorted = [...intervalos].sort((a, b) => a.start - b.start)
+  let total = 0
+  let curStart = sorted[0].start
+  let curEnd = sorted[0].end
+  for (let i = 1; i < sorted.length; i++) {
+    const { start, end } = sorted[i]
+    if (start <= curEnd) curEnd = Math.max(curEnd, end)
+    else { total += curEnd - curStart; curStart = start; curEnd = end }
+  }
+  return total + (curEnd - curStart)
+}
+
+/**
  * Calcula capacidad de pacientes según RN-11:
  * - Si jornada ≥ 6h: descontar 60min de almuerzo
  * - capacidad = FLOOR(minutos_disponibles / intervalo_minutos)
@@ -80,22 +99,26 @@ export async function crearAsignacion(data, userCtx) {
     }
 
     // ---- VALIDACIÓN 2: recurso libre en franja ese día (RN-08) ----
-    const conflictoRecurso = await tx.asignacion.findFirst({
-      where: {
-        semanaId: data.semanaId,
-        diaSemana: data.diaSemana,
-        estado: { not: 'cancelada' },
-        OR: [
-          { recursoId: data.recursoId },
-          { auxiliarId: data.recursoId },
-        ],
-      },
-      include: { consultorio: true },
-    })
-    if (conflictoRecurso && solapan(conflictoRecurso, data.horaInicio, data.horaFin)) {
-      throw errors.conflict(
-        `Conflicto: ${recurso.nombre} ya está asignado en ${conflictoRecurso.consultorio.nombre} de ${conflictoRecurso.horaInicio} a ${conflictoRecurso.horaFin}`
-      )
+    // EXCEPCIÓN: si el recurso tiene multiConsultorio=true (médicos que cubren
+    // 2-3 salas en paralelo con auxiliares), se omite este conflicto.
+    if (!recurso.multiConsultorio) {
+      const conflictoRecurso = await tx.asignacion.findFirst({
+        where: {
+          semanaId: data.semanaId,
+          diaSemana: data.diaSemana,
+          estado: { not: 'cancelada' },
+          OR: [
+            { recursoId: data.recursoId },
+            { auxiliarId: data.recursoId },
+          ],
+        },
+        include: { consultorio: true },
+      })
+      if (conflictoRecurso && solapan(conflictoRecurso, data.horaInicio, data.horaFin)) {
+        throw errors.conflict(
+          `Conflicto: ${recurso.nombre} ya está asignado en ${conflictoRecurso.consultorio.nombre} de ${conflictoRecurso.horaInicio} a ${conflictoRecurso.horaFin}`
+        )
+      }
     }
 
     // ---- VALIDACIÓN 3: ciudad única ese día (RN-09) ----
@@ -145,10 +168,26 @@ export async function crearAsignacion(data, userCtx) {
         OR: [{ recursoId: data.recursoId }, { auxiliarId: data.recursoId }],
       },
     })
-    const horasDia = otrasDelDia.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0)
-    if (horasDia + horasNueva > (recurso.horasMaxDia ?? 10)) {
+
+    // Para multi-consultorio se cuentan las horas por UNIÓN de intervalos (el
+    // médico físicamente está N horas aunque cubra 3 salas). Para el resto,
+    // suma simple — comportamiento clásico.
+    let horasDiaActual, horasDiaTotal
+    if (recurso.multiConsultorio) {
+      const intervalos = [
+        ...otrasDelDia.map((a) => ({ start: hhmmAMinutos(a.horaInicio), end: hhmmAMinutos(a.horaFin) })),
+        { start: hhmmAMinutos(data.horaInicio), end: hhmmAMinutos(data.horaFin) },
+      ]
+      horasDiaTotal = minutosUnion(intervalos) / 60
+      horasDiaActual = minutosUnion(intervalos.slice(0, -1)) / 60
+    } else {
+      horasDiaActual = otrasDelDia.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0)
+      horasDiaTotal = horasDiaActual + horasNueva
+    }
+
+    if (horasDiaTotal > (recurso.horasMaxDia ?? 10)) {
       throw errors.badRequest(
-        `${recurso.nombre} superaría el máximo de ${recurso.horasMaxDia ?? 10} horas diarias (lleva ${horasDia}h, suma ${horasNueva}h)`
+        `${recurso.nombre} superaría el máximo de ${recurso.horasMaxDia ?? 10} horas diarias (lleva ${horasDiaActual}h, suma ${(horasDiaTotal - horasDiaActual).toFixed(1)}h)`
       )
     }
 
@@ -160,8 +199,21 @@ export async function crearAsignacion(data, userCtx) {
         OR: [{ recursoId: data.recursoId }, { auxiliarId: data.recursoId }],
       },
     })
-    const horasSemana = otrasSemana.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0)
-    const esHorasExtras = (horasSemana + horasNueva) > (recurso.horasMaxSemana ?? 42)
+
+    // Para multi-consultorio sumamos por DÍA con unión de intervalos
+    // (un médico con 3 salas paralelas no acumula triple cada día).
+    let horasSemanaTotal
+    if (recurso.multiConsultorio) {
+      const porDia = {}
+      const todas = [...otrasSemana, { diaSemana: data.diaSemana, horaInicio: data.horaInicio, horaFin: data.horaFin }]
+      for (const a of todas) {
+        (porDia[a.diaSemana] ??= []).push({ start: hhmmAMinutos(a.horaInicio), end: hhmmAMinutos(a.horaFin) })
+      }
+      horasSemanaTotal = Object.values(porDia).reduce((acc, ivs) => acc + minutosUnion(ivs) / 60, 0)
+    } else {
+      horasSemanaTotal = otrasSemana.reduce((acc, a) => acc + horasDeFranja(a.horaInicio, a.horaFin), 0) + horasNueva
+    }
+    const esHorasExtras = horasSemanaTotal > (recurso.horasMaxSemana ?? 42)
 
     // Horas nocturnas: cualquier minuto >= 18:00
     const tieneHorasNocturnas = data.horaFin > '18:00' || data.horaInicio >= '18:00'

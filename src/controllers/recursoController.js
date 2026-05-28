@@ -23,6 +23,7 @@ const recursoSchema = z.object({
   esquemaPago: z.enum(ESQUEMAS),
   horasMaxSemana: z.number().int().min(1).max(60).optional(),
   horasMaxDia: z.number().int().min(1).max(24).optional(),
+  multiConsultorio: z.boolean().optional(),
   activo: z.boolean().optional(),
   motivoInactivacion: z.string().optional().nullable(),
 })

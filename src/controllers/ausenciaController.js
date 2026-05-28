@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { differenceInDays, parseISO, format } from 'date-fns'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
-import { notificar, notificarCoordinadoresDeSede, notificarSupervisores } from '../services/notificacionService.js'
+import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notificarDirectivos } from '../services/notificacionService.js'
 import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/ausenciaService.js'
 
 const TIPOS = ['enfermedad', 'calamidad', 'academico', 'familiar', 'vacaciones', 'no_presentacion', 'licencia_remunerada', 'licencia_no_remunerada', 'otra']
@@ -123,6 +123,15 @@ export async function create(req, res) {
     tipo: 'ausencia_reportada',
     titulo: `Ausencia registrada — ${ausencia.recurso.nombre}`,
     mensaje: `Se registró una ausencia (${data.tipo}) para ${ausencia.recurso.nombre} el ${fechaTxt}. Está en revisión por el coordinador.`,
+    criticidad: 'media',
+    referenciaId: ausencia.id,
+  })
+
+  // 4) Directivos activos (crit. media → app + email; no WhatsApp para directivos)
+  await notificarDirectivos({
+    tipo: 'ausencia_reportada',
+    titulo: `Ausencia — ${ausencia.recurso.nombre}`,
+    mensaje: `Se registró una ausencia (${data.tipo}) para ${ausencia.recurso.nombre} (${ausencia.recurso.tipo}) el ${fechaTxt}.`,
     criticidad: 'media',
     referenciaId: ausencia.id,
   })
