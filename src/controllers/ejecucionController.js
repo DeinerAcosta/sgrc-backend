@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { differenceInHours } from 'date-fns'
+import { format } from 'date-fns'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 
@@ -15,6 +15,26 @@ const crearSchema = z.object({
 const batchSchema = z.object({
   registros: z.array(crearSchema),
 })
+
+/**
+ * Fecha límite para registrar la ejecución de las asignaciones de una semana.
+ * Regla de negocio: la semana corre domingo → sábado y el viernes 23:59 cierra
+ * el registro. Después de eso no se acepta crear/editar ejecuciones de esa semana.
+ *
+ * fechaInicio viene de MySQL @db.Date como UTC-midnight del día calendario; por eso
+ * leemos el día de la semana en UTC (getUTCDay) para evitar shifts de zona horaria,
+ * y luego construimos el viernes a las 23:59:59 en LOCAL time. Funciona igual para
+ * semanas Sunday-start (esquema nuevo) y Monday-start (datos viejos).
+ */
+function cierreEjecucionDe(semana) {
+  const d = new Date(semana.fechaInicio)
+  const dowUtc = d.getUTCDay()                    // 0=dom, ..., 5=vie, 6=sab
+  const distAlViernes = (5 - dowUtc + 7) % 7
+  const yyyy = d.getUTCFullYear()
+  const mm = d.getUTCMonth()
+  const dd = d.getUTCDate() + distAlViernes
+  return new Date(yyyy, mm, dd, 23, 59, 59, 999)  // viernes 23:59:59 LOCAL
+}
 
 export async function pendientesDelDia(req, res) {
   const { semana_id, dia } = req.query
@@ -40,12 +60,22 @@ export async function get(req, res) {
 export async function create(req, res) {
   const data = crearSchema.parse(req.body)
 
-  // Si ya existe, validar bloqueo a 48h y actualizar
+  // Cierre semanal: solo se puede registrar/editar hasta el viernes 23:59 de la semana de la asignación.
+  const asig = await prisma.asignacion.findUnique({
+    where: { id: data.asignacionId },
+    include: { semana: true },
+  })
+  if (!asig) throw errors.notFound('Asignación no encontrada')
+  const cierre = cierreEjecucionDe(asig.semana)
+  if (new Date() > cierre) {
+    throw errors.forbidden(`El registro de ejecución de esta semana cerró el viernes ${format(cierre, 'd MMM HH:mm')}`)
+  }
+
+  // Si ya existe, validar bloqueo manual y actualizar
   const existente = await prisma.ejecucion.findUnique({ where: { asignacionId: data.asignacionId } })
   if (existente) {
-    const horas = differenceInHours(new Date(), existente.registradoEn)
-    if (horas >= 48 || existente.bloqueado) {
-      throw errors.forbidden('El registro de ejecución se bloqueó después de 48 horas')
+    if (existente.bloqueado) {
+      throw errors.forbidden('Este registro de ejecución está bloqueado')
     }
     const actualizada = await prisma.ejecucion.update({
       where: { asignacionId: data.asignacionId },
@@ -72,12 +102,28 @@ export async function create(req, res) {
 
 export async function saveDay(req, res) {
   const { registros } = batchSchema.parse(req.body)
+
+  // Una sola consulta para todas las asignaciones del batch (cada una con su semana)
+  const ids = registros.map((r) => r.asignacionId)
+  const asigs = await prisma.asignacion.findMany({
+    where: { id: { in: ids } },
+    include: { semana: true },
+  })
+  const asigMap = Object.fromEntries(asigs.map((a) => [a.id, a]))
+
   let count = 0
+  let bloqueadas = 0
+  let fueraDePlazo = 0
   for (const data of registros) {
+    const asig = asigMap[data.asignacionId]
+    if (!asig) continue
+
+    const cierre = cierreEjecucionDe(asig.semana)
+    if (new Date() > cierre) { fueraDePlazo++; continue }
+
     const existente = await prisma.ejecucion.findUnique({ where: { asignacionId: data.asignacionId } })
     if (existente) {
-      const horas = differenceInHours(new Date(), existente.registradoEn)
-      if (horas >= 48 || existente.bloqueado) continue
+      if (existente.bloqueado) { bloqueadas++; continue }
       await prisma.ejecucion.update({
         where: { asignacionId: data.asignacionId },
         data: {
@@ -99,5 +145,5 @@ export async function saveDay(req, res) {
     }
     count++
   }
-  res.json({ count })
+  res.json({ count, bloqueadas, fueraDePlazo })
 }

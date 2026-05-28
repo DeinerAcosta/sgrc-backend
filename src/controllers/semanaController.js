@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
-import { differenceInDays, addDays, format, startOfWeek } from 'date-fns'
+import { differenceInDays, addDays, startOfWeek } from 'date-fns'
 
 const crearSemanaSchema = z.object({
   fechaInicio: z.string(), // YYYY-MM-DD
@@ -17,16 +17,16 @@ export async function create(req, res) {
   const { fechaInicio } = crearSemanaSchema.parse(req.body)
   const inicio = new Date(fechaInicio)
   if (Number.isNaN(inicio.getTime())) throw errors.badRequest('Fecha inválida')
-  // Forzar lunes
-  const lunes = startOfWeek(inicio, { weekStartsOn: 1 })
-  const diff = differenceInDays(lunes, new Date())
+  // Semana corre domingo → sábado. weekStartsOn: 0 = domingo (date-fns).
+  const domingo = startOfWeek(inicio, { weekStartsOn: 0 })
+  const diff = differenceInDays(domingo, new Date())
   if (diff < 3) {
     throw errors.badRequest('La programación debe crearse con al menos 3 días de anticipación')
   }
-  const fin = addDays(lunes, 6)
+  const fin = addDays(domingo, 6)
   const sem = await prisma.semana.create({
     data: {
-      fechaInicio: lunes,
+      fechaInicio: domingo,
       fechaFin: fin,
       estado: 'abierta',
     },
@@ -51,7 +51,7 @@ export async function copiar(req, res) {
   })
   if (!origen) throw errors.notFound()
 
-  const inicio = startOfWeek(new Date(fechaInicio), { weekStartsOn: 1 })
+  const inicio = startOfWeek(new Date(fechaInicio), { weekStartsOn: 0 })
   if (differenceInDays(inicio, new Date()) < 3) {
     throw errors.badRequest('La nueva semana debe crearse con al menos 3 días de anticipación')
   }

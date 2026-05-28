@@ -272,6 +272,12 @@ async function main() {
     { nombre: 'Llamadas de seguimiento postoperatorio', tiempoEstimadoMinutos: 8 },
     { nombre: 'Archivo y digitalización', tiempoEstimadoMinutos: 3 },
     { nombre: 'Verificación de historias clínicas', tiempoEstimadoMinutos: 6 },
+    { nombre: 'Cubrir almuerzos',      descripcion: 'Cubrimiento del horario de almuerzo de otros recursos asistenciales.',         tiempoEstimadoMinutos: 60 },
+    { nombre: 'Visitas hospitalarias', descripcion: 'Visitas a pacientes hospitalizados.',                                           tiempoEstimadoMinutos: 90 },
+    { nombre: 'Citas personalizadas',  descripcion: 'Atención de citas personalizadas/agendadas fuera de la consulta regular.',     tiempoEstimadoMinutos: 30 },
+    { nombre: 'Brigadas',              descripcion: 'Apoyo en brigadas de salud (intramurales o extramurales).',                     tiempoEstimadoMinutos: 240 },
+    { nombre: 'Apoyo SIAU',            descripcion: 'Apoyo al Servicio de Información y Atención al Usuario (SIAU).',                tiempoEstimadoMinutos: 60 },
+    { nombre: 'Apoyo Cirugía',         descripcion: 'Apoyo al servicio de cirugía (preparación, instrumentación, postoperatorio).', tiempoEstimadoMinutos: 120 },
   ]
   const tareasBoCreadas = []
   for (const t of tareasBackoffice) {
@@ -312,11 +318,12 @@ async function main() {
   if (yaHayAsigs > 0) {
     console.log(`   ⊙ ${yaHayAsigs} asignaciones ya en BD — skip de semanas/asignaciones/ejecuciones/ausencias`)
   } else {
-    // 4 semanas: 2 anteriores cerradas, semana actual abierta, próxima semana abierta
-    const lunesActual = startOfWeek(new Date(), { weekStartsOn: 1 })
+    // 4 semanas: 2 anteriores cerradas, semana actual abierta, próxima semana abierta.
+    // Semana corre domingo → sábado (weekStartsOn: 0).
+    const domingoActual = startOfWeek(new Date(), { weekStartsOn: 0 })
     const semanas = []
     for (let i = -2; i <= 1; i++) {
-      const inicio = i < 0 ? subWeeks(lunesActual, -i) : addDays(lunesActual, i * 7)
+      const inicio = i < 0 ? subWeeks(domingoActual, -i) : addDays(domingoActual, i * 7)
       const fin = addDays(inicio, 6)
       const estado = i < 0 ? 'cerrada' : 'abierta'
       const sem = await prisma.semana.create({
