@@ -92,7 +92,9 @@ r.put('/tareas-backoffice/:id', requireRol('supervisor'), wrap(tareasBo.update))
 
 // ============ FESTIVOS ============
 r.get('/festivos', wrap(fest.list))
+r.get('/festivos/calendario-colombia', wrap(fest.previewColombia))
 r.post('/festivos', requireRol('supervisor'), wrap(fest.create))
+r.post('/festivos/sincronizar-colombia', requireRol('supervisor'), wrap(fest.sincronizarColombia))
 r.delete('/festivos/:fecha', requireRol('supervisor'), wrap(fest.remove))
 
 // ============ SEMANAS ============

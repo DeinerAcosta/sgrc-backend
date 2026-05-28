@@ -32,6 +32,10 @@ export async function get(req, res) {
   const sede = await prisma.sede.findUnique({ where: { id: sede_id } })
   if (!sede) throw errors.notFound('Sede no encontrada')
 
+  // Verificar si esa fecha es festivo (RN-06) — el frontend lo destaca y lo
+  // muestra al recurso y al coordinador en el resumen.
+  const festivo = await prisma.festivo.findUnique({ where: { fecha: dia } })
+
   let asignaciones = []
   if (semana) {
     asignaciones = await prisma.asignacion.findMany({
@@ -92,6 +96,8 @@ export async function get(req, res) {
     sede: { id: sede.id, nombre: sede.nombre, ciudad: sede.ciudad },
     fecha,
     dia_semana: diaSemana,
+    es_festivo: !!festivo,
+    festivo_descripcion: festivo?.descripcion ?? null,
     semana_id: semana?.id ?? null,
     resumen,
     items,

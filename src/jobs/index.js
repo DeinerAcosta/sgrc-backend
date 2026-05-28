@@ -2,6 +2,7 @@ import cron from 'node-cron'
 import { jobAlertaOciosos, jobConsultoriosSinAsignar } from './alertas.js'
 import { jobResumenDiario } from './resumenDiario.js'
 import { jobAutoCierreSemana } from './autoCierreSemana.js'
+import { jobSincronizarFestivos } from './sincronizarFestivos.js'
 
 /**
  * Programación de jobs automáticos del SGRC.
@@ -55,7 +56,29 @@ export function iniciarJobs() {
     }
   }, { timezone: TZ })
 
-  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (2am diario)')
+  // Sincronizar festivos de Colombia — 1 de enero a la 1am (siempre que cambia el año)
+  cron.schedule('0 1 1 1 *', async () => {
+    console.log('[JOB 1ene] Sincronizando festivos de Colombia para el año nuevo...')
+    try {
+      const r = await jobSincronizarFestivos()
+      console.log('[JOB 1ene] Festivos sincronizados:', JSON.stringify(r))
+    } catch (e) {
+      console.error('[JOB 1ene] Error:', e.message)
+    }
+  }, { timezone: TZ })
+
+  // Al arrancar el backend, asegurar que el año actual + siguiente estén cargados.
+  // Bloqueado por try/catch — si falla no impide que arranquen los demás jobs.
+  setImmediate(async () => {
+    try {
+      const r = await jobSincronizarFestivos()
+      if (r.creados > 0) console.log(`📆 Festivos al arranque: ${r.creados} creados, ${r.omitidos} ya existían`)
+    } catch (e) {
+      console.error('[Festivos al arranque] Error:', e.message)
+    }
+  })
+
+  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (2am diario), sync festivos (1ene 1am)')
 }
 
 // Mapa para ejecución manual vía endpoint (testing / disparo on-demand)
@@ -64,4 +87,5 @@ export const JOBS_MANUALES = {
   'consultorios-sin-asignar': jobConsultoriosSinAsignar,
   'resumen-diario': jobResumenDiario,
   'auto-cierre-semana': jobAutoCierreSemana,
+  'sincronizar-festivos': jobSincronizarFestivos,
 }
