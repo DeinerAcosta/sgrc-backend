@@ -24,6 +24,7 @@ enum TipoRecurso {
   oftalmologo
   optometra
   anestesiologo
+  asesor_servicios
   auxiliar
   tecnico
 }

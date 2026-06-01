@@ -199,7 +199,7 @@ const registroSchema = z.object({
   celular: z.string().max(20).optional().nullable(),
   rol: z.enum(['recurso', 'coordinador', 'directivo']),
   // Datos opcionales si es recurso (los validamos en el servicio cuando aprueben)
-  tipoRecurso: z.enum(['oftalmologo','optometra','anestesiologo','auxiliar','tecnico']).optional().nullable(),
+  tipoRecurso: z.enum(['oftalmologo','optometra','anestesiologo','asesor_servicios','auxiliar','tecnico']).optional().nullable(),
   especialidad: z.string().max(100).optional().nullable(),
   horasMaxSemana: z.number().int().min(1).max(60).optional().nullable(),
   horasMaxDia: z.number().int().min(1).max(24).optional().nullable(),

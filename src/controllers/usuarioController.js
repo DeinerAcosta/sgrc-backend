@@ -70,7 +70,7 @@ const bulkSchema = z.object({
 })
 
 const ROLES_VALIDOS = new Set(['recurso', 'coordinador', 'directivo'])
-const TIPOS_VALIDOS = new Set(['oftalmologo', 'optometra', 'anestesiologo', 'auxiliar', 'tecnico'])
+const TIPOS_VALIDOS = new Set(['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico'])
 const ESQUEMAS_VALIDOS = new Set(['por_paciente', 'fijo', 'mixto'])
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 

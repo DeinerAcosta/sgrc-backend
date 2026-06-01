@@ -4,7 +4,7 @@ import { errors } from '../lib/errors.js'
 import { getSemanaActual } from '../lib/semana.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 
-const TIPOS = ['oftalmologo', 'optometra', 'anestesiologo', 'auxiliar', 'tecnico']
+const TIPOS = ['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico']
 const ESQUEMAS = ['por_paciente', 'fijo', 'mixto']
 
 // La especialidad de un consultorio determina qué tipo de recurso lo puede atender
