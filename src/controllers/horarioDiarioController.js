@@ -52,6 +52,11 @@ export async function get(req, res) {
       },
       orderBy: [{ horaInicio: 'asc' }, { consultorio: { nombre: 'asc' } }],
     })
+    // Re-orden secundario natural numérico dentro de la misma franja horaria
+    asignaciones.sort((a, b) => {
+      if (a.horaInicio !== b.horaInicio) return a.horaInicio < b.horaInicio ? -1 : 1
+      return a.consultorio.nombre.localeCompare(b.consultorio.nombre, 'es', { numeric: true, sensitivity: 'base' })
+    })
   }
 
   // Ausencias confirmadas que afectan a estas personas ese día

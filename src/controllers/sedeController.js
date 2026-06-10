@@ -44,7 +44,21 @@ export async function update(req, res) {
 export async function consultorios(req, res) {
   const list = await prisma.consultorio.findMany({
     where: { sedeId: req.params.id },
-    orderBy: { nombre: 'asc' },
   })
+  // 1) ÁREA ASESORES siempre arriba (es lo primero que el coordinador atiende).
+  // 2) El resto en orden natural numérico (CONSULTORIO 2 < 19A < 20 < 20A) — no alfabético.
+  list.sort(ordenConsultorios)
   res.json(list)
+}
+
+/**
+ * Comparador reutilizable para consultorios.
+ * - Asesores (especialidad === 'asesoria') van primero como grupo.
+ * - Dentro de cada grupo, orden natural: "CONSULTORIO 2" antes que "CONSULTORIO 19A".
+ */
+export function ordenConsultorios(a, b) {
+  const ae = a.especialidad === 'asesoria' ? 0 : 1
+  const be = b.especialidad === 'asesoria' ? 0 : 1
+  if (ae !== be) return ae - be
+  return a.nombre.localeCompare(b.nombre, 'es', { numeric: true, sensitivity: 'base' })
 }
