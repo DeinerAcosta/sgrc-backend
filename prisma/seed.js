@@ -40,208 +40,211 @@ async function main() {
 
   // ============ 1. SEDES (upsert por nombre) ============
   const sedesData = [
-    { nombre: 'Sede 1 Barranquilla', ciudad: 'Barranquilla', direccion: 'Cl. 76 #50-10' },
-    { nombre: 'Sede 2 Barranquilla', ciudad: 'Barranquilla', direccion: 'Cra. 53 #80-32' },
-    { nombre: 'Sede Santa Marta',    ciudad: 'Santa Marta',  direccion: 'Cl. 22 #4-30' },
-    { nombre: 'Sede Cartagena',      ciudad: 'Cartagena',    direccion: 'Av. San Martín' },
-    { nombre: 'Sede Valledupar',     ciudad: 'Valledupar',   direccion: 'Cra. 19 #16-50' },
-    { nombre: 'Sede Riohacha',       ciudad: 'Riohacha',     direccion: 'Cl. 15 #7-20' },
-    { nombre: 'Sede Sabanalarga',    ciudad: 'Sabanalarga',  direccion: 'Cl. 20 #19-15' },
+    { name: 'Sede 1 Barranquilla', city: 'Barranquilla', address: 'Cl. 76 #50-10' },
+    { name: 'Sede 2 Barranquilla', city: 'Barranquilla', address: 'Cra. 53 #80-32' },
+    { name: 'Sede Santa Marta',    city: 'Santa Marta',  address: 'Cl. 22 #4-30' },
+    { name: 'Sede Cartagena',      city: 'Cartagena',    address: 'Av. San Martín' },
+    { name: 'Sede Valledupar',     city: 'Valledupar',   address: 'Cra. 19 #16-50' },
+    { name: 'Sede Riohacha',       city: 'Riohacha',     address: 'Cl. 15 #7-20' },
+    { name: 'Sede Sabanalarga',    city: 'Sabanalarga',  address: 'Cl. 20 #19-15' },
   ]
   const sedes = []
   for (const s of sedesData) {
-    const existente = await prisma.sede.findFirst({ where: { nombre: s.nombre } })
+    const existente = await prisma.site.findFirst({ where: { name: s.name } })
     const sede = existente
-      ? await prisma.sede.update({ where: { id: existente.id }, data: s })
-      : await prisma.sede.create({ data: s })
+      ? await prisma.site.update({ where: { id: existente.id }, data: s })
+      : await prisma.site.create({ data: s })
     sedes.push(sede)
   }
   console.log(`   ✓ ${sedes.length} sedes`)
 
   // Helper para indexar por nombre
-  const sedeBQ1 = sedes.find((s) => s.nombre === 'Sede 1 Barranquilla')
-  const sedeBQ2 = sedes.find((s) => s.nombre === 'Sede 2 Barranquilla')
-  const sedeSM  = sedes.find((s) => s.nombre === 'Sede Santa Marta')
-  const sedeCTG = sedes.find((s) => s.nombre === 'Sede Cartagena')
-  const sedeVPA = sedes.find((s) => s.nombre === 'Sede Valledupar')
-  const sedeRCH = sedes.find((s) => s.nombre === 'Sede Riohacha')
-  const sedeSNL = sedes.find((s) => s.nombre === 'Sede Sabanalarga')
+  const sedeBQ1 = sedes.find((s) => s.name === 'Sede 1 Barranquilla')
+  const sedeBQ2 = sedes.find((s) => s.name === 'Sede 2 Barranquilla')
+  const sedeSM  = sedes.find((s) => s.name === 'Sede Santa Marta')
+  const sedeCTG = sedes.find((s) => s.name === 'Sede Cartagena')
+  const sedeVPA = sedes.find((s) => s.name === 'Sede Valledupar')
+  const sedeRCH = sedes.find((s) => s.name === 'Sede Riohacha')
+  const sedeSNL = sedes.find((s) => s.name === 'Sede Sabanalarga')
 
   // ============ 2. CONSULTORIOS — en TODAS las sedes ============
   const consultoriosData = [
     // BQ1
-    { sede: sedeBQ1, nombre: 'Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeBQ1, nombre: 'Cons. 2', especialidad: 'oftalmologia' },
-    { sede: sedeBQ1, nombre: 'Cons. 3', especialidad: 'optometria' },
-    { sede: sedeBQ1, nombre: 'Cons. 4', especialidad: 'optometria' },
-    { sede: sedeBQ1, nombre: 'Cons. 5', especialidad: 'diagnostico' },
+    { site: sedeBQ1, name: 'Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeBQ1, name: 'Cons. 2', specialty: 'oftalmologia' },
+    { site: sedeBQ1, name: 'Cons. 3', specialty: 'optometria' },
+    { site: sedeBQ1, name: 'Cons. 4', specialty: 'optometria' },
+    { site: sedeBQ1, name: 'Cons. 5', specialty: 'diagnostico' },
     // BQ2 (los que ya teníamos)
-    { sede: sedeBQ2, nombre: 'Cons. 6',  especialidad: 'oftalmologia' },
-    { sede: sedeBQ2, nombre: 'Cons. 9',  especialidad: 'oftalmologia' },
-    { sede: sedeBQ2, nombre: 'Cons. 13', especialidad: 'optometria' },
-    { sede: sedeBQ2, nombre: 'Cons. 14', especialidad: 'optometria' },
-    { sede: sedeBQ2, nombre: 'Cons. 1 Ec', especialidad: 'diagnostico' },
-    { sede: sedeBQ2, nombre: 'Cons. 2 An', especialidad: 'anestesiologia' },
+    { site: sedeBQ2, name: 'Cons. 6',  specialty: 'oftalmologia' },
+    { site: sedeBQ2, name: 'Cons. 9',  specialty: 'oftalmologia' },
+    { site: sedeBQ2, name: 'Cons. 13', specialty: 'optometria' },
+    { site: sedeBQ2, name: 'Cons. 14', specialty: 'optometria' },
+    { site: sedeBQ2, name: 'Cons. 1 Ec', specialty: 'diagnostico' },
+    { site: sedeBQ2, name: 'Cons. 2 An', specialty: 'anestesiologia' },
     // Santa Marta
-    { sede: sedeSM, nombre: 'SM-Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeSM, nombre: 'SM-Cons. 2', especialidad: 'optometria' },
-    { sede: sedeSM, nombre: 'SM-Cons. 3', especialidad: 'diagnostico' },
+    { site: sedeSM, name: 'SM-Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeSM, name: 'SM-Cons. 2', specialty: 'optometria' },
+    { site: sedeSM, name: 'SM-Cons. 3', specialty: 'diagnostico' },
     // Cartagena
-    { sede: sedeCTG, nombre: 'CTG-Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeCTG, nombre: 'CTG-Cons. 2', especialidad: 'optometria' },
+    { site: sedeCTG, name: 'CTG-Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeCTG, name: 'CTG-Cons. 2', specialty: 'optometria' },
     // Valledupar
-    { sede: sedeVPA, nombre: 'VPA-Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeVPA, nombre: 'VPA-Cons. 2', especialidad: 'optometria' },
+    { site: sedeVPA, name: 'VPA-Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeVPA, name: 'VPA-Cons. 2', specialty: 'optometria' },
     // Riohacha
-    { sede: sedeRCH, nombre: 'RCH-Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeRCH, nombre: 'RCH-Cons. 2', especialidad: 'optometria' },
+    { site: sedeRCH, name: 'RCH-Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeRCH, name: 'RCH-Cons. 2', specialty: 'optometria' },
     // Sabanalarga
-    { sede: sedeSNL, nombre: 'SNL-Cons. 1', especialidad: 'oftalmologia' },
-    { sede: sedeSNL, nombre: 'SNL-Cons. 2', especialidad: 'optometria' },
+    { site: sedeSNL, name: 'SNL-Cons. 1', specialty: 'oftalmologia' },
+    { site: sedeSNL, name: 'SNL-Cons. 2', specialty: 'optometria' },
   ]
   const REQUIEREN_AUX = new Set(['oftalmologia', 'anestesiologia'])
   const consultorios = []
   for (const c of consultoriosData) {
-    const existente = await prisma.consultorio.findFirst({
-      where: { nombre: c.nombre, sedeId: c.sede.id },
+    const existente = await prisma.room.findFirst({
+      where: { name: c.name, siteId: c.site.id },
     })
     const data = {
-      sedeId: c.sede.id,
-      nombre: c.nombre,
-      especialidad: c.especialidad,
-      requiereAuxiliar: REQUIEREN_AUX.has(c.especialidad),
+      siteId: c.site.id,
+      name: c.name,
+      specialty: c.specialty,
+      requiresAssistant: REQUIEREN_AUX.has(c.specialty),
     }
     const cons = existente
-      ? await prisma.consultorio.update({ where: { id: existente.id }, data })
-      : await prisma.consultorio.create({ data })
-    consultorios.push({ ...cons, sede: c.sede })
+      ? await prisma.room.update({ where: { id: existente.id }, data })
+      : await prisma.room.create({ data })
+    consultorios.push({ ...cons, site: c.site })
   }
   console.log(`   ✓ ${consultorios.length} consultorios en ${sedes.length} sedes`)
 
   // ============ 3. RECURSOS — variedad realista ============
   const recursosData = [
     // Oftalmólogos
-    { nombre: 'Dr. Rhenals',  tipo: 'oftalmologo',   especialidad: 'Retina',         intervaloMinutos: 20, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
-    { nombre: 'Dr. Martínez', tipo: 'oftalmologo',   especialidad: 'Retina',         intervaloMinutos: 20, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
-    { nombre: 'Dr. Córnea',   tipo: 'oftalmologo',   especialidad: 'Córnea',         intervaloMinutos: 20, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
-    { nombre: 'Dr. Sanabria', tipo: 'oftalmologo',   especialidad: 'Glaucoma',       intervaloMinutos: 25, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
-    { nombre: 'Dra. Polo',    tipo: 'oftalmologo',   especialidad: 'Cataratas',      intervaloMinutos: 30, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
+    { name: 'Dr. Rhenals',  type: 'oftalmologo',   specialty: 'Retina',         slotMinutes: 20, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
+    { name: 'Dr. Martínez', type: 'oftalmologo',   specialty: 'Retina',         slotMinutes: 20, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
+    { name: 'Dr. Córnea',   type: 'oftalmologo',   specialty: 'Córnea',         slotMinutes: 20, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
+    { name: 'Dr. Sanabria', type: 'oftalmologo',   specialty: 'Glaucoma',       slotMinutes: 25, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
+    { name: 'Dra. Polo',    type: 'oftalmologo',   specialty: 'Cataratas',      slotMinutes: 30, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
     // Optómetras
-    { nombre: 'Dr. Gutierrez', tipo: 'optometra', especialidad: 'General', intervaloMinutos: 15, esquemaPago: 'mixto' },
-    { nombre: 'Dr. Escudero',  tipo: 'optometra', especialidad: 'General', intervaloMinutos: 15, esquemaPago: 'mixto' },
-    { nombre: 'Dra. Meza',     tipo: 'optometra', especialidad: 'Lentes de contacto', intervaloMinutos: 20, esquemaPago: 'mixto' },
-    { nombre: 'Dr. Pacheco',   tipo: 'optometra', especialidad: 'Pediátrica', intervaloMinutos: 20, esquemaPago: 'mixto' },
+    { name: 'Dr. Gutierrez', type: 'optometra', specialty: 'General', slotMinutes: 15, payScheme: 'mixto' },
+    { name: 'Dr. Escudero',  type: 'optometra', specialty: 'General', slotMinutes: 15, payScheme: 'mixto' },
+    { name: 'Dra. Meza',     type: 'optometra', specialty: 'Lentes de contacto', slotMinutes: 20, payScheme: 'mixto' },
+    { name: 'Dr. Pacheco',   type: 'optometra', specialty: 'Pediátrica', slotMinutes: 20, payScheme: 'mixto' },
     // Anestesiólogo
-    { nombre: 'Dr. Pérez Anest.',  tipo: 'anestesiologo', especialidad: 'Anestesia', intervaloMinutos: 30, esquemaPago: 'por_paciente', horasMaxSemana: 60, horasMaxDia: 12 },
+    { name: 'Dr. Pérez Anest.',  type: 'anestesiologo', specialty: 'Anestesia', slotMinutes: 30, payScheme: 'por_paciente', maxHoursPerWeek: 60, maxHoursPerDay: 12 },
     // Auxiliares
-    { nombre: 'Angela Sarmiento',     tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Alba Tete',            tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Ana Castillo',         tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Ana Nuñez',            tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Cynthia Maury',        tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Darleis Silva',        tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Yasiris Trespalacios', tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Doraine Barrios',      tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Lina Torres',          tipo: 'auxiliar', esquemaPago: 'fijo' },
-    { nombre: 'Yurley Pua',           tipo: 'auxiliar', esquemaPago: 'fijo' },
+    { name: 'Angela Sarmiento',     type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Alba Tete',            type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Ana Castillo',         type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Ana Nuñez',            type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Cynthia Maury',        type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Darleis Silva',        type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Yasiris Trespalacios', type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Doraine Barrios',      type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Lina Torres',          type: 'auxiliar', payScheme: 'fijo' },
+    { name: 'Yurley Pua',           type: 'auxiliar', payScheme: 'fijo' },
     // Técnicos
-    { nombre: 'Tec. Rivera',  tipo: 'tecnico', intervaloMinutos: 30, esquemaPago: 'fijo' },
-    { nombre: 'Tec. Mendez',  tipo: 'tecnico', intervaloMinutos: 30, esquemaPago: 'fijo' },
-    { nombre: 'Tec. Carlos Díaz', tipo: 'tecnico', intervaloMinutos: 30, esquemaPago: 'fijo' },
+    { name: 'Tec. Rivera',  type: 'tecnico', slotMinutes: 30, payScheme: 'fijo' },
+    { name: 'Tec. Mendez',  type: 'tecnico', slotMinutes: 30, payScheme: 'fijo' },
+    { name: 'Tec. Carlos Díaz', type: 'tecnico', slotMinutes: 30, payScheme: 'fijo' },
   ]
   const recursos = []
   for (const r of recursosData) {
-    const existente = await prisma.recurso.findFirst({ where: { nombre: r.nombre } })
+    const existente = await prisma.resource.findFirst({ where: { name: r.name } })
     const rec = existente
-      ? await prisma.recurso.update({ where: { id: existente.id }, data: r })
-      : await prisma.recurso.create({ data: r })
+      ? await prisma.resource.update({ where: { id: existente.id }, data: r })
+      : await prisma.resource.create({ data: r })
     recursos.push(rec)
   }
   console.log(`   ✓ ${recursos.length} recursos`)
 
-  const oftalmologos = recursos.filter((r) => r.tipo === 'oftalmologo')
-  const optometras   = recursos.filter((r) => r.tipo === 'optometra')
-  const auxiliares   = recursos.filter((r) => r.tipo === 'auxiliar')
-  const tecnicos     = recursos.filter((r) => r.tipo === 'tecnico')
-  const anestesiologo = recursos.find((r) => r.tipo === 'anestesiologo')
+  const oftalmologos = recursos.filter((r) => r.type === 'oftalmologo')
+  const optometras   = recursos.filter((r) => r.type === 'optometra')
+  const auxiliares   = recursos.filter((r) => r.type === 'auxiliar')
+  const tecnicos     = recursos.filter((r) => r.type === 'tecnico')
+  const anestesiologo = recursos.find((r) => r.type === 'anestesiologo')
 
   // ============ 4. USUARIOS (upsert por email) ============
   const pwHash = await bcrypt.hash(PASS, 12)
   const usuarios = [
     {
-      email: 'angela.sarmiento@cofca.co', nombre: 'Angela Sarmiento', rol: 'recurso',
-      recursoId: recursos.find((r) => r.nombre === 'Angela Sarmiento').id, celular: '300 555 0001',
+      email: 'angela.sarmiento@cofca.co', name: 'Angela Sarmiento', role: 'recurso',
+      resourceId: recursos.find((r) => r.name === 'Angela Sarmiento').id, phone: '300 555 0001',
     },
     {
-      email: 'maria.lopez@cofca.co', nombre: 'María López', rol: 'coordinador',
-      celular: '300 555 0002', sedes: [sedeBQ2.id, sedeBQ1.id],
+      email: 'maria.lopez@cofca.co', name: 'María López', role: 'coordinador',
+      phone: '300 555 0002', sites: [sedeBQ2.id, sedeBQ1.id],
     },
     {
-      email: 'pedro.rodriguez@cofca.co', nombre: 'Pedro Rodríguez', rol: 'coordinador',
-      celular: '300 555 0003', sedes: [sedeSM.id, sedeCTG.id],
+      email: 'pedro.rodriguez@cofca.co', name: 'Pedro Rodríguez', role: 'coordinador',
+      phone: '300 555 0003', sites: [sedeSM.id, sedeCTG.id],
     },
     {
-      email: 'carlos.reyes@cofca.co', nombre: 'Carlos Reyes', rol: 'directivo',
+      email: 'carlos.reyes@cofca.co', name: 'Carlos Reyes', role: 'directivo',
     },
     {
-      email: 'desarrollo@cofca.com', nombre: 'Diana Martínez', rol: 'supervisor',
+      // OJO: nunca poner aquí un email REAL. El bloque de abajo hace update sobre
+      // el usuario existente y pisa nombre, teléfono, contraseña y sedes. Este email
+      // era 'desarrollo@cofca.com' y sobreescribió la cuenta real del usuario.
+      email: 'supervisor@cofca.co', name: 'Diana Martínez', role: 'supervisor',
     },
   ]
   const usuariosCreados = {}
   for (const u of usuarios) {
-    const sedesRel = u.sedes ?? []
-    const existente = await prisma.usuario.findUnique({ where: { email: u.email } })
+    const sedesRel = u.sites ?? []
+    const existente = await prisma.user.findUnique({ where: { email: u.email } })
     let usuario
     if (existente) {
-      usuario = await prisma.usuario.update({
+      usuario = await prisma.user.update({
         where: { id: existente.id },
         data: {
-          nombre: u.nombre,
-          celular: u.celular,
+          name: u.name,
+          phone: u.phone,
           passwordHash: pwHash,
-          rol: u.rol,
-          recursoId: u.recursoId,
+          role: u.role,
+          resourceId: u.resourceId,
         },
       })
       // Resetear sedes (idempotente)
-      await prisma.usuarioSede.deleteMany({ where: { usuarioId: usuario.id } })
+      await prisma.userSite.deleteMany({ where: { userId: usuario.id } })
     } else {
-      usuario = await prisma.usuario.create({
+      usuario = await prisma.user.create({
         data: {
           email: u.email,
-          nombre: u.nombre,
-          celular: u.celular,
+          name: u.name,
+          phone: u.phone,
           passwordHash: pwHash,
-          rol: u.rol,
-          recursoId: u.recursoId,
+          role: u.role,
+          resourceId: u.resourceId,
         },
       })
     }
     if (sedesRel.length > 0) {
-      await prisma.usuarioSede.createMany({
-        data: sedesRel.map((sedeId) => ({ usuarioId: usuario.id, sedeId })),
+      await prisma.userSite.createMany({
+        data: sedesRel.map((sedeId) => ({ userId: usuario.id, siteId: sedeId })),
       })
     }
-    usuariosCreados[u.rol] = usuario
+    usuariosCreados[u.role] = usuario
   }
   const coordinador = usuariosCreados.coordinador // María
   console.log(`   ✓ ${usuarios.length} usuarios (password: ${PASS})`)
 
   // ============ 5. PARÁMETROS DE COSTO (upsert por tipo + vigencia) ============
   const parametrosCosto = [
-    { tipoConsulta: 'oftalmologia',   costoCita: 150000, costoReprogramacion: 8000 },
-    { tipoConsulta: 'optometria',     costoCita: 50000,  costoReprogramacion: 5000 },
-    { tipoConsulta: 'anestesiologia', costoCita: 250000, costoReprogramacion: 12000 },
-    { tipoConsulta: 'diagnostico',    costoCita: 80000,  costoReprogramacion: 6000 },
+    { visitType: 'oftalmologia',   visitCost: 150000, rescheduleCost: 8000 },
+    { visitType: 'optometria',     visitCost: 50000,  rescheduleCost: 5000 },
+    { visitType: 'anestesiologia', visitCost: 250000, rescheduleCost: 12000 },
+    { visitType: 'diagnostico',    visitCost: 80000,  rescheduleCost: 6000 },
   ]
   const vigDate = new Date('2026-01-01')
   for (const p of parametrosCosto) {
-    const exists = await prisma.parametroCosto.findFirst({
-      where: { tipoConsulta: p.tipoConsulta, vigenteDesde: vigDate },
+    const exists = await prisma.costSetting.findFirst({
+      where: { visitType: p.visitType, effectiveFrom: vigDate },
     })
     if (!exists) {
-      await prisma.parametroCosto.create({
-        data: { ...p, vigenteDesde: vigDate, configuradoPor: coordinador.id },
+      await prisma.costSetting.create({
+        data: { ...p, effectiveFrom: vigDate, setBy: coordinador.id },
       })
     }
   }
@@ -249,43 +252,43 @@ async function main() {
 
   // ============ 6. PARÁMETROS DEL SISTEMA ============
   const parametrosSistema = [
-    { clave: 'meta_ocupacion_consultorios', valor: 80 },
-    { clave: 'meta_utilizacion_th',         valor: 90 },
-    { clave: 'meta_cumplimiento_ejecucion', valor: 85 },
-    { clave: 'semaforo_umbral_naranja',     valor: 10 },
-    { clave: 'base_horas_lun_vie_min',      valor: 720 },
-    { clave: 'base_horas_sabado_min',       valor: 240 },
+    { key: 'meta_ocupacion_consultorios', value: 80 },
+    { key: 'meta_utilizacion_th',         value: 90 },
+    { key: 'meta_cumplimiento_ejecucion', value: 85 },
+    { key: 'semaforo_umbral_naranja',     value: 10 },
+    { key: 'base_horas_lun_vie_min',      value: 720 },
+    { key: 'base_horas_sabado_min',       value: 240 },
   ]
   for (const p of parametrosSistema) {
-    await prisma.parametroSistema.upsert({
-      where: { clave: p.clave },
-      update: { valor: p.valor, updatedBy: usuariosCreados.supervisor.id },
-      create: { clave: p.clave, valor: p.valor, updatedBy: usuariosCreados.supervisor.id },
+    await prisma.systemSetting.upsert({
+      where: { key: p.key },
+      update: { value: p.value, updatedBy: usuariosCreados.supervisor.id },
+      create: { key: p.key, value: p.value, updatedBy: usuariosCreados.supervisor.id },
     })
   }
   console.log(`   ✓ ${parametrosSistema.length} parámetros del sistema`)
 
   // ============ 7. TAREAS BACKOFFICE (upsert por nombre) ============
   const tareasBackoffice = [
-    { nombre: 'Confirmación de citas', tiempoEstimadoMinutos: 5 },
-    { nombre: 'Generación de autorizaciones', tiempoEstimadoMinutos: 10 },
-    { nombre: 'Llamadas de seguimiento postoperatorio', tiempoEstimadoMinutos: 8 },
-    { nombre: 'Archivo y digitalización', tiempoEstimadoMinutos: 3 },
-    { nombre: 'Verificación de historias clínicas', tiempoEstimadoMinutos: 6 },
-    { nombre: 'Cubrir almuerzos',      descripcion: 'Cubrimiento del horario de almuerzo de otros recursos asistenciales.',         tiempoEstimadoMinutos: 60 },
-    { nombre: 'Visitas hospitalarias', descripcion: 'Visitas a pacientes hospitalizados.',                                           tiempoEstimadoMinutos: 90 },
-    { nombre: 'Citas personalizadas',  descripcion: 'Atención de citas personalizadas/agendadas fuera de la consulta regular.',     tiempoEstimadoMinutos: 30 },
-    { nombre: 'Brigadas',              descripcion: 'Apoyo en brigadas de salud (intramurales o extramurales).',                     tiempoEstimadoMinutos: 240 },
-    { nombre: 'Apoyo SIAU',            descripcion: 'Apoyo al Servicio de Información y Atención al Usuario (SIAU).',                tiempoEstimadoMinutos: 60 },
-    { nombre: 'Apoyo Cirugía',         descripcion: 'Apoyo al servicio de cirugía (preparación, instrumentación, postoperatorio).', tiempoEstimadoMinutos: 120 },
+    { name: 'Confirmación de citas', estimatedMinutes: 5 },
+    { name: 'Generación de autorizaciones', estimatedMinutes: 10 },
+    { name: 'Llamadas de seguimiento postoperatorio', estimatedMinutes: 8 },
+    { name: 'Archivo y digitalización', estimatedMinutes: 3 },
+    { name: 'Verificación de historias clínicas', estimatedMinutes: 6 },
+    { name: 'Cubrir almuerzos',      description: 'Cubrimiento del horario de almuerzo de otros recursos asistenciales.',         estimatedMinutes: 60 },
+    { name: 'Visitas hospitalarias', description: 'Visitas a pacientes hospitalizados.',                                           estimatedMinutes: 90 },
+    { name: 'Citas personalizadas',  description: 'Atención de citas personalizadas/agendadas fuera de la consulta regular.',     estimatedMinutes: 30 },
+    { name: 'Brigadas',              description: 'Apoyo en brigadas de salud (intramurales o extramurales).',                     estimatedMinutes: 240 },
+    { name: 'Apoyo SIAU',            description: 'Apoyo al Servicio de Información y Atención al Usuario (SIAU).',                estimatedMinutes: 60 },
+    { name: 'Apoyo Cirugía',         description: 'Apoyo al servicio de cirugía (preparación, instrumentación, postoperatorio).', estimatedMinutes: 120 },
   ]
   const tareasBoCreadas = []
   for (const t of tareasBackoffice) {
-    const exists = await prisma.tareaBackoffice.findFirst({ where: { nombre: t.nombre } })
+    const exists = await prisma.backofficeTask.findFirst({ where: { name: t.name } })
     const tarea = exists
-      ? await prisma.tareaBackoffice.update({ where: { id: exists.id }, data: t })
-      : await prisma.tareaBackoffice.create({
-          data: { ...t, creadaPor: usuariosCreados.supervisor.id },
+      ? await prisma.backofficeTask.update({ where: { id: exists.id }, data: t })
+      : await prisma.backofficeTask.create({
+          data: { ...t, createdBy: usuariosCreados.supervisor.id },
         })
     tareasBoCreadas.push(tarea)
   }
@@ -293,28 +296,28 @@ async function main() {
 
   // ============ 8. FESTIVOS ============
   const festivos = [
-    { fecha: new Date('2026-01-01'), descripcion: 'Año Nuevo' },
-    { fecha: new Date('2026-01-12'), descripcion: 'Día de los Reyes Magos' },
-    { fecha: new Date('2026-03-23'), descripcion: 'Día de San José' },
-    { fecha: new Date('2026-04-02'), descripcion: 'Jueves Santo' },
-    { fecha: new Date('2026-04-03'), descripcion: 'Viernes Santo' },
-    { fecha: new Date('2026-05-01'), descripcion: 'Día del Trabajo' },
-    { fecha: new Date('2026-07-20'), descripcion: 'Día de la Independencia' },
-    { fecha: new Date('2026-08-07'), descripcion: 'Batalla de Boyacá' },
-    { fecha: new Date('2026-12-08'), descripcion: 'Inmaculada Concepción' },
-    { fecha: new Date('2026-12-25'), descripcion: 'Navidad' },
+    { date: new Date('2026-01-01'), description: 'Año Nuevo' },
+    { date: new Date('2026-01-12'), description: 'Día de los Reyes Magos' },
+    { date: new Date('2026-03-23'), description: 'Día de San José' },
+    { date: new Date('2026-04-02'), description: 'Jueves Santo' },
+    { date: new Date('2026-04-03'), description: 'Viernes Santo' },
+    { date: new Date('2026-05-01'), description: 'Día del Trabajo' },
+    { date: new Date('2026-07-20'), description: 'Día de la Independencia' },
+    { date: new Date('2026-08-07'), description: 'Batalla de Boyacá' },
+    { date: new Date('2026-12-08'), description: 'Inmaculada Concepción' },
+    { date: new Date('2026-12-25'), description: 'Navidad' },
   ]
   for (const f of festivos) {
-    await prisma.festivo.upsert({
-      where: { fecha: f.fecha },
-      update: { descripcion: f.descripcion },
+    await prisma.holiday.upsert({
+      where: { date: f.date },
+      update: { description: f.description },
       create: f,
     })
   }
   console.log(`   ✓ ${festivos.length} festivos`)
 
   // ============ 9. SEMANAS Y ASIGNACIONES — solo si la BD está vacía de asignaciones ============
-  const yaHayAsigs = await prisma.asignacion.count()
+  const yaHayAsigs = await prisma.assignment.count()
   if (yaHayAsigs > 0) {
     console.log(`   ⊙ ${yaHayAsigs} asignaciones ya en BD — skip de semanas/asignaciones/ejecuciones/ausencias`)
   } else {
@@ -326,66 +329,66 @@ async function main() {
       const inicio = i < 0 ? subWeeks(domingoActual, -i) : addDays(domingoActual, i * 7)
       const fin = addDays(inicio, 6)
       const estado = i < 0 ? 'cerrada' : 'abierta'
-      const sem = await prisma.semana.create({
+      const sem = await prisma.week.create({
         data: {
-          fechaInicio: inicio,
-          fechaFin: fin,
-          estado,
-          cerradaPor: estado === 'cerrada' ? coordinador.id : null,
-          cerradaEn: estado === 'cerrada' ? new Date() : null,
+          startDate: inicio,
+          endDate: fin,
+          status: estado,
+          closedBy: estado === 'cerrada' ? coordinador.id : null,
+          closedAt: estado === 'cerrada' ? new Date() : null,
         },
       })
       semanas.push({ ...sem, offset: i })
     }
-    console.log(`   ✓ ${semanas.length} semanas (${semanas.filter((s) => s.estado === 'cerrada').length} cerradas + ${semanas.filter((s) => s.estado === 'abierta').length} abiertas)`)
+    console.log(`   ✓ ${semanas.length} semanas (${semanas.filter((s) => s.status === 'cerrada').length} cerradas + ${semanas.filter((s) => s.status === 'abierta').length} abiertas)`)
 
     // Plantilla de asignaciones por consultorio (5 días L-V)
     const plantillaConsultorio = (cons, semanaId, intervaloMinPorTipo) => {
       const asigs = []
       // Tipo de recurso según especialidad del consultorio
       const tiposCompat = {
-        oftalmologia:   { recursos: oftalmologos, requiereAux: true },
-        optometria:     { recursos: optometras,   requiereAux: false },
-        anestesiologia: { recursos: anestesiologo ? [anestesiologo] : [], requiereAux: true },
-        diagnostico:    { recursos: tecnicos,     requiereAux: false },
+        oftalmologia:   { resources: oftalmologos, requiereAux: true },
+        optometria:     { resources: optometras,   requiereAux: false },
+        anestesiologia: { resources: anestesiologo ? [anestesiologo] : [], requiereAux: true },
+        diagnostico:    { resources: tecnicos,     requiereAux: false },
       }
-      const conf = tiposCompat[cons.especialidad]
-      if (!conf || conf.recursos.length === 0) return asigs
+      const conf = tiposCompat[cons.specialty]
+      if (!conf || conf.resources.length === 0) return asigs
 
       for (let d = 0; d < 5; d++) {
         const dia = DIAS[d]
-        const recurso = pick(conf.recursos, d + cons.id.charCodeAt(0))
+        const recurso = pick(conf.resources, d + cons.id.charCodeAt(0))
         const aux = conf.requiereAux ? pick(auxiliares, d + cons.id.charCodeAt(1)) : null
 
         // Franja matutina
         const hi = '07:00'
-        const hf = cons.especialidad === 'optometria' ? '19:00' : '13:00'
+        const hf = cons.specialty === 'optometria' ? '19:00' : '13:00'
         asigs.push({
-          semanaId,
-          recursoId: recurso.id,
-          auxiliarId: aux?.id,
-          consultorioId: cons.id,
-          diaSemana: dia,
-          horaInicio: hi,
-          horaFin: hf,
-          pacientesCapacidad: capacidad(hi, hf, recurso.intervaloMinutos),
-          tieneHorasNocturnas: tieneNocturna(hi, hf),
+          weekId: semanaId,
+          resourceId: recurso.id,
+          assistantId: aux?.id,
+          roomId: cons.id,
+          weekday: dia,
+          startTime: hi,
+          endTime: hf,
+          patientCapacity: capacidad(hi, hf, recurso.slotMinutes),
+          hasNightHours: tieneNocturna(hi, hf),
         })
 
         // Segunda franja en oftalmología (tarde, médico distinto)
-        if (cons.especialidad === 'oftalmologia' && d % 2 === 0) {
-          const rec2 = pick(conf.recursos, d + 3)
+        if (cons.specialty === 'oftalmologia' && d % 2 === 0) {
+          const rec2 = pick(conf.resources, d + 3)
           const aux2 = pick(auxiliares, d + 5)
           asigs.push({
-            semanaId,
-            recursoId: rec2.id,
-            auxiliarId: aux2.id,
-            consultorioId: cons.id,
-            diaSemana: dia,
-            horaInicio: '14:00',
-            horaFin: '18:00',
-            pacientesCapacidad: capacidad('14:00', '18:00', rec2.intervaloMinutos),
-            tieneHorasNocturnas: false,
+            weekId: semanaId,
+            resourceId: rec2.id,
+            assistantId: aux2.id,
+            roomId: cons.id,
+            weekday: dia,
+            startTime: '14:00',
+            endTime: '18:00',
+            patientCapacity: capacidad('14:00', '18:00', rec2.slotMinutes),
+            hasNightHours: false,
           })
         }
       }
@@ -404,7 +407,7 @@ async function main() {
       for (const c of consultoriosSemana) {
         const asigs = plantillaConsultorio(c, sem.id)
         for (const a of asigs) {
-          await prisma.asignacion.create({ data: a }).catch(() => {})
+          await prisma.assignment.create({ data: a }).catch(() => {})
           totalAsigs++
         }
       }
@@ -413,21 +416,21 @@ async function main() {
 
     // ============ 10. EJECUCIONES (solo semanas cerradas — ya pasaron) ============
     let totalEjec = 0
-    for (const sem of semanas.filter((s) => s.estado === 'cerrada')) {
-      const asigsSem = await prisma.asignacion.findMany({ where: { semanaId: sem.id } })
+    for (const sem of semanas.filter((s) => s.status === 'cerrada')) {
+      const asigsSem = await prisma.assignment.findMany({ where: { weekId: sem.id } })
       for (const a of asigsSem) {
         // 90% se ejecutaron normal, 10% parcial
         const completo = Math.random() > 0.1
         const pacAt = completo
-          ? a.pacientesCapacidad
-          : Math.floor(a.pacientesCapacidad * (0.5 + Math.random() * 0.4))
-        await prisma.ejecucion.create({
+          ? a.patientCapacity
+          : Math.floor(a.patientCapacity * (0.5 + Math.random() * 0.4))
+        await prisma.execution.create({
           data: {
-            asignacionId: a.id,
-            pacientesAtendidos: pacAt,
-            estadoJornada: completo ? 'completa' : 'parcial',
-            observaciones: completo ? null : 'Atención reducida',
-            registradoPor: coordinador.id,
+            assignmentId: a.id,
+            patientsSeen: pacAt,
+            shiftStatus: completo ? 'completa' : 'parcial',
+            notes: completo ? null : 'Atención reducida',
+            recordedBy: coordinador.id,
           },
         })
         totalEjec++
@@ -442,66 +445,66 @@ async function main() {
 
     const ausenciasData = [
       {
-        recurso: recursos.find((r) => r.nombre === 'Dr. Escudero'),
-        fechaInicio: addDays(semActual.fechaInicio, 1), // martes
-        fechaFin:    addDays(semActual.fechaInicio, 1),
-        tipo: 'no_presentacion',
-        motivo: 'No se presentó al consultorio asignado',
+        resource: recursos.find((r) => r.name === 'Dr. Escudero'),
+        startDate: addDays(semActual.startDate, 1), // martes
+        endDate:    addDays(semActual.startDate, 1),
+        type: 'no_presentacion',
+        reason: 'No se presentó al consultorio asignado',
       },
       {
-        recurso: recursos.find((r) => r.nombre === 'Yasiris Trespalacios'),
-        fechaInicio: addDays(semActual.fechaInicio, 0),
-        fechaFin:    addDays(semActual.fechaInicio, 1),
-        tipo: 'enfermedad',
-        motivo: 'Incapacidad médica por gripe',
+        resource: recursos.find((r) => r.name === 'Yasiris Trespalacios'),
+        startDate: addDays(semActual.startDate, 0),
+        endDate:    addDays(semActual.startDate, 1),
+        type: 'enfermedad',
+        reason: 'Incapacidad médica por gripe',
       },
       {
-        recurso: recursos.find((r) => r.nombre === 'Doraine Barrios'),
-        fechaInicio: addDays(semActual.fechaInicio, 3), // jueves
-        fechaFin:    addDays(semActual.fechaInicio, 4),
-        tipo: 'familiar',
-        motivo: 'Evento familiar programado',
+        resource: recursos.find((r) => r.name === 'Doraine Barrios'),
+        startDate: addDays(semActual.startDate, 3), // jueves
+        endDate:    addDays(semActual.startDate, 4),
+        type: 'familiar',
+        reason: 'Evento familiar programado',
       },
       // Históricas
       {
-        recurso: recursos.find((r) => r.nombre === 'Yurley Pua'),
-        fechaInicio: addDays(semAnt.fechaInicio, 2),
-        fechaFin:    addDays(semAnt.fechaInicio, 2),
-        tipo: 'calamidad',
-        motivo: 'Calamidad doméstica',
+        resource: recursos.find((r) => r.name === 'Yurley Pua'),
+        startDate: addDays(semAnt.startDate, 2),
+        endDate:    addDays(semAnt.startDate, 2),
+        type: 'calamidad',
+        reason: 'Calamidad doméstica',
       },
       {
-        recurso: recursos.find((r) => r.nombre === 'Ana Nuñez'),
-        fechaInicio: addDays(semAnt.fechaInicio, 4),
-        fechaFin:    addDays(semAnt.fechaInicio, 4),
-        tipo: 'enfermedad',
-        motivo: 'Cita médica',
+        resource: recursos.find((r) => r.name === 'Ana Nuñez'),
+        startDate: addDays(semAnt.startDate, 4),
+        endDate:    addDays(semAnt.startDate, 4),
+        type: 'enfermedad',
+        reason: 'Cita médica',
       },
     ]
 
     for (const a of ausenciasData) {
-      if (!a.recurso) continue
+      if (!a.resource) continue
       // Crear como pendiente, luego "confirmar" calculando impacto manualmente
-      const ausencia = await prisma.ausencia.create({
+      const ausencia = await prisma.absence.create({
         data: {
-          recursoId: a.recurso.id,
-          fechaInicio: a.fechaInicio,
-          fechaFin: a.fechaFin,
-          tipo: a.tipo,
-          motivo: a.motivo,
-          esProgramada: false,
-          anticipacionDias: 0,
-          estado: 'confirmada',
-          reportadoPor: a.recurso.nombre === 'Angela Sarmiento' ? usuariosCreados.recurso.id : coordinador.id,
-          confirmadoPor: coordinador.id,
-          confirmadoEn: new Date(),
+          resourceId: a.resource.id,
+          startDate: a.startDate,
+          endDate: a.endDate,
+          type: a.type,
+          reason: a.reason,
+          isPlanned: false,
+          noticeDays: 0,
+          status: 'confirmada',
+          reportedBy: a.resource.name === 'Angela Sarmiento' ? usuariosCreados.resource.id : coordinador.id,
+          confirmedBy: coordinador.id,
+          confirmedAt: new Date(),
         },
       })
 
       // Calcular impacto: pacientes y costo
       const dias = []
-      for (let d = new Date(a.fechaInicio); d <= a.fechaFin; d.setDate(d.getDate() + 1)) {
-        dias.push({ fecha: format(d, 'yyyy-MM-dd'), dia: DIAS[(d.getDay() + 6) % 7] })
+      for (let d = new Date(a.startDate); d <= a.endDate; d.setDate(d.getDate() + 1)) {
+        dias.push({ date: format(d, 'yyyy-MM-dd'), day: DIAS[(d.getDay() + 6) % 7] })
       }
       let pacImpactados = 0
       let costoOport = 0
@@ -509,74 +512,74 @@ async function main() {
       const costoCitaMap = {
         oftalmologia: 150000, optometria: 50000, anestesiologia: 250000, diagnostico: 80000,
       }
-      for (const { fecha, dia } of dias) {
+      for (const { date: fecha, day: dia } of dias) {
         // El recurso puede aparecer como titular O como auxiliar (RN-18)
-        const asigsDia = await prisma.asignacion.findMany({
+        const asigsDia = await prisma.assignment.findMany({
           where: {
-            OR: [{ recursoId: a.recurso.id }, { auxiliarId: a.recurso.id }],
-            diaSemana: dia,
-            estado: { not: 'cancelada' },
+            OR: [{ resourceId: a.resource.id }, { assistantId: a.resource.id }],
+            weekday: dia,
+            status: { not: 'cancelada' },
           },
-          include: { consultorio: true },
+          include: { room: true },
         })
         let pacDia = 0
         let costoDia = 0
         for (const asig of asigsDia) {
-          pacDia += asig.pacientesCapacidad
-          costoDia += asig.pacientesCapacidad * (costoCitaMap[asig.consultorio.especialidad] ?? 0)
+          pacDia += asig.patientCapacity
+          costoDia += asig.patientCapacity * (costoCitaMap[asig.room.specialty] ?? 0)
         }
         pacImpactados += pacDia
         costoOport += costoDia
-        impactoPorDia.push({ fecha, dia, pacientes: pacDia, costo: costoDia })
+        impactoPorDia.push({ date: fecha, day: dia, pacientes: pacDia, cost: costoDia })
       }
 
-      await prisma.ausencia.update({
+      await prisma.absence.update({
         where: { id: ausencia.id },
         data: {
-          pacientesImpactados: pacImpactados,
-          costoOportunidad: costoOport,
-          impactoPorDia,
+          patientsAffected: pacImpactados,
+          opportunityCost: costoOport,
+          dailyImpact: impactoPorDia,
         },
       })
 
       // RN-24: si es oftalmólogo o anestesiólogo, marcar asignaciones sin_cobertura
-      if (['oftalmologo', 'anestesiologo'].includes(a.recurso.tipo)) {
-        await prisma.asignacion.updateMany({
+      if (['oftalmologo', 'anestesiologo'].includes(a.resource.type)) {
+        await prisma.assignment.updateMany({
           where: {
-            recursoId: a.recurso.id,
-            diaSemana: { in: dias.map((d) => d.dia) },
-            estado: 'activa',
+            resourceId: a.resource.id,
+            weekday: { in: dias.map((d) => d.day) },
+            status: 'activa',
           },
-          data: { estado: 'sin_cobertura' },
+          data: { status: 'sin_cobertura' },
         })
       }
     }
-    console.log(`   ✓ ${ausenciasData.filter((a) => a.recurso).length} ausencias confirmadas con impacto`)
+    console.log(`   ✓ ${ausenciasData.filter((a) => a.resource).length} ausencias confirmadas con impacto`)
 
     // ============ 12. NOTIFICACIONES iniciales para María (coordinadora) ============
     const notifs = [
       {
-        tipo: 'ausencia_reportada',
-        titulo: 'Ausencia confirmada — Dr. Escudero',
-        mensaje: 'Dr. Escudero registró ausencia para el martes. Revisa el impacto en pacientes.',
-        canal: 'app',
+        type: 'ausencia_reportada',
+        title: 'Ausencia confirmada — Dr. Escudero',
+        message: 'Dr. Escudero registró ausencia para el martes. Revisa el impacto en pacientes.',
+        channel: 'app',
       },
       {
-        tipo: 'recurso_ocioso',
-        titulo: 'Ana Nuñez tiene 5h sin asignar esta semana',
-        mensaje: 'Costo fijo subutilizado. Considera asignarle horas o backoffice.',
-        canal: 'app',
+        type: 'recurso_ocioso',
+        title: 'Ana Nuñez tiene 5h sin asignar esta semana',
+        message: 'Costo fijo subutilizado. Considera asignarle horas o backoffice.',
+        channel: 'app',
       },
       {
-        tipo: 'consultorio_sin_asignar',
-        titulo: 'Cons. 9 sin asignaciones el miércoles',
-        mensaje: 'El consultorio Cons. 9 no tiene asignación el miércoles. Programa un recurso.',
-        canal: 'app',
+        type: 'consultorio_sin_asignar',
+        title: 'Cons. 9 sin asignaciones el miércoles',
+        message: 'El consultorio Cons. 9 no tiene asignación el miércoles. Programa un recurso.',
+        channel: 'app',
       },
     ]
     for (const n of notifs) {
-      await prisma.notificacion.create({
-        data: { ...n, usuarioId: coordinador.id, enviada: true },
+      await prisma.notification.create({
+        data: { ...n, userId: coordinador.id, sent: true },
       })
     }
     console.log(`   ✓ ${notifs.length} notificaciones iniciales`)

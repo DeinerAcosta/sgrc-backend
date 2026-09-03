@@ -1,23 +1,58 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import compression from 'compression'
 import helmet from 'helmet'
 import morgan from 'morgan'
 import rateLimit from 'express-rate-limit'
 
+import { validarEntorno } from './lib/env.js'
+import { avisoProgramacionLibre } from './lib/schedulingMode.js'
 import routes from './routes/index.js'
 import { errorHandler } from './middleware/error.js'
 import { snakeBodyToCamel, camelResponseToSnake } from './middleware/caseConverter.js'
 import { iniciarJobs } from './jobs/index.js'
 import { prisma } from './lib/prisma.js'
 import { limpiarCacheExpirado, invalidarCache } from './lib/cache.js'
+import { limpiarCacheUsuarios } from './middleware/auth.js'
+
+// Se valida ANTES de construir la app: si falta algo, el proceso muere aquí con
+// un mensaje claro en vez de arrancar y fallar luego en el primer login.
+let PORT
+try {
+  const { env, avisos } = validarEntorno()
+  PORT = env.PORT
+  for (const aviso of avisos) console.warn(`⚠️  ${aviso}`)
+} catch (e) {
+  console.error(`\n❌ ${e.message}\n`)
+  process.exit(1)
+}
 
 const app = express()
-const PORT = process.env.PORT || 3001
 
 // ============ SEGURIDAD ============
+// CSP: en desarrollo estorba (Vite inyecta scripts y estilos en caliente), en
+// producción es la principal mitigación de un XSS — y el token de sesión vive en
+// localStorage, así que aquí importa de verdad.
+//
+// Antes estaba desactivada de forma incondicional, con un comentario que decía
+// "habilitar en producción" que nunca se llegó a cumplir.
+//
+// La API solo devuelve JSON: no sirve HTML, ni scripts, ni estilos. Por eso la
+// política puede ser tan cerrada. Si algún día se sirve el frontend desde este
+// mismo proceso, habrá que abrirla.
+const enProduccion = process.env.NODE_ENV === 'production'
 app.use(helmet({
-  contentSecurityPolicy: false, // dev — habilitar en producción
+  contentSecurityPolicy: enProduccion
+    ? {
+        directives: {
+          defaultSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          baseUri: ["'none'"],
+          formAction: ["'none'"],
+        },
+      }
+    : false,
 }))
 
 // CORS — múltiples orígenes separados por coma
@@ -29,6 +64,11 @@ app.use(cors({
   },
   credentials: true,
 }))
+
+// Compresión gzip de las respuestas. Los informes y el programador devuelven
+// arrays JSON grandes; sobre la red de una sede eso pesa más que el tiempo de
+// consulta. Va antes de las rutas para que cubra todo /api.
+app.use(compression())
 
 app.use(express.json({ limit: '2mb' }))
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'))
@@ -83,8 +123,28 @@ app.use('/api', snakeBodyToCamel, camelResponseToSnake)
 // → los dashboards e informes reflejan los cambios al instante, sin esperar el TTL.
 // Las lecturas concurrentes siguen protegidas: el caché se reconstruye en la
 // siguiente petición.
+//
+// EXCEPCIONES (fix sep-2026): hay mutaciones de alta frecuencia que no pueden
+// alterar NINGÚN informe ni KPI. Si se dejan pasar, el caché no llega nunca a
+// cumplir su TTL y deja de servir para lo único que existe.
+//
+// El caso grave era el heartbeat de presencia: el frontend lo llama cada 30s por
+// usuario conectado (hooks/useHeartbeat.js). Con ~100 usuarios son 3,3 PUT por
+// segundo → 3,3 borrados de caché por segundo contra un TTL de 30s. En la
+// práctica el caché de informes estaba SIEMPRE frío y cada dashboard se
+// recalculaba entero desde la BD.
+//
+// Criterio para añadir una ruta aquí: la mutación solo puede tocar columnas que
+// ningún informe lee (presencia, marcas de leído). Ante la duda, NO añadirla —
+// invalidar de más es lento, invalidar de menos es servir datos viejos.
+const MUTACIONES_SIN_IMPACTO_EN_INFORMES = [
+  /^\/usuarios\/me\/heartbeat$/,   // solo escribe usuario.ultima_actividad
+  /^\/notificaciones\//,           // solo marca notificaciones como leídas
+]
+
 app.use('/api', (req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (MUTACIONES_SIN_IMPACTO_EN_INFORMES.some((re) => re.test(req.path))) return next()
     res.on('finish', () => {
       if (res.statusCode >= 200 && res.statusCode < 300) invalidarCache()
     })
@@ -104,11 +164,18 @@ app.use((req, res) => res.status(404).json({ message: 'Ruta no encontrada' }))
 const server = app.listen(PORT, () => {
   console.log(`🚀 SGRC Backend escuchando en http://localhost:${PORT}/api`)
   console.log(`   Health check: http://localhost:${PORT}/health`)
+  // Se avisa en cada arranque a propósito: es un modo temporal y no debería
+  // quedarse activo por olvido.
+  const aviso = avisoProgramacionLibre()
+  if (aviso) console.warn(aviso)
   iniciarJobs()
 })
 
 // Limpieza periódica del caché en memoria para que no crezca indefinidamente.
-const limpiezaCache = setInterval(limpiarCacheExpirado, 60_000)
+const limpiezaCache = setInterval(() => {
+  limpiarCacheExpirado()
+  limpiarCacheUsuarios()   // estado de usuario que usa requireAuth (TTL 60s)
+}, 60_000)
 limpiezaCache.unref?.() // no impedir que el proceso termine por este timer
 
 // ============ APAGADO ELEGANTE (graceful shutdown) ============

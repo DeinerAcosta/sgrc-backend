@@ -56,20 +56,62 @@ export async function enviarEmail({ to, subject, html, text }) {
   }
 }
 
-/** Plantilla HTML mínima con branding SGRC */
-export function plantillaEmail(titulo, cuerpo, accionUrl, accionTexto) {
+/** Prefijo estándar para todos los asuntos: marca + aplicativo. */
+export const ASUNTO_PREFIJO = '[VIU · FOCA | SGRC]'
+
+/**
+ * Plantilla HTML profesional. Header con marca completa, cuerpo del mensaje,
+ * tabla opcional con detalles estructurados (sede, fecha, tipo, etc.), CTA
+ * opcional, y footer institucional.
+ *
+ * @param {string} titulo            - Título del email (h2)
+ * @param {string} cuerpo            - HTML del cuerpo principal
+ * @param {string} [accionUrl]       - URL para CTA opcional
+ * @param {string} [accionTexto]     - Texto del CTA (default: "Ver detalle")
+ * @param {Array<[string,string]>} [detalles] - Tabla de "etiqueta:valor" (sede, fecha, etc.)
+ * @param {string} [contexto]        - Línea de contexto sobre el cuerpo (intro)
+ */
+export function plantillaEmail(titulo, cuerpo, accionUrl, accionTexto, detalles, contexto) {
+  const tablaDetalles = Array.isArray(detalles) && detalles.length
+    ? `<table style="width:100%;border-collapse:collapse;margin:14px 0;background:#f8fafc;border-radius:8px;overflow:hidden">
+         ${detalles.map(([k, v]) => `
+           <tr>
+             <td style="padding:8px 12px;font-size:13px;color:#64748b;font-weight:500;width:42%;border-bottom:1px solid #e2e8f0;vertical-align:top">${k}</td>
+             <td style="padding:8px 12px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0">${v}</td>
+           </tr>`).join('')}
+       </table>`
+    : ''
+  const introHTML = contexto
+    ? `<div style="font-size:13px;color:#64748b;margin-bottom:12px">${contexto}</div>`
+    : ''
+  const fechaAhora = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'long', timeStyle: 'short' })
   return `
-  <div style="font-family:Inter,system-ui,sans-serif;max-width:520px;margin:0 auto;color:#1A1A17">
-    <div style="background:#185FA5;color:#fff;padding:20px 24px;border-radius:12px 12px 0 0">
-      <div style="font-size:18px;font-weight:600">SGRC</div>
-      <div style="font-size:12px;opacity:.8">Sistema de Gestión de Recursos Clínicos</div>
+  <div style="font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;color:#1A1A17;background:#f1f5f9;padding:20px">
+    <div style="background:#1B2A6C;color:#fff;padding:22px 26px;border-radius:12px 12px 0 0">
+      <table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="vertical-align:middle">
+            <div style="display:inline-block;padding:6px 14px;background:rgba(255,255,255,0.16);border-radius:6px;font-size:14px;font-weight:700;letter-spacing:3px;color:#fff">VIU · FOCA</div>
+          </td>
+          <td style="vertical-align:middle;text-align:right;font-size:10px;letter-spacing:1px;opacity:.78;text-transform:uppercase;color:#fff">
+            Clínica Oftalmológica Internacional<br>
+            Fundación Oftalmológica del Caribe
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:20px;font-weight:700;margin-top:16px;color:#fff">SGRC — Sistema de Gestión de Recursos Clínicos</div>
+      <div style="font-size:12px;opacity:.85;margin-top:4px;color:#fff">Notificación automática del aplicativo</div>
     </div>
-    <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px">
-      <h2 style="font-size:16px;margin:0 0 12px">${titulo}</h2>
-      <div style="font-size:14px;line-height:1.6;color:#374151">${cuerpo}</div>
-      ${accionUrl ? `<a href="${accionUrl}" style="display:inline-block;margin-top:16px;background:#185FA5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px">${accionTexto ?? 'Ver detalle'}</a>` : ''}
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #f0f0f0;font-size:12px;color:#9ca3af">
-        Notificación automática del SGRC · Clínica Oftalmológica Internacional
+    <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:26px;border-radius:0 0 12px 12px">
+      <h2 style="font-size:16px;margin:0 0 8px;color:#0f172a;font-weight:600">${titulo}</h2>
+      ${introHTML}
+      <div style="font-size:14px;line-height:1.6;color:#334155">${cuerpo}</div>
+      ${tablaDetalles}
+      ${accionUrl ? `<a href="${accionUrl}" style="display:inline-block;margin-top:14px;background:#1B2A6C;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500">${accionTexto ?? 'Ver detalle en el sistema'}</a>` : ''}
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.6">
+        <strong style="color:#475569">VIU · FOCA</strong> — Clínica Oftalmológica Internacional · Fundación Oftalmológica del Caribe<br>
+        Este es un correo automático generado por el SGRC el ${fechaAhora} (hora Colombia). No respondas a este mensaje.<br>
+        Para soporte: <a href="mailto:desarrollo@cofca.com" style="color:#1B2A6C;text-decoration:none;font-weight:500">desarrollo@cofca.com</a>
       </div>
     </div>
   </div>`

@@ -5,25 +5,25 @@ import { prisma } from '../lib/prisma.js'
  * Se llama desde los controllers cuando hay cambios críticos.
  */
 export async function registrarAuditoria({
-  usuarioId,
-  accion,
-  entidad,
-  entidadId,
-  valorAnterior = null,
-  valorNuevo = null,
-  motivo = null,
+  userId: usuarioId,
+  action: accion,
+  entity: entidad,
+  entityId: entidadId,
+  oldValue: valorAnterior = null,
+  newValue: valorNuevo = null,
+  reason: motivo = null,
   ipAddress = null,
 }) {
   try {
-    await prisma.auditoria.create({
+    await prisma.auditEntry.create({
       data: {
-        usuarioId,
-        accion,
-        entidad,
-        entidadId: String(entidadId),
-        valorAnterior,
-        valorNuevo,
-        motivo,
+        userId: usuarioId,
+        action: accion,
+        entity: entidad,
+        entityId: String(entidadId),
+        oldValue: valorAnterior,
+        newValue: valorNuevo,
+        reason: motivo,
         ipAddress,
       },
     })

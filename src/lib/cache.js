@@ -22,7 +22,7 @@ export async function withCache(key, ttlMs, fn) {
   const now = Date.now()
   const hit = store.get(key)
   if (hit && hit.expira > now) {
-    return hit.promesa ?? hit.valor
+    return hit.promesa ?? hit.value
   }
 
   const promesa = Promise.resolve().then(fn)
@@ -31,7 +31,7 @@ export async function withCache(key, ttlMs, fn) {
 
   try {
     const valor = await promesa
-    store.set(key, { valor, expira: now + ttlMs })
+    store.set(key, { value: valor, expira: now + ttlMs })
     return valor
   } catch (e) {
     store.delete(key) // nunca cachear errores

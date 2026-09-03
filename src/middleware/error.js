@@ -2,7 +2,7 @@ import { ZodError } from 'zod'
 import { HttpError } from '../lib/errors.js'
 
 /** Captura cualquier error lanzado en rutas/controladores y devuelve JSON estándar */
-export function errorHandler(err, req, res, next) {
+export function errorHandler(err, req, res, _next) {
   // Validación zod
   if (err instanceof ZodError) {
     return res.status(400).json({

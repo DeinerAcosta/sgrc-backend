@@ -18,6 +18,10 @@ enum Rol {
   coordinador
   directivo
   supervisor
+  // Gerencia = super-usuario por encima del supervisor. Acceso TOTAL al sistema:
+  // dashboards ejecutivos + administración + auditoría. Reservado para gerencia
+  // y dirección operativa (Wendy Ruiz, Jorge Martínez).
+  gerencia
 }
 
 enum TipoRecurso {
@@ -27,6 +31,8 @@ enum TipoRecurso {
   asesor_servicios
   auxiliar
   tecnico
+  fonoaudiologa
+  otorrino
 }
 
 enum EsquemaPago {
@@ -40,6 +46,9 @@ enum Especialidad {
   optometria
   anestesiologia
   diagnostico
+  asesoria
+  fonoaudiologia
+  otorrinolaringologia
 }
 
 enum EstadoSemana {
@@ -94,44 +103,53 @@ enum EstadoAsignacion {
 }
 
 // ============ USUARIOS ============
-model Usuario {
+model User {
   id                  String    @id @default(uuid())
-  nombre              String    @db.VarChar(150)
+  name                String    @map("nombre") @db.VarChar(150)
   email               String    @unique @db.VarChar(200)
-  celular             String?   @db.VarChar(20)
+  phone               String?   @map("celular") @db.VarChar(20)
   passwordHash        String    @map("password_hash") @db.VarChar(255)
-  rol                 Rol
-  recursoId           String?   @unique @map("recurso_id")
-  activo              Boolean   @default(true)
-  debeCambiarPassword Boolean   @default(false) @map("debe_cambiar_password")
-  ultimoLogin         DateTime? @map("ultimo_login")
+  role                Rol       @map("rol")
+  resourceId          String?   @unique @map("recurso_id")
+  active              Boolean   @default(true) @map("activo")
+  mustChangePassword  Boolean   @default(false) @map("debe_cambiar_password")
+  lastLoginAt         DateTime? @map("ultimo_login")
   // Heartbeat de presencia (long-polling): se actualiza cada 30s desde el cliente
   // mientras hay sesión activa. Si está dentro de los últimos 60s se considera "en línea".
-  ultimaActividad     DateTime? @map("ultima_actividad")
+  lastSeenAt          DateTime? @map("ultima_actividad")
+  // Última vez que el supervisor reenvió credenciales a este usuario.
+  // Sirve para que el supervisor no duplique reenvíos por error.
+  credentialsResentAt DateTime? @map("credenciales_reenviadas_en")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  recurso        Recurso?        @relation(fields: [recursoId], references: [id])
-  sedes          UsuarioSede[]
-  sedesResponsable Sede[]        @relation("SedeResponsable")
-  notificaciones Notificacion[]
-  acciones       Auditoria[]
-  passwordResets PasswordReset[]
+  resource                    Resource?         @relation(fields: [resourceId], references: [id])
+  sites                       UserSite[]
+  managedSites                Site[]            @relation("SedeResponsable")
+  notifications               Notification[]
+  auditActions                AuditEntry[]
+  passwordResets              PasswordReset[]
+  // Solicitudes de recurso: como solicitante o como decisor (supervisor)
+  resourceRequestsAsRequester ResourceRequest[] @relation("SolicitudRecursoSolicitante")
+  resourceRequestsAsDecider   ResourceRequest[] @relation("SolicitudRecursoDecisor")
+  // Fase 3 · reposiciones de ausencia
+  requestedMakeups            AbsenceMakeup[]   @relation("ReposicionSolicitante")
+  approvedMakeups             AbsenceMakeup[]   @relation("ReposicionAprobador")
 
-  @@index([rol])
+  @@index([role])
   @@map("usuarios")
 }
 
 // ============ PASSWORD RESETS (HU-R-09) ============
 model PasswordReset {
   id        String   @id @default(uuid())
-  usuarioId String   @map("usuario_id")
+  userId    String   @map("usuario_id")
   token     String   @unique @db.VarChar(128)
-  expiraEn  DateTime @map("expira_en")
-  usado     Boolean  @default(false)
+  expiresAt DateTime @map("expira_en")
+  used      Boolean  @default(false) @map("usado")
   createdAt DateTime @default(now()) @map("created_at")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([token])
   @@map("password_resets")
@@ -139,244 +157,451 @@ model PasswordReset {
 
 // ============ SOLICITUDES DE REGISTRO ============
 // El empleado se autorregistra (form público) y el supervisor aprueba/rechaza.
-// Al aprobar se crea el Usuario (y Recurso si aplica) con contraseña provisional
+// Al aprobar se crea el User (y Resource si aplica) con contraseña provisional
 // que llega por email y se obliga a cambiar al primer ingreso.
-model SolicitudRegistro {
-  id               String   @id @default(uuid())
-  nombre           String   @db.VarChar(150)
-  email            String   @db.VarChar(200)
-  celular          String?  @db.VarChar(20)
-  rol              String   @db.VarChar(20) // recurso, coordinador, directivo
-  // Datos opcionales del Recurso (si rol = recurso)
-  tipoRecurso      String?  @map("tipo_recurso") @db.VarChar(30)
-  especialidad     String?  @db.VarChar(100)
-  horasMaxSemana   Int?     @map("horas_max_semana")
-  horasMaxDia      Int?     @map("horas_max_dia")
-  esquemaPago      String?  @map("esquema_pago") @db.VarChar(20)
-  intervaloMinutos Int?     @map("intervalo_minutos")
+model SignupRequest {
+  id              String    @id @default(uuid())
+  name            String    @map("nombre") @db.VarChar(150)
+  email           String    @db.VarChar(200)
+  phone           String?   @map("celular") @db.VarChar(20)
+  role            String    @map("rol") @db.VarChar(20) // recurso, coordinador, directivo
+  // Datos opcionales del Resource (si rol = recurso)
+  resourceType    String?   @map("tipo_recurso") @db.VarChar(30)
+  specialty       String?   @map("especialidad") @db.VarChar(100)
+  maxHoursPerWeek Int?      @map("horas_max_semana")
+  maxHoursPerDay  Int?      @map("horas_max_dia")
+  payScheme       String?   @map("esquema_pago") @db.VarChar(20)
+  slotMinutes     Int?      @map("intervalo_minutos")
   // Sedes que solicita (UUIDs de sedes, JSON array)
-  sedesSolicitadas Json?    @map("sedes_solicitadas")
-  estado           String   @default("pendiente") @db.VarChar(20) // pendiente, aprobada, rechazada
-  motivoRechazo    String?  @map("motivo_rechazo") @db.Text
-  procesadoPor     String?  @map("procesado_por")
-  procesadoEn      DateTime? @map("procesado_en")
-  usuarioCreadoId  String?  @map("usuario_creado_id") // referencia al Usuario creado al aprobar
-  createdAt        DateTime @default(now()) @map("created_at")
+  requestedSites  Json?     @map("sedes_solicitadas")
+  status          String    @default("pendiente") @map("estado") @db.VarChar(20) // pendiente, aprobada, rechazada
+  rejectionReason String?   @map("motivo_rechazo") @db.Text
+  processedBy     String?   @map("procesado_por")
+  processedAt     DateTime? @map("procesado_en")
+  createdUserId   String?   @map("usuario_creado_id") // referencia al User creado al aprobar
+  createdAt       DateTime  @default(now()) @map("created_at")
 
-  @@index([estado])
+  @@index([status])
   @@index([email])
   @@map("solicitudes_registro")
 }
 
+// Solicitud de un coordinador para usar un recurso en una sede que no le pertenece.
+// Cubre dos casos:
+//   - tipo_solicitud="prestamo": el coord pide usar un recurso ya existente
+//     (que pertenece a otra sede o coord-líder). Al aprobar, se vincula el
+//     usuario del recurso a la sede destino vía UsuarioSede.
+//   - tipo_solicitud="alta_nueva": el coord pide al supervisor crear un
+//     recurso nuevo (médico nuevo, técnica nueva, etc). Al aprobar, abre
+//     directamente el formulario de catálogo prellenado.
+model ResourceRequest {
+  id                String    @id @default(uuid())
+  requesterId       String    @map("solicitante_id")
+  targetSiteId      String    @map("sede_destino_id")
+  requestType       String    @map("tipo_solicitud") @db.VarChar(20) // prestamo, alta_nueva
+  // Si tipo=prestamo: cual recurso
+  resourceId        String?   @map("recurso_id")
+  // Si tipo=alta_nueva: que tipo de recurso (oftalmologo, tecnico, etc)
+  newResourceType   String?   @map("tipo_recurso_nuevo") @db.VarChar(30)
+  specialty         String?   @map("especialidad") @db.VarChar(200)
+  // Rango temporal de la solicitud (ambos opcionales — null = indefinido)
+  startWeekId       String?   @map("semana_inicio_id")
+  endWeekId         String?   @map("semana_fin_id")
+  justification     String    @map("justificacion") @db.Text
+  status            String    @default("pendiente") @map("estado") @db.VarChar(20) // pendiente, aprobada, rechazada, ejecutada, cancelada
+  decisionReason    String?   @map("motivo_decision") @db.Text
+  decidedById       String?   @map("decidida_por_id")
+  decidedAt         DateTime? @map("decidida_en")
+  // Si tipo=alta_nueva y se aprobó: id del recurso recién creado
+  createdResourceId String?   @map("recurso_creado_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  requester  User      @relation("SolicitudRecursoSolicitante", fields: [requesterId], references: [id])
+  targetSite Site      @relation(fields: [targetSiteId], references: [id])
+  resource   Resource? @relation("SolicitudRecursoRecurso", fields: [resourceId], references: [id])
+  decidedBy  User?     @relation("SolicitudRecursoDecisor", fields: [decidedById], references: [id])
+  startWeek  Week?     @relation("SolicitudRecursoSemanaIni", fields: [startWeekId], references: [id])
+  endWeek    Week?     @relation("SolicitudRecursoSemanaFin", fields: [endWeekId], references: [id])
+
+  @@index([status])
+  @@index([requesterId])
+  @@index([targetSiteId])
+  @@index([resourceId])
+  @@map("solicitudes_recurso")
+}
+
 // Relación N:N entre coordinadores y sedes
-model UsuarioSede {
-  usuarioId String @map("usuario_id")
-  sedeId    String @map("sede_id")
+model UserSite {
+  userId String @map("usuario_id")
+  siteId String @map("sede_id")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  sede    Sede    @relation(fields: [sedeId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
-  @@id([usuarioId, sedeId])
+  @@id([userId, siteId])
   @@map("usuarios_sedes")
 }
 
 // ============ SEDES ============
-model Sede {
-  id            String   @id @default(uuid())
-  nombre        String   @db.VarChar(150)
-  ciudad        String   @db.VarChar(100)
-  direccion     String?  @db.Text
-  activa        Boolean  @default(true)
-  responsableId String?  @map("responsable_id")  // Usuario responsable de la sede (típicamente el coordinador)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+model Site {
+  id        String   @id @default(uuid())
+  name      String   @map("nombre") @db.VarChar(150)
+  city      String   @map("ciudad") @db.VarChar(100)
+  address   String?  @map("direccion") @db.Text
+  active    Boolean  @default(true) @map("activa")
+  managerId String?  @map("responsable_id") // User responsable de la sede (típicamente el coordinador)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  responsable            Usuario? @relation("SedeResponsable", fields: [responsableId], references: [id])
-  consultorios           Consultorio[]
-  usuarios               UsuarioSede[]
-  asignacionesBackoffice AsignacionBackoffice[]
+  manager               User?                  @relation("SedeResponsable", fields: [managerId], references: [id])
+  rooms                 Room[]
+  users                 UserSite[]
+  backofficeAssignments BackofficeAssignment[]
+  weekClosures          WeekSiteClosure[]
+  resourceRequests      ResourceRequest[]
 
-  @@index([ciudad])
-  @@index([activa])
+  @@index([city])
+  @@index([active])
   @@map("sedes")
 }
 
 // ============ CONSULTORIOS ============
-model Consultorio {
-  id               String       @id @default(uuid())
-  sedeId           String       @map("sede_id")
-  nombre           String       @db.VarChar(100)
-  especialidad     Especialidad
-  requiereAuxiliar Boolean      @map("requiere_auxiliar")
-  activo           Boolean      @default(true)
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
+model Room {
+  id                String        @id @default(uuid())
+  siteId            String        @map("sede_id")
+  name              String        @map("nombre") @db.VarChar(100)
+  specialty         Especialidad  @map("especialidad")
+  // Servicio secundario opcional cubierto por un auxiliar (ej. Quirúrgico 5
+  // usa anestesiología principalmente pero algunos días el aux hace electro).
+  altSpecialty      Especialidad? @map("especialidad_alternativa")
+  requiresAssistant Boolean       @map("requiere_auxiliar")
+  active            Boolean       @default(true) @map("activo")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  sede         Sede         @relation(fields: [sedeId], references: [id])
-  asignaciones Asignacion[]
+  site        Site            @relation(fields: [siteId], references: [id])
+  assignments Assignment[]
+  makeups     AbsenceMakeup[]
 
-  @@index([sedeId])
-  @@index([activo])
+  @@index([siteId])
+  @@index([active])
   @@map("consultorios")
 }
 
 // ============ RECURSOS ============
-model Recurso {
+model Resource {
   id                 String      @id @default(uuid())
-  nombre             String      @db.VarChar(150)
-  tipo               TipoRecurso
-  especialidad       String?     @db.VarChar(100)
-  intervaloMinutos   Int?        @map("intervalo_minutos")
-  esquemaPago        EsquemaPago @map("esquema_pago")
-  horasMaxSemana     Int         @default(42) @map("horas_max_semana")
-  horasMaxDia        Int         @default(10) @map("horas_max_dia")
+  name               String      @map("nombre") @db.VarChar(150)
+  type               TipoRecurso @map("tipo")
+  specialty          String?     @map("especialidad") @db.VarChar(100)
+  slotMinutes        Int?        @map("intervalo_minutos")
+  payScheme          EsquemaPago @map("esquema_pago")
+  // Tope contractual semanal — null para oftalmólogos (paga por paciente sin tope).
+  maxHoursPerWeek    Int?        @default(42) @map("horas_max_semana")
+  maxHoursPerDay     Int         @default(10) @map("horas_max_dia")
   // Médicos que cubren 2-3 consultorios en paralelo con auxiliares manejando
   // cada sala. Cuando true: se omite el conflicto RN-08 del recurso y las
   // horas diarias se calculan por UNIÓN de intervalos (no por suma).
-  multiConsultorio   Boolean     @default(false) @map("multi_consultorio")
-  activo             Boolean     @default(true)
-  motivoInactivacion String?     @map("motivo_inactivacion") @db.Text
+  multiRoom          Boolean     @default(false) @map("multi_consultorio")
+  // Coordinador-líder responsable de medir KPIs (productividad, ausencias)
+  // de este recurso. Si el recurso está prestado a otra sede, el OTRO
+  // coordinador puede asignarlo operativamente pero el líder NO cambia.
+  leadCoordinatorId  String?     @map("coordinador_lider_id")
+  active             Boolean     @default(true) @map("activo")
+  deactivationReason String?     @map("motivo_inactivacion") @db.Text
+  // CSV de tipos de apoyo adicionales en los que el recurso puede ser elegido
+  // como auxiliar/técnico de apoyo (además de su `tipo` principal). Ej. una
+  // técnica de diagnóstico que también puede asistir a un oftalmólogo →
+  // tiposApoyo = "auxiliar". Vacío/null = solo aparece en pools de su tipo.
+  supportTypes       String?     @map("tipos_apoyo") @db.VarChar(100)
   createdAt          DateTime    @default(now()) @map("created_at")
   updatedAt          DateTime    @updatedAt @map("updated_at")
 
-  usuario                Usuario?
-  asignacionesPrincipal  Asignacion[]           @relation("RecursoPrincipal")
-  asignacionesAuxiliar   Asignacion[]           @relation("RecursoAuxiliar")
-  ausencias              Ausencia[]
-  asignacionesBackoffice AsignacionBackoffice[]
+  user                    User?
+  assignmentsAsLead       Assignment[]           @relation("RecursoPrincipal")
+  assignmentsAsAssistant  Assignment[]           @relation("RecursoAuxiliar")
+  assignmentsAsAssistant2 Assignment[]           @relation("RecursoAuxiliar2")
+  absences                Absence[]
+  backofficeAssignments   BackofficeAssignment[]
+  loanRequests            ResourceRequest[]      @relation("SolicitudRecursoRecurso")
 
-  @@index([tipo])
-  @@index([activo])
+  @@index([type])
+  @@index([active])
   @@map("recursos")
 }
 
 // ============ SEMANAS ============
-model Semana {
-  id          String       @id @default(uuid())
-  fechaInicio DateTime     @unique @map("fecha_inicio") @db.Date
-  fechaFin    DateTime     @map("fecha_fin") @db.Date
-  estado      EstadoSemana @default(abierta)
-  cerradaPor  String?      @map("cerrada_por")
-  cerradaEn   DateTime?    @map("cerrada_en")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+model Week {
+  id        String       @id @default(uuid())
+  startDate DateTime     @unique @map("fecha_inicio") @db.Date
+  endDate   DateTime     @map("fecha_fin") @db.Date
+  // `estado` queda como flag consolidado: 'cerrada' cuando TODAS las sedes con
+  // asignaciones cerraron su parte. `cerradaPor`/`cerradaEn` marcan la fecha
+  // del último cierre por sede (consolidación de la semana entera).
+  status    EstadoSemana @default(abierta) @map("estado")
+  closedBy  String?      @map("cerrada_por")
+  closedAt  DateTime?    @map("cerrada_en")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
 
-  asignaciones Asignacion[]
+  assignments              Assignment[]
+  siteClosures             WeekSiteClosure[]
+  resourceRequestsStarting ResourceRequest[] @relation("SolicitudRecursoSemanaIni")
+  resourceRequestsEnding   ResourceRequest[] @relation("SolicitudRecursoSemanaFin")
 
-  @@index([estado])
+  @@index([status])
   @@map("semanas")
 }
 
+// Cierre de semana POR SEDE. Cada sede tiene su propio responsable y fecha de
+// cierre. La semana global se considera "cerrada" cuando TODAS las sedes con
+// asignaciones tienen su cierre. Antes el cierre era único en `Semana` y el
+// primer coord que cerraba afectaba a todas las sedes.
+model WeekSiteClosure {
+  id       String   @id @default(uuid())
+  weekId   String   @map("semana_id")
+  siteId   String   @map("sede_id")
+  closedBy String?  @map("cerrada_por") // null = cerrado por el sistema (auto)
+  closedAt DateTime @default(now()) @map("cerrada_en")
+  reason   String?  @map("motivo") @db.VarChar(255) // opcional: motivo de reapertura o nota del cierre
+
+  week Week @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([weekId, siteId]) // una sola fila por (semana, sede)
+  @@index([siteId])
+  @@map("cierres_semana_sede")
+}
+
 // ============ ASIGNACIONES (tabla central — RN-08, RN-09, RN-13, RN-16) ============
-model Asignacion {
+model Assignment {
   id                  String           @id @default(uuid())
-  semanaId            String           @map("semana_id")
-  recursoId           String           @map("recurso_id")
-  auxiliarId          String?          @map("auxiliar_id")
-  consultorioId       String           @map("consultorio_id")
-  diaSemana           DiaSemana        @map("dia_semana")
-  horaInicio          String           @map("hora_inicio") @db.VarChar(5)
-  horaFin             String           @map("hora_fin") @db.VarChar(5)
-  pacientesCapacidad  Int              @map("pacientes_capacidad")
-  esHorasExtras       Boolean          @default(false) @map("es_horas_extras")
-  tieneHorasNocturnas Boolean          @default(false) @map("tiene_horas_nocturnas")
-  esReemplazo         Boolean          @default(false) @map("es_reemplazo")
-  ausenciaCubiertaId  String?          @map("ausencia_cubierta_id")
-  estado              EstadoAsignacion @default(activa)
+  weekId              String           @map("semana_id")
+  resourceId          String           @map("recurso_id")
+  assistantId         String?          @map("auxiliar_id")
+  // Sub-horario opcional para la auxiliar (si null hereda del doctor).
+  // Útil cuando la aux cubre solo PARTE del turno del doctor (ej. Doc 11-15,
+  // Aux1 solo 11-13 porque después va a otro consultorio).
+  assistantStartTime  String?          @map("auxiliar_hora_inicio") @db.VarChar(5)
+  assistantEndTime    String?          @map("auxiliar_hora_fin") @db.VarChar(5)
+  // Segundo auxiliar opcional — para consultorios complejos donde el doctor
+  // necesita 2 auxiliares simultáneas (cirugías, exámenes complejos, etc.)
+  // O para completar la cobertura cuando la aux1 termina antes que el doctor.
+  assistant2Id        String?          @map("auxiliar2_id")
+  assistant2StartTime String?          @map("auxiliar2_hora_inicio") @db.VarChar(5)
+  assistant2EndTime   String?          @map("auxiliar2_hora_fin") @db.VarChar(5)
+  roomId              String           @map("consultorio_id")
+  weekday             DiaSemana        @map("dia_semana")
+  startTime           String           @map("hora_inicio") @db.VarChar(5)
+  endTime             String           @map("hora_fin") @db.VarChar(5)
+  patientCapacity     Int              @map("pacientes_capacidad")
+  isOvertime          Boolean          @default(false) @map("es_horas_extras")
+  hasNightHours       Boolean          @default(false) @map("tiene_horas_nocturnas")
+  isReplacement       Boolean          @default(false) @map("es_reemplazo")
+  coveredAbsenceId    String?          @map("ausencia_cubierta_id")
+  status              EstadoAsignacion @default(activa) @map("estado")
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  semana           Semana      @relation(fields: [semanaId], references: [id])
-  recurso          Recurso     @relation("RecursoPrincipal", fields: [recursoId], references: [id])
-  auxiliar         Recurso?    @relation("RecursoAuxiliar", fields: [auxiliarId], references: [id])
-  consultorio      Consultorio @relation(fields: [consultorioId], references: [id])
-  ausenciaCubierta Ausencia?   @relation("AsignacionesReemplazo", fields: [ausenciaCubiertaId], references: [id])
-  ejecucion        Ejecucion?
+  week           Week       @relation(fields: [weekId], references: [id])
+  resource       Resource   @relation("RecursoPrincipal", fields: [resourceId], references: [id])
+  assistant      Resource?  @relation("RecursoAuxiliar", fields: [assistantId], references: [id])
+  assistant2     Resource?  @relation("RecursoAuxiliar2", fields: [assistant2Id], references: [id])
+  room           Room       @relation(fields: [roomId], references: [id])
+  coveredAbsence Absence?   @relation("AsignacionesReemplazo", fields: [coveredAbsenceId], references: [id])
+  execution      Execution?
 
   // Índices críticos para validación de conflictos (Especificación §6.2)
-  @@index([recursoId, diaSemana, horaInicio])
-  @@index([auxiliarId, diaSemana, horaInicio])
-  @@index([consultorioId, diaSemana])
-  @@index([semanaId])
+  @@index([resourceId, weekday, startTime])
+  @@index([assistantId, weekday, startTime])
+  @@index([roomId, weekday])
+  @@index([weekId])
   @@map("asignaciones")
 }
 
 // ============ EJECUCIÓN ============
-model Ejecucion {
-  id                 String          @id @default(uuid())
-  asignacionId       String          @unique @map("asignacion_id")
-  pacientesAtendidos Int             @map("pacientes_atendidos")
-  estadoJornada      EstadoEjecucion @default(completa) @map("estado_jornada")
-  observaciones      String?         @db.Text
-  registradoPor      String          @map("registrado_por")
-  registradoEn       DateTime        @default(now()) @map("registrado_en")
-  bloqueado          Boolean         @default(false)
+model Execution {
+  id           String          @id @default(uuid())
+  assignmentId String          @unique @map("asignacion_id")
+  patientsSeen Int             @map("pacientes_atendidos")
+  shiftStatus  EstadoEjecucion @default(completa) @map("estado_jornada")
+  notes        String?         @map("observaciones") @db.Text
+  recordedBy   String          @map("registrado_por")
+  recordedAt   DateTime        @default(now()) @map("registrado_en")
+  locked       Boolean         @default(false) @map("bloqueado")
 
-  asignacion Asignacion @relation(fields: [asignacionId], references: [id], onDelete: Cascade)
+  // RN-17: la ejecución se conserva para histórico. Antes era onDelete: Cascade
+  // (al borrar la asignación se borraba la ejecución, perdiendo el dato para
+  // los informes pasados). Ahora es Restrict — la BD rechaza el DELETE si hay
+  // ejecución, y el controller de asignaciones hace soft-delete (estado='cancelada')
+  // en ese caso.
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
 
-  @@index([registradoEn])
+  @@index([recordedAt])
   @@map("ejecucion")
 }
 
 // ============ AUSENCIAS ============
-model Ausencia {
-  id                       String         @id @default(uuid())
-  recursoId                String         @map("recurso_id")
-  fechaInicio              DateTime       @map("fecha_inicio") @db.Date
-  fechaFin                 DateTime       @map("fecha_fin") @db.Date
-  esParcial                Boolean        @default(false) @map("es_parcial")
-  horaInicioAusencia       String?        @map("hora_inicio_ausencia") @db.VarChar(5)
-  horaFinAusencia          String?        @map("hora_fin_ausencia") @db.VarChar(5)
-  tipo                     TipoAusencia
-  motivo                   String?        @db.Text
-  archivoAdjunto           String?        @map("archivo_adjunto") @db.VarChar(500)
-  esProgramada             Boolean        @default(false) @map("es_programada")
-  anticipacionDias         Int            @default(0) @map("anticipacion_dias")
-  estado                   EstadoAusencia @default(pendiente)
-  pacientesImpactados      Int?           @map("pacientes_impactados")
-  costoOportunidad         Decimal?       @map("costo_oportunidad") @db.Decimal(12, 2)
-  costoPersonalInactivo    Decimal?       @map("costo_personal_inactivo") @db.Decimal(12, 2)
-  quejasRegistradas        Int?           @map("quejas_registradas")
-  accionTomada             String?        @map("accion_tomada") @db.Text
-  impactoPorDia            Json?          @map("impacto_por_dia")
-  motivoRechazo            String?        @map("motivo_rechazo") @db.Text
-  registradoPorCoordinador Boolean        @default(false) @map("registrado_por_coordinador")
-  reportadoPor             String         @map("reportado_por")
-  reportadoEn              DateTime       @default(now()) @map("reportado_en")
-  confirmadoPor            String?        @map("confirmado_por")
-  confirmadoEn             DateTime?      @map("confirmado_en")
+model Absence {
+  id                    String         @id @default(uuid())
+  resourceId            String         @map("recurso_id")
+  startDate             DateTime       @map("fecha_inicio") @db.Date
+  endDate               DateTime       @map("fecha_fin") @db.Date
+  isPartial             Boolean        @default(false) @map("es_parcial")
+  absenceStartTime      String?        @map("hora_inicio_ausencia") @db.VarChar(5)
+  absenceEndTime        String?        @map("hora_fin_ausencia") @db.VarChar(5)
+  type                  TipoAusencia   @map("tipo")
+  // Nuevo: vínculo opcional al catálogo editable de motivos. Si está presente,
+  // el cálculo de impacto usa motivoRef.factorImpacto. Si es null (ausencias
+  // legacy o motivos huérfanos), se usa factor 1.0 — backward compatible.
+  reasonId              String?        @map("motivo_id")
+  reason                String?        @map("motivo") @db.Text
+  attachmentUrl         String?        @map("archivo_adjunto") @db.VarChar(500)
+  isPlanned             Boolean        @default(false) @map("es_programada")
+  noticeDays            Int            @default(0) @map("anticipacion_dias")
+  status                EstadoAusencia @default(pendiente) @map("estado")
+  patientsAffected      Int?           @map("pacientes_impactados")
+  opportunityCost       Decimal?       @map("costo_oportunidad") @db.Decimal(12, 2)
+  idleStaffCost         Decimal?       @map("costo_personal_inactivo") @db.Decimal(12, 2)
+  complaintsLogged      Int?           @map("quejas_registradas")
+  // Ciudad para el motivo "Regional" (ago-2026). Se llena solo cuando el
+  // motivo elegido es "regional" — nombre libre de la ciudad de cobertura
+  // (Santa Marta, Cartagena, Valledupar, Riohacha, Sabanalarga, etc.).
+  regionalCity          String?        @map("ciudad_regional") @db.VarChar(60)
+  // ==== Fase 5 · F-AA-126 v04 (ago-2026) ====
+  // Empresa a la que aplica la ausencia: 'foca' | 'viu' | 'ambas'. Refleja
+  // el checkbox "¿A QUÉ EMPRESA APLICA?" del formato oficial v04.
+  affectedCompany       String?        @map("empresa_afectada") @db.VarChar(6)
+  // Bandera del formato v04 "¿DESEA REPONER?" — SÍ/NO marcado por el prof.
+  // Al confirmar la ausencia con true, la UI abre el modal de proponer
+  // reposición (Fase 3) preseleccionando esta ausencia.
+  wantsMakeup           Boolean?       @map("desea_reponer")
+  // Observaciones libres para la reposición propuesta (fecha, horario,
+  // modalidad). Se imprime en el PDF v04 y el modal de reposición lo usa
+  // como sugerencia inicial.
+  makeupNotes           String?        @map("observaciones_reposicion") @db.Text
+  actionTaken           String?        @map("accion_tomada") @db.Text
+  dailyImpact           Json?          @map("impacto_por_dia")
+  rejectionReason       String?        @map("motivo_rechazo") @db.Text
+  recordedByCoordinator Boolean        @default(false) @map("registrado_por_coordinador")
+  reportedBy            String         @map("reportado_por")
+  reportedAt            DateTime       @default(now()) @map("reportado_en")
+  confirmedBy           String?        @map("confirmado_por")
+  confirmedAt           DateTime?      @map("confirmado_en")
 
-  recurso               Recurso                @relation(fields: [recursoId], references: [id])
-  asignacionesReemplazo Asignacion[]           @relation("AsignacionesReemplazo")
-  backofficeOrigen      AsignacionBackoffice[]
+  resource                    Resource               @relation(fields: [resourceId], references: [id])
+  reasonRef                   AbsenceReason?         @relation(fields: [reasonId], references: [id], onDelete: SetNull)
+  replacementAssignments      Assignment[]           @relation("AsignacionesReemplazo")
+  sourceBackofficeAssignments BackofficeAssignment[]
+  makeups                     AbsenceMakeup[]
 
-  @@index([recursoId])
-  @@index([estado])
-  @@index([fechaInicio])
+  @@index([resourceId])
+  @@index([status])
+  @@index([startDate])
+  @@index([reasonId])
   @@map("ausencias")
 }
 
+// ============ CATÁLOGO DE MOTIVOS DE AUSENCIA ============
+// Catálogo editable por gerencia/supervisor. Los 9 motivos originales del
+// enum TipoAusencia se siembran como esSistema=true (no se pueden borrar,
+// pero su nombre/descripción/factorImpacto sí son editables).
+model AbsenceReason {
+  id           String   @id @default(uuid())
+  code         String   @unique @map("codigo") @db.VarChar(40)
+  name         String   @map("nombre") @db.VarChar(100)
+  description  String?  @map("descripcion") @db.Text
+  // Familia de causa raíz (ago-2026) — agrupa los motivos en 5 categorías
+  // gerenciales para el tablero de reprogramaciones:
+  //   ausencia_profesional | reprogramacion_operativa | ajuste_cupos |
+  //   movilidad_regional   | calendario_festivo       | otros
+  // Los 9 motivos del enum legacy quedan en 'ausencia_profesional'.
+  family       String   @default("ausencia_profesional") @map("familia") @db.VarChar(40)
+  // Multiplicador de impacto en RN-18 (pacientes y costo). Rango 0.00–1.00.
+  // Default 1.00 = el motivo no atenúa el impacto (igual que antes del catálogo).
+  impactFactor Decimal  @default(1.00) @map("factor_impacto") @db.Decimal(3, 2)
+  active       Boolean  @default(true) @map("activo")
+  // Los 9 motivos del enum original tienen esSistema=true y no se pueden borrar
+  // ni desactivar — solo se editan su nombre/descripción/factor.
+  isSystem     Boolean  @default(false) @map("es_sistema")
+  sortOrder    Int      @default(0) @map("orden")
+  createdAt    DateTime @default(now()) @map("creado_en")
+  updatedAt    DateTime @updatedAt @map("actualizado_en")
+
+  absences Absence[]
+
+  @@index([family])
+  @@map("motivos_ausencia")
+}
+
+// ============ REPOSICIÓN DE AUSENCIAS (Fase 3 · ago-2026) ============
+// Un profesional (rol=recurso) puede proponer reponer una ausencia CONFIRMADA
+// trabajando en otro horario. El coord/gerencia aprueba o rechaza. Al aprobar,
+// Dirección Médica recibe copia informativa.
+//
+// Estados: solicitada → aprobada | rechazada → (opcional) realizada
+model AbsenceMakeup {
+  id                String    @id @default(uuid())
+  // Absence original que se está reponiendo. Cascade: si se borra la ausencia,
+  // se borran sus reposiciones (no debería pasar — histórico protegido, pero
+  // por consistencia relacional).
+  absenceId         String    @map("ausencia_id")
+  absence           Absence   @relation(fields: [absenceId], references: [id], onDelete: Cascade)
+  // Fecha y franja donde el profesional trabajará para reponer.
+  makeupDate        DateTime  @map("fecha_reposicion") @db.Date
+  startTime         String    @map("hora_inicio") @db.VarChar(5) // "HH:mm"
+  endTime           String    @map("hora_fin") @db.VarChar(5)
+  // Tipo: misma_agenda | otra_sede | doble_jornada | otro
+  makeupType        String    @map("tipo_reposicion") @db.VarChar(20)
+  requestReason     String    @map("motivo_solicitud") @db.Text
+  // Room propuesto (opcional — la ausencia puede ser rotativa).
+  roomId            String?   @map("consultorio_id")
+  room              Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  estimatedPatients Int?      @map("pacientes_estimados")
+  status            String    @default("solicitada") @map("estado") @db.VarChar(20)
+  // Flujo de aprobación
+  requestedBy       String    @map("solicitado_por")
+  requester         User      @relation("ReposicionSolicitante", fields: [requestedBy], references: [id])
+  requestedAt       DateTime  @default(now()) @map("solicitado_en")
+  approvedBy        String?   @map("aprobado_por")
+  approver          User?     @relation("ReposicionAprobador", fields: [approvedBy], references: [id])
+  approvedAt        DateTime? @map("aprobado_en")
+  approverNote      String?   @map("nota_aprobador") @db.Text
+  rejectionReason   String?   @map("motivo_rechazo") @db.Text
+  // Realización (para trackear si el profesional efectivamente vino ese día).
+  completedAt       DateTime? @map("realizada_en")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([absenceId])
+  @@index([status])
+  @@index([makeupDate])
+  @@index([requestedBy])
+  @@map("reposiciones_ausencia")
+}
+
 // ============ PARÁMETROS DE COSTO (versionados) ============
-model ParametroCosto {
-  id                  String   @id @default(uuid())
+model CostSetting {
+  id             String   @id @default(uuid())
   // Tipo de consulta libre — antes era enum Especialidad pero se desligó para
   // que el supervisor pueda agregar tipos nuevos (p.ej. "cirugia_general").
-  tipoConsulta        String   @map("tipo_consulta") @db.VarChar(40)
-  costoCita           Decimal  @map("costo_cita") @db.Decimal(12, 2)
-  costoReprogramacion Decimal  @map("costo_reprogramacion") @db.Decimal(12, 2)
-  vigenteDesde        DateTime @map("vigente_desde") @db.Date
-  configuradoPor      String   @map("configurado_por")
-  createdAt           DateTime @default(now()) @map("created_at")
+  visitType      String   @map("tipo_consulta") @db.VarChar(40)
+  visitCost      Decimal  @map("costo_cita") @db.Decimal(12, 2)
+  rescheduleCost Decimal  @map("costo_reprogramacion") @db.Decimal(12, 2)
+  effectiveFrom  DateTime @map("vigente_desde") @db.Date
+  setBy          String   @map("configurado_por")
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  @@index([tipoConsulta, vigenteDesde])
+  @@index([visitType, effectiveFrom])
   @@map("parametros_costo")
 }
 
 // ============ PARÁMETROS DEL SISTEMA (metas, semáforo, base horas) ============
-model ParametroSistema {
-  clave     String   @id @db.VarChar(100)
-  valor     Json
-  motivo    String?  @db.Text
+model SystemSetting {
+  key       String   @id @map("clave") @db.VarChar(100)
+  value     Json     @map("valor")
+  reason    String?  @map("motivo") @db.Text
   updatedBy String?  @map("updated_by")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -384,117 +609,122 @@ model ParametroSistema {
 }
 
 // ============ TAREAS BACKOFFICE ============
-model TareaBackoffice {
-  id                    String   @id @default(uuid())
-  nombre                String   @db.VarChar(150)
-  descripcion           String?  @db.Text
-  tiempoEstimadoMinutos Int      @map("tiempo_estimado_minutos")
-  activa                Boolean  @default(true)
-  creadaPor             String   @map("creada_por")
+model BackofficeTask {
+  id               String    @id @default(uuid())
+  name             String    @map("nombre") @db.VarChar(150)
+  description      String?   @map("descripcion") @db.Text
+  estimatedMinutes Int       @map("tiempo_estimado_minutos")
+  active           Boolean   @default(true) @map("activa")
+  createdBy        String    @map("creada_por")
   // Flujo de aprobación cuando un coordinador la solicita:
   //   aprobada (default, supervisor la creó) | pendiente (pidió un coord, falta supervisor) | rechazada
-  estado                String    @default("aprobada") @db.VarChar(20)
-  solicitadaPor         String?   @map("solicitada_por")
-  justificacion         String?   @db.Text
-  motivoRechazo         String?   @map("motivo_rechazo") @db.Text
-  procesadaPor          String?   @map("procesada_por")
-  procesadaEn           DateTime? @map("procesada_en")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  status           String    @default("aprobada") @map("estado") @db.VarChar(20)
+  requestedBy      String?   @map("solicitada_por")
+  justification    String?   @map("justificacion") @db.Text
+  rejectionReason  String?   @map("motivo_rechazo") @db.Text
+  processedBy      String?   @map("procesada_por")
+  processedAt      DateTime? @map("procesada_en")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  asignaciones AsignacionBackoffice[]
+  assignments BackofficeAssignment[]
 
-  @@index([activa])
-  @@index([estado])
+  @@index([active])
+  @@index([status])
   @@map("tareas_backoffice")
 }
 
 // ============ ASIGNACIONES BACKOFFICE ============
-model AsignacionBackoffice {
-  id                String   @id @default(uuid())
-  auxiliarId        String   @map("auxiliar_id")
-  sedeId            String   @map("sede_id")
-  tareaBackofficeId String   @map("tarea_backoffice_id")
-  ausenciaOrigenId  String?  @map("ausencia_origen_id")
-  dia               DateTime @db.Date
-  horaInicio        String   @map("hora_inicio") @db.VarChar(5)
-  horaFin           String   @map("hora_fin") @db.VarChar(5)
-  asignadoPor       String   @map("asignado_por")
-  createdAt         DateTime @default(now()) @map("created_at")
+model BackofficeAssignment {
+  id               String   @id @default(uuid())
+  assistantId      String   @map("auxiliar_id")
+  siteId           String   @map("sede_id")
+  backofficeTaskId String   @map("tarea_backoffice_id")
+  sourceAbsenceId  String?  @map("ausencia_origen_id")
+  day              DateTime @map("dia") @db.Date
+  startTime        String   @map("hora_inicio") @db.VarChar(5)
+  endTime          String   @map("hora_fin") @db.VarChar(5)
+  assignedBy       String   @map("asignado_por")
+  // Agrupa N asignaciones creadas juntas en un mismo rango de fechas. Permite
+  // cancelar/visualizar el rango completo de un solo click. NULL para las
+  // asignaciones puntuales (1 día).
+  groupId          String?  @map("grupo_id")
+  createdAt        DateTime @default(now()) @map("created_at")
 
-  auxiliar       Recurso               @relation(fields: [auxiliarId], references: [id])
-  sede           Sede                  @relation(fields: [sedeId], references: [id])
-  tarea          TareaBackoffice       @relation(fields: [tareaBackofficeId], references: [id])
-  ausenciaOrigen Ausencia?             @relation(fields: [ausenciaOrigenId], references: [id])
-  ejecuciones    EjecucionBackoffice[]
+  assistant     Resource              @relation(fields: [assistantId], references: [id])
+  site          Site                  @relation(fields: [siteId], references: [id])
+  task          BackofficeTask        @relation(fields: [backofficeTaskId], references: [id])
+  sourceAbsence Absence?              @relation(fields: [sourceAbsenceId], references: [id])
+  executions    BackofficeExecution[]
 
-  @@index([auxiliarId, dia])
+  @@index([assistantId, day])
+  @@index([groupId])
   @@map("asignaciones_backoffice")
 }
 
 // ============ EJECUCIÓN BACKOFFICE ============
-model EjecucionBackoffice {
+model BackofficeExecution {
   id                     String   @id @default(uuid())
-  asignacionBackofficeId String   @map("asignacion_backoffice_id")
-  tareaId                String   @map("tarea_id")
-  unidadesCompletadas    Int      @map("unidades_completadas")
-  tiempoRealMinutos      Int      @map("tiempo_real_minutos")
-  observaciones          String?  @db.Text
-  registradoPor          String   @map("registrado_por")
-  registradoEn           DateTime @default(now()) @map("registrado_en")
+  backofficeAssignmentId String   @map("asignacion_backoffice_id")
+  taskId                 String   @map("tarea_id")
+  unitsCompleted         Int      @map("unidades_completadas")
+  actualMinutes          Int      @map("tiempo_real_minutos")
+  notes                  String?  @map("observaciones") @db.Text
+  recordedBy             String   @map("registrado_por")
+  recordedAt             DateTime @default(now()) @map("registrado_en")
 
-  asignacion AsignacionBackoffice @relation(fields: [asignacionBackofficeId], references: [id], onDelete: Cascade)
+  assignment BackofficeAssignment @relation(fields: [backofficeAssignmentId], references: [id], onDelete: Cascade)
 
-  @@index([asignacionBackofficeId])
+  @@index([backofficeAssignmentId])
   @@map("ejecucion_backoffice")
 }
 
 // ============ FESTIVOS ============
-model Festivo {
-  fecha       DateTime @id @db.Date
-  descripcion String   @db.VarChar(200)
+model Holiday {
+  date        DateTime @id @map("fecha") @db.Date
+  description String   @map("descripcion") @db.VarChar(200)
   createdAt   DateTime @default(now()) @map("created_at")
 
   @@map("festivos")
 }
 
 // ============ NOTIFICACIONES ============
-model Notificacion {
-  id           String            @id @default(uuid())
-  usuarioId    String            @map("usuario_id")
-  tipo         String            @db.VarChar(50)
-  titulo       String            @db.VarChar(200)
-  mensaje      String            @db.Text
-  canal        CanalNotificacion
-  leida        Boolean           @default(false)
-  enviada      Boolean           @default(false)
-  referenciaId String?           @map("referencia_id")
-  creadaEn     DateTime          @default(now()) @map("creada_en")
+model Notification {
+  id          String            @id @default(uuid())
+  userId      String            @map("usuario_id")
+  type        String            @map("tipo") @db.VarChar(50)
+  title       String            @map("titulo") @db.VarChar(200)
+  message     String            @map("mensaje") @db.Text
+  channel     CanalNotificacion @map("canal")
+  read        Boolean           @default(false) @map("leida")
+  sent        Boolean           @default(false) @map("enviada")
+  referenceId String?           @map("referencia_id")
+  createdAt   DateTime          @default(now()) @map("creada_en")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([usuarioId, leida])
+  @@index([userId, read])
   @@map("notificaciones")
 }
 
 // ============ AUDITORÍA ============
-model Auditoria {
-  id            String   @id @default(uuid())
-  usuarioId     String   @map("usuario_id")
-  accion        String   @db.VarChar(100)
-  entidad       String   @db.VarChar(50)
-  entidadId     String   @map("entidad_id")
-  valorAnterior Json?    @map("valor_anterior")
-  valorNuevo    Json?    @map("valor_nuevo")
-  motivo        String?  @db.Text
-  ipAddress     String?  @map("ip_address") @db.VarChar(45)
-  creadaEn      DateTime @default(now()) @map("creada_en")
+model AuditEntry {
+  id        String   @id @default(uuid())
+  userId    String   @map("usuario_id")
+  action    String   @map("accion") @db.VarChar(100)
+  entity    String   @map("entidad") @db.VarChar(50)
+  entityId  String   @map("entidad_id")
+  oldValue  Json?    @map("valor_anterior")
+  newValue  Json?    @map("valor_nuevo")
+  reason    String?  @map("motivo") @db.Text
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  createdAt DateTime @default(now()) @map("creada_en")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-  @@index([usuarioId])
-  @@index([accion])
-  @@index([entidad, entidadId])
-  @@index([creadaEn])
+  @@index([userId])
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([createdAt])
   @@map("auditoria")
 }
