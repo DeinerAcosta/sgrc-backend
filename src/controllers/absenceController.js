@@ -347,6 +347,14 @@ export async function create(req, res) {
       noticeDays: Math.max(0, anticipacionDias),
       recordedByCoordinator: data.recordedByCoordinator ?? false,
       reportedBy: req.user.id,
+      // PROYECTOS-3255 · Duarte y equipo (coord/sup/gerencia) NO deben pasar por
+      // "pendiente": lo que ellos registran se confirma al instante. El default
+      // del schema es 'pendiente', asi que hay que pasarlo explicitamente aqui.
+      // Antes se calculaba `seAutoConfirmara` (linea 400) pero solo se usaba
+      // para el texto del email — el INSERT nunca lo aplicaba y todo caia al
+      // default. Resultado: 12 ausencias reportadas por coord quedaban colgadas.
+      // El propio recurso reportandose sigue en pendiente (necesita validacion).
+      status: seAutoConfirmara ? 'confirmada' : 'pendiente',
     },
     include: { resource: true, reasonRef: true },
   })
