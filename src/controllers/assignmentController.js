@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import PDFDocument from 'pdfkit'
+import ExcelJS from 'exceljs'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { crearAsignacion, editarAsignacion } from '../services/assignmentService.js'
@@ -584,4 +586,200 @@ export async function sugerirReemplazos(req, res) {
     }))
 
   res.json(disponibles)
+}
+
+// ============================================================================
+// EXPORTAR SEMANA — PDF/Excel de la programación semanal de una sede
+// ============================================================================
+// El coordinador imprime o comparte el horario semanal por consultorio × día.
+// Cada celda: recurso, franja horaria, auxiliar(es), pacientes.
+// Formato PDF: A3 landscape (7 días son muchos para A4). Formato XLSX: hoja única.
+
+const DIA_LABEL = { lunes: 'LUN', martes: 'MAR', miercoles: 'MIÉ', jueves: 'JUE', viernes: 'VIE', sabado: 'SÁB', domingo: 'DOM' }
+
+async function armarGridSemana(weekId, siteId) {
+  if (!weekId || !siteId) throw errors.badRequest('week_id y site_id son requeridos')
+
+  const [semana, sede, asignaciones, consultorios] = await Promise.all([
+    prisma.week.findUnique({ where: { id: weekId } }),
+    prisma.site.findUnique({ where: { id: siteId } }),
+    prisma.assignment.findMany({
+      where: { weekId, status: { not: 'cancelada' }, room: { siteId } },
+      include: {
+        resource: { select: { name: true, type: true } },
+        assistant: { select: { name: true } },
+        assistant2: { select: { name: true } },
+        room: { select: { id: true, name: true, specialty: true } },
+      },
+      orderBy: [{ startTime: 'asc' }],
+    }),
+    prisma.room.findMany({
+      where: { siteId, active: true },
+      orderBy: [{ specialty: 'asc' }, { name: 'asc' }],
+    }),
+  ])
+
+  if (!semana) throw errors.notFound('Semana no encontrada')
+  if (!sede) throw errors.notFound('Sede no encontrada')
+
+  // Índice: consultorio_id → dia → [asignaciones]
+  const grid = new Map()
+  for (const c of consultorios) {
+    grid.set(c.id, { room: c, dias: Object.fromEntries(DIAS.map((d) => [d, []])) })
+  }
+  for (const a of asignaciones) {
+    const cell = grid.get(a.roomId)
+    if (cell) cell.dias[a.weekday].push(a)
+  }
+
+  return { semana, sede, grid: [...grid.values()] }
+}
+
+/**
+ * GET /api/assignments/export?week_id=X&site_id=Y&format=pdf|xlsx
+ * Descarga la programación semanal de la sede como PDF o Excel.
+ */
+export async function exportarSemana(req, res) {
+  const { week_id: weekId, site_id: siteId, format = 'pdf' } = req.query
+  const { semana, sede, grid } = await armarGridSemana(weekId, siteId)
+
+  const fechaIni = semana.startDate.toISOString().slice(0, 10)
+  const fechaFin = semana.endDate.toISOString().slice(0, 10)
+  const fileBase = `horarios_${sede.name.replace(/[^\w]/g, '_')}_${fechaIni}`
+
+  if (format === 'xlsx') {
+    const buffer = await generarXLSX(semana, sede, grid)
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.xlsx"`)
+    return res.send(buffer)
+  }
+
+  const buffer = await generarPDFSemana(semana, sede, grid, fechaIni, fechaFin)
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.pdf"`)
+  res.send(buffer)
+}
+
+function celdaText(a) {
+  const partes = [
+    a.resource?.name ?? '—',
+    `${a.startTime}–${a.endTime}`,
+  ]
+  if (a.assistant?.name) partes.push(`Aux: ${a.assistant.name}`)
+  if (a.assistant2?.name) partes.push(`Aux2: ${a.assistant2.name}`)
+  partes.push(`${a.patientsCapacity} pac.`)
+  return partes.join('\n')
+}
+
+function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 25, size: 'A3', layout: 'landscape' })
+      const chunks = []
+      doc.on('data', (c) => chunks.push(c))
+      doc.on('end', () => resolve(Buffer.concat(chunks)))
+      doc.on('error', reject)
+
+      // Encabezado
+      doc.fillColor('#1B2A6C').fontSize(16).font('Helvetica-Bold').text('SGRC · Horarios semanales', 25, 25)
+      doc.fillColor('#374151').fontSize(11).font('Helvetica')
+        .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
+      doc.text(`Semana: ${fechaIni} → ${fechaFin}`, 25, 63)
+      doc.fillColor('#6B7280').fontSize(8)
+        .text(`Generado: ${new Date().toLocaleString('es-CO')}`, 25, 78)
+
+      // Tabla: Consultorio | LUN | MAR | MIÉ | JUE | VIE | SÁB | DOM
+      const startX = 25
+      const startY = 100
+      const anchoCons = 110
+      const anchoDia = (1140 - anchoCons) / 7
+      const filaAlto = 90
+
+      // Encabezado tabla
+      doc.rect(startX, startY, anchoCons, 22).fill('#1B2A6C')
+      doc.fillColor('white').fontSize(9).font('Helvetica-Bold').text('CONSULTORIO', startX + 4, startY + 7)
+      DIAS.forEach((d, i) => {
+        const x = startX + anchoCons + i * anchoDia
+        doc.rect(x, startY, anchoDia, 22).fill('#1B2A6C')
+        doc.fillColor('white').text(DIA_LABEL[d], x + 4, startY + 7)
+      })
+
+      let y = startY + 22
+      grid.forEach((row, idx) => {
+        // Salto de página si no cabe
+        if (y + filaAlto > doc.page.height - 30) {
+          doc.addPage()
+          y = 40
+        }
+        const bg = idx % 2 === 0 ? '#F9FAFB' : '#FFFFFF'
+        doc.rect(startX, y, anchoCons, filaAlto).fill(bg)
+        doc.fillColor('#1F2937').fontSize(8).font('Helvetica-Bold').text(row.room.name, startX + 4, y + 6, { width: anchoCons - 8 })
+        doc.fillColor('#6B7280').fontSize(7).font('Helvetica').text(row.room.specialty ?? '', startX + 4, y + 22, { width: anchoCons - 8 })
+
+        DIAS.forEach((d, i) => {
+          const x = startX + anchoCons + i * anchoDia
+          doc.rect(x, y, anchoDia, filaAlto).fill(bg).strokeColor('#E5E7EB').lineWidth(0.5).stroke()
+          const asigs = row.dias[d]
+          let cy = y + 4
+          asigs.slice(0, 3).forEach((a) => {
+            doc.fillColor('#111827').fontSize(6.5).font('Helvetica').text(celdaText(a), x + 3, cy, { width: anchoDia - 6, height: 25 })
+            cy += 27
+          })
+          if (asigs.length > 3) {
+            doc.fillColor('#6B7280').fontSize(6).text(`+ ${asigs.length - 3} más`, x + 3, cy)
+          }
+        })
+
+        y += filaAlto
+      })
+
+      doc.end()
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
+async function generarXLSX(semana, sede, grid) {
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'SGRC'
+  const ws = wb.addWorksheet('Horarios semana')
+
+  // Encabezado meta
+  ws.mergeCells('A1:H1')
+  ws.getCell('A1').value = `Horarios semanales — ${sede.name}${sede.city ? ' · ' + sede.city : ''}`
+  ws.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FF1B2A6C' } }
+  ws.mergeCells('A2:H2')
+  ws.getCell('A2').value = `Semana: ${semana.startDate.toISOString().slice(0,10)} → ${semana.endDate.toISOString().slice(0,10)}`
+  ws.getCell('A2').font = { size: 10 }
+
+  // Header tabla
+  const headers = ['Consultorio', ...DIAS.map((d) => DIA_LABEL[d])]
+  const headerRow = ws.addRow([])
+  ws.addRow(headers).eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B2A6C' } }
+    cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }
+  })
+
+  // Filas
+  grid.forEach((row) => {
+    const excelRow = ws.addRow([
+      `${row.room.name}${row.room.specialty ? '\n' + row.room.specialty : ''}`,
+      ...DIAS.map((d) => row.dias[d].map(celdaText).join('\n\n')),
+    ])
+    excelRow.eachCell((cell) => {
+      cell.alignment = { wrapText: true, vertical: 'top' }
+      cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }
+      cell.font = { size: 9 }
+    })
+    excelRow.height = Math.max(60, row.dias.lunes.length * 40)
+  })
+
+  // Anchos
+  ws.getColumn(1).width = 24
+  for (let i = 2; i <= 8; i++) ws.getColumn(i).width = 26
+
+  return Buffer.from(await wb.xlsx.writeBuffer())
 }

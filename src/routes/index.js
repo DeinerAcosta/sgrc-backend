@@ -127,6 +127,7 @@ r.post('/weeks/:id/copy', requireRol('coordinador', 'supervisor'), wrap(semn.cop
 
 // ============ ASIGNACIONES ============
 r.get('/assignments', wrap(asig.list))
+r.get('/assignments/export', wrap(asig.exportarSemana))
 r.post('/assignments', requireRol('coordinador', 'supervisor'), wrap(asig.create))
 r.put('/assignments/:id', requireRol('coordinador', 'supervisor'), wrap(asig.update))
 r.delete('/assignments/:id', requireRol('coordinador', 'supervisor'), wrap(asig.remove))
