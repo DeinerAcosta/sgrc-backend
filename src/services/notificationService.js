@@ -186,8 +186,11 @@ export async function notificarDireccionMedica({
   accionUrl = null,
   accionTexto = null,
 }) {
+  // Sep-2026: el buzón oficial de asistencia de dirección médica pasa a
+  // foca.asistentedirmedia@gmail.com. Si EMAIL_DIRECCION_MEDICA está seteada
+  // en .env, esa gana; si no, se usa el default de aquí.
   const raw = process.env.EMAIL_DIRECCION_MEDICA
-    || 'secretariadirmedica@cofca.com,direccionmedica@cofca.com'
+    || 'foca.asistentedirmedia@gmail.com'
   const destinatarios = raw.split(',').map((s) => s.trim()).filter(Boolean)
   if (!destinatarios.length) return 0
 

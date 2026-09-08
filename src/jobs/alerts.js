@@ -26,6 +26,20 @@ export async function jobAlertaOciosos() {
     include: { room: { select: { siteId: true, site: { select: { name: true } } } } },
   })
 
+  // Sep-2026: si el recurso tiene una ausencia CONFIRMADA que solapa la semana
+  // (vacaciones, incapacidad, calamidad, etc.), NO alertar por ociosos — es esperado
+  // que no tenga asignaciones. Antes se disparaba spam a coord de personas de vacaciones
+  // o con incapacidad medica, generando fricción real reportada por los coordinadores.
+  const ausenciasActivas = await prisma.absence.findMany({
+    where: {
+      status: 'confirmada',
+      startDate: { lte: semana.endDate },
+      endDate: { gte: semana.startDate },
+    },
+    select: { resourceId: true },
+  })
+  const recursosConAusenciaActiva = new Set(ausenciasActivas.map((a) => a.resourceId))
+
   const TIPOS_LABEL = {
     oftalmologo: 'Oftalmólogo', anestesiologo: 'Anestesiólogo', optometra: 'Optómetra',
     assistant: 'Auxiliar de enfermería', tecnico: 'Técnico de diagnóstico', asesor_servicios: 'Asesor de servicios',
@@ -33,7 +47,13 @@ export async function jobAlertaOciosos() {
   const fechaSemana = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
 
   let alertas = 0
+  let saltadosPorAusencia = 0
   for (const r of recursosFijos) {
+    // Skip: si el recurso esta cubierto por una ausencia confirmada de la semana
+    if (recursosConAusenciaActiva.has(r.id)) {
+      saltadosPorAusencia++
+      continue
+    }
     const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
     // Comparamos horas EFECTIVAS (descontando almuerzo) contra el tope semanal,
     // que también está en horas efectivas (Ley 2101). Antes contábamos brutas
@@ -93,7 +113,13 @@ export async function jobAlertaOciosos() {
     }
   }
 
-  return { ok: true, week: semana.id, recursos_revisados: recursosFijos.length, alertas }
+  return {
+    ok: true,
+    week: semana.id,
+    recursos_revisados: recursosFijos.length,
+    alertas,
+    saltados_por_ausencia: saltadosPorAusencia,
+  }
 }
 
 /**
