@@ -1,7 +1,7 @@
 {
   "name": "sgrc-backend",
   "version": "1.0.0",
-  "description": "Sistema de Gestión de Recursos Clínicos — API Express + Prisma + PostgreSQL",
+  "description": "Sistema de Gestión de Recursos Clínicos — API Express + Prisma + MySQL 8",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -14,11 +14,16 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "node prisma/seed.js",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "revisar:sedes": "node prisma/revisar-sedes-coordinadores.js",
+    "verificar:params": "node scripts/verificar-params.cjs"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
     "bcrypt": "^5.1.1",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",
@@ -38,7 +43,8 @@
     "eslint": "^9.10.0",
     "globals": "^15.9.0",
     "nodemon": "^3.1.4",
-    "prisma": "^6.0.0"
+    "prisma": "^6.0.0",
+    "vitest": "^4.1.11"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

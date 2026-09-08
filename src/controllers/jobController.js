@@ -6,7 +6,7 @@ import { JOBS_MANUALES } from '../jobs/index.js'
  * Útil para disparar las alertas sin esperar al cron, y para pruebas.
  */
 export async function ejecutar(req, res) {
-  const { nombre } = req.params
+  const { name: nombre } = req.params
   const job = JOBS_MANUALES[nombre]
   if (!job) {
     throw errors.notFound(`Job desconocido. Disponibles: ${Object.keys(JOBS_MANUALES).join(', ')}`)
