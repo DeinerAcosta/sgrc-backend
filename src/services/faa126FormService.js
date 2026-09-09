@@ -19,6 +19,10 @@ import { fileURLToPath } from 'node:url'
  *   - Logo condicional en cabecera segun ausencia.affectedCompany (foca/viu/ambas)
  *   - Firma del profesional al pie si resource.signatureUrl esta definida
  *
+ * Sep-2026 · feedback usuario:
+ *   - Logos VIU/FOCA van ARRIBA del formato (fuera del box de cabecera)
+ *   - Los boxes Día/Mes/Año se llenan con los NÚMEROS (no la fecha DD/MM/YYYY al costado)
+ *
  * El proceso afectado se infiere del tipo de recurso:
  *   - oftalmólogo, optómetra, otorrino, fonoaudiólogo → Consulta externa
  *   - anestesiólogo → Cirugía
@@ -44,14 +48,28 @@ function cargarLogos() {
 }
 
 /**
- * Carga la firma del profesional desde disco o URL absoluta local.
- * signatureUrl puede venir como:
- *   - path absoluto: "/opt/sgrc/uploads/firmas/xxx.png"
+ * Carga la firma del profesional. signatureUrl puede venir como:
+ *   - data URL base64: "data:image/png;base64,iVBORw..." (formato que usa el
+ *     frontend AdminResourcesPage al subir la imagen — es el caso normal)
+ *   - path absoluto: "/opt/sgrc/uploads/firmas/xxx.png" (legacy / carga manual)
  *   - path relativo al backend: "uploads/firmas/xxx.png"
  * Devuelve Buffer o null si no existe / no se puede leer.
  */
 function cargarFirma(signatureUrl) {
   if (!signatureUrl || typeof signatureUrl !== 'string') return null
+  // Data URL base64 → decodificar la parte que va despues de la coma.
+  // Sep-2026: este es el formato que usa el frontend al subir la firma
+  // (FileReader.readAsDataURL). Antes solo se soportaban paths de disco.
+  if (signatureUrl.startsWith('data:')) {
+    const comma = signatureUrl.indexOf(',')
+    if (comma < 0) return null
+    try {
+      return Buffer.from(signatureUrl.slice(comma + 1), 'base64')
+    } catch {
+      return null
+    }
+  }
+  // Fallback: path de disco (compatibilidad con cargas manuales via mysql).
   try {
     const resolved = path.isAbsolute(signatureUrl)
       ? signatureUrl
@@ -108,6 +126,18 @@ function fmtDdMmYyyy(d) {
   return `${dd}/${mm}/${yyyy}`
 }
 
+// Devuelve [dd, mm, yyyy] como strings pad. Si la fecha esta vacia, ['','','']
+// para que el PDF muestre los boxes vacios en vez de "00/00/1970".
+function partesFecha(d) {
+  if (!d) return ['', '', '']
+  const dt = new Date(d)
+  return [
+    String(dt.getUTCDate()).padStart(2, '0'),
+    String(dt.getUTCMonth() + 1).padStart(2, '0'),
+    String(dt.getUTCFullYear()),
+  ]
+}
+
 export function generarFormatoFAA126(ausencia) {
   return new Promise((resolve, reject) => {
     try {
@@ -119,8 +149,8 @@ export function generarFormatoFAA126(ausencia) {
       const nombreRecurso = ausencia?.resource?.name ?? 'PROFESIONAL'
       const tipoRecurso = ausencia?.resource?.type ?? ''
       const procesoAfectado = TIPO_A_PROCESO[tipoRecurso] ?? 'externa'
-      const fechaInicio = fmtDdMmYyyy(ausencia?.startDate)
-      const fechaFin = fmtDdMmYyyy(ausencia?.endDate)
+      const [dSal, mSal, ySal] = partesFecha(ausencia?.startDate)
+      const [dEnt, mEnt, yEnt] = partesFecha(ausencia?.endDate)
       const fechaDiligenciamiento = fmtDdMmYyyy(new Date())
       const observacion = ausencia?.makeupNotes ?? ausencia?.reason ?? ausencia?.actionTaken ?? ''
 
@@ -171,54 +201,68 @@ export function generarFormatoFAA126(ausencia) {
         if (marcado) doc.font('Helvetica-Bold').fontSize(9).fillColor('#000').text('X', x + 1.5, y - 0.5)
       }
 
-      // ==================== CABECERA ====================
-      doc.rect(LEFT, 30, CONTENT_W, 60).stroke()
-      // Título central
-      doc.rect(LEFT, 30, CONTENT_W - 100, 30).stroke()
+      // Helper: pinta una fila de 3 boxes Día/Mes/Año con headers arriba y numero abajo.
+      // Sep-2026 · feedback usuario: la fecha va DENTRO de los boxes, no al costado.
+      const drawFechaBoxes = (x, y, dd, mm, yyyy) => {
+        doc.rect(x, y, 30, 20).stroke().rect(x + 30, y, 30, 20).stroke().rect(x + 60, y, 30, 20).stroke()
+        doc.font('Helvetica').fontSize(5.5).fillColor('#666')
+          .text('Día', x, y + 1, { width: 30, align: 'center' })
+          .text('Mes', x + 30, y + 1, { width: 30, align: 'center' })
+          .text('Año', x + 60, y + 1, { width: 30, align: 'center' })
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
+          .text(dd || '',  x,      y + 8, { width: 30, align: 'center' })
+          .text(mm || '',  x + 30, y + 8, { width: 30, align: 'center' })
+          .text(yyyy || '', x + 60, y + 8, { width: 30, align: 'center' })
+      }
 
-      // PROYECTOS-3255 #5.1 — Logo condicional en la izquierda del titulo segun
-      // ausencia.affectedCompany. 'ambas' pinta los DOS logos apilados en el
-      // espacio libre a la izquierda del titulo (no se estorban por diseño).
-      // 'foca' o 'viu' pinta solo el que aplique; null/legacy no pinta nada.
-      const logoBoxX = LEFT + 2
-      const logoBoxW = 60
+      // ==================== LOGOS (ARRIBA DE TODO · sep-2026) ====================
+      // Los logos van fuera del box de cabecera, en la parte superior del formato.
+      // Segun empresa afectada: foca → solo FOCA · viu → solo VIU · ambas/null → ambos.
+      const logoTopY = 15
+      const logoH = 30
       try {
-        if (empresa === 'ambas') {
-          if (logos.viu) doc.image(logos.viu, logoBoxX, 33, { fit: [logoBoxW, 12] })
-          if (logos.foca) doc.image(logos.foca, logoBoxX, 47, { fit: [logoBoxW, 12] })
+        if (empresa === 'foca' && logos.foca) {
+          doc.image(logos.foca, LEFT + 210, logoTopY, { fit: [180, logoH] })
         } else if (empresa === 'viu' && logos.viu) {
-          doc.image(logos.viu, logoBoxX, 36, { fit: [logoBoxW, 18] })
-        } else if (empresa === 'foca' && logos.foca) {
-          doc.image(logos.foca, logoBoxX, 36, { fit: [logoBoxW, 18] })
+          doc.image(logos.viu, LEFT + 210, logoTopY, { fit: [180, logoH] })
+        } else {
+          // 'ambas' o legacy sin empresa → ambos logos lado a lado, centrados.
+          if (logos.foca) doc.image(logos.foca, LEFT + 130, logoTopY, { fit: [140, logoH] })
+          if (logos.viu)  doc.image(logos.viu,  LEFT + 300, logoTopY, { fit: [140, logoH] })
         }
       } catch { /* logo corrupto o formato no soportado — el PDF sigue */ }
 
+      // ==================== CABECERA (baja 25px por logos) ====================
+      const H_TOP = 55  // header top: era 30, ahora 55 para dejar espacio a los logos
+      doc.rect(LEFT, H_TOP, CONTENT_W, 60).stroke()
+      // Título central (sin logos adentro — ahora van arriba)
+      doc.rect(LEFT, H_TOP, CONTENT_W - 100, 30).stroke()
       doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
-        .text('CLÍNICA OFTALMOLÓGICA DEL CARIBE', LEFT, 39, { width: CONTENT_W - 100, align: 'center' })
-      doc.rect(LEFT, 60, CONTENT_W - 100, 30).stroke()
+        .text('CLÍNICA OFTALMOLÓGICA DEL CARIBE', LEFT, H_TOP + 9, { width: CONTENT_W - 100, align: 'center' })
+      doc.rect(LEFT, H_TOP + 30, CONTENT_W - 100, 30).stroke()
       doc.font('Helvetica-Bold').fontSize(9)
-        .text('CONTINUIDAD DEL SERVICIO CON LOS PRESTADORES DE SERVICIO', LEFT, 65, { width: CONTENT_W - 100, align: 'center' })
-        .text('OFTALMOLOGÍA - OPTOMETRÍA', LEFT, 76, { width: CONTENT_W - 100, align: 'center' })
+        .text('CONTINUIDAD DEL SERVICIO CON LOS PRESTADORES DE SERVICIO', LEFT, H_TOP + 35, { width: CONTENT_W - 100, align: 'center' })
+        .text('OFTALMOLOGÍA - OPTOMETRÍA', LEFT, H_TOP + 46, { width: CONTENT_W - 100, align: 'center' })
 
       // Columna derecha: código / versión / fecha
       const rightBoxX = RIGHT - 100
-      doc.rect(rightBoxX, 30, 60, 20).stroke()
-      doc.font('Helvetica').fontSize(8).fillColor('#000').text('Código:', rightBoxX + 3, 37)
-      doc.rect(rightBoxX + 60, 30, 40, 20).stroke()
-      doc.font('Helvetica-Bold').fontSize(8).text('F-AA-126', rightBoxX + 63, 37)
+      doc.rect(rightBoxX, H_TOP, 60, 20).stroke()
+      doc.font('Helvetica').fontSize(8).fillColor('#000').text('Código:', rightBoxX + 3, H_TOP + 7)
+      doc.rect(rightBoxX + 60, H_TOP, 40, 20).stroke()
+      doc.font('Helvetica-Bold').fontSize(8).text('F-AA-126', rightBoxX + 63, H_TOP + 7)
 
-      doc.rect(rightBoxX, 50, 60, 20).stroke()
-      doc.font('Helvetica').fontSize(8).text('Versión:', rightBoxX + 3, 57)
-      doc.rect(rightBoxX + 60, 50, 40, 20).stroke()
-      doc.font('Helvetica-Bold').fontSize(8).text('04', rightBoxX + 63, 57)
+      doc.rect(rightBoxX, H_TOP + 20, 60, 20).stroke()
+      doc.font('Helvetica').fontSize(8).text('Versión:', rightBoxX + 3, H_TOP + 27)
+      doc.rect(rightBoxX + 60, H_TOP + 20, 40, 20).stroke()
+      doc.font('Helvetica-Bold').fontSize(8).text('04', rightBoxX + 63, H_TOP + 27)
 
-      doc.rect(rightBoxX, 70, 60, 20).stroke()
-      doc.font('Helvetica').fontSize(7.5).text('Fecha\nactualización:', rightBoxX + 3, 72, { width: 55 })
-      doc.rect(rightBoxX + 60, 70, 40, 20).stroke()
-      doc.font('Helvetica-Bold').fontSize(8).text('26/08/2026', rightBoxX + 63, 77)
+      doc.rect(rightBoxX, H_TOP + 40, 60, 20).stroke()
+      doc.font('Helvetica').fontSize(7.5).text('Fecha\nactualización:', rightBoxX + 3, H_TOP + 42, { width: 55 })
+      doc.rect(rightBoxX + 60, H_TOP + 40, 40, 20).stroke()
+      doc.font('Helvetica-Bold').fontSize(8).text('26/08/2026', rightBoxX + 63, H_TOP + 47)
 
       // ==================== EMPRESA APLICA (v04 NUEVO) ====================
-      let y = 90
+      let y = H_TOP + 60
       doc.rect(LEFT, y, CONTENT_W, 18).stroke()
       doc.font('Helvetica-Bold').fontSize(9).text('¿A QUÉ EMPRESA APLICA LA AUSENCIA?', LEFT + 3, y + 5)
       // Checkboxes empresa
@@ -231,29 +275,26 @@ export function generarFormatoFAA126(ausencia) {
       doc.text('AMBAS', empX + 163, y + 4)
 
       // ==================== DATOS DEL PROFESIONAL ====================
-      y = 108
+      y += 18
       doc.rect(LEFT, y, CONTENT_W, 40).stroke()
       doc.rect(LEFT, y, 280, 40).stroke()
       doc.font('Helvetica').fontSize(8).text('Profesional quien presta el servicio:', LEFT + 3, y + 3)
       doc.font('Helvetica-Bold').fontSize(11).text(nombreRecurso.toUpperCase(), LEFT + 3, y + 18, { width: 274 })
 
+      // Etiquetas "Fecha de salida" / "Fecha de entrada" (sin fecha al costado —
+      // los numeros ahora van en los boxes Día/Mes/Año a la derecha).
       doc.rect(LEFT + 280, y, CONTENT_W - 280 - 90, 20).stroke()
-      doc.font('Helvetica').fontSize(8).text('Fecha de salida', LEFT + 285, y + 3)
-      doc.font('Helvetica-Bold').fontSize(10).text(fechaInicio, LEFT + 380, y + 4)
+      doc.font('Helvetica').fontSize(8).text('Fecha de salida', LEFT + 285, y + 7)
       doc.rect(LEFT + 280, y + 20, CONTENT_W - 280 - 90, 20).stroke()
-      doc.font('Helvetica').fontSize(8).text('Fecha de entrada', LEFT + 285, y + 23)
-      doc.font('Helvetica-Bold').fontSize(10).text(fechaFin, LEFT + 380, y + 24)
+      doc.font('Helvetica').fontSize(8).text('Fecha de entrada', LEFT + 285, y + 27)
 
+      // Boxes Día/Mes/Año CON los numeros dentro (sep-2026 · feedback usuario).
       const dmyX = RIGHT - 90
-      doc.rect(dmyX, y, 30, 20).stroke().rect(dmyX + 30, y, 30, 20).stroke().rect(dmyX + 60, y, 30, 20).stroke()
-      doc.font('Helvetica').fontSize(7)
-        .text('Día', dmyX + 8, y + 6).text('Mes', dmyX + 38, y + 6).text('Año', dmyX + 68, y + 6)
-      doc.rect(dmyX, y + 20, 30, 20).stroke().rect(dmyX + 30, y + 20, 30, 20).stroke().rect(dmyX + 60, y + 20, 30, 20).stroke()
-      doc.font('Helvetica').fontSize(7)
-        .text('Día', dmyX + 8, y + 26).text('Mes', dmyX + 38, y + 26).text('Año', dmyX + 68, y + 26)
+      drawFechaBoxes(dmyX, y,      dSal, mSal, ySal)  // fecha salida
+      drawFechaBoxes(dmyX, y + 20, dEnt, mEnt, yEnt)  // fecha entrada
 
       // ==================== PROCESO QUE AFECTA ====================
-      y = 148
+      y += 40
       doc.rect(LEFT, y, CONTENT_W, 20).stroke()
       doc.font('Helvetica').fontSize(8).text('Proceso que afecta:', LEFT + 3, y + 6)
       doc.text('Consulta externa', LEFT + 100, y + 6)
@@ -264,7 +305,7 @@ export function generarFormatoFAA126(ausencia) {
       drawCheckbox(LEFT + 370, y + 5, procesoAfectado === 'cirugia')
 
       // ==================== TIPO DE NOVEDAD ====================
-      y = 168
+      y += 20
       doc.rect(LEFT, y, CONTENT_W, 25).stroke()
       doc.font('Helvetica').fontSize(8)
         .text('Tipo de novedad:', LEFT + 3, y + 9)
@@ -276,7 +317,7 @@ export function generarFormatoFAA126(ausencia) {
       drawCheckbox(LEFT + 440, y + 8, true)
 
       // ==================== MOTIVO (v04 EXPANDIDO) ====================
-      y = 193
+      y += 25
       doc.rect(LEFT, y, CONTENT_W, 30).stroke()
       doc.font('Helvetica').fontSize(8).text('MOTIVO:', LEFT + 3, y + 12)
       // Fila 1: enfermedad · calamidad · académico
@@ -299,12 +340,12 @@ export function generarFormatoFAA126(ausencia) {
       doc.text('Traslado a sedes externas', LEFT + 417, motY2 + 1)
 
       // ==================== PERÍODO DE AUSENCIA POR MES ====================
-      y = 223
+      y += 30
       doc.rect(LEFT, y, CONTENT_W, 15).fill('#D9D9D9').stroke().fillColor('#000')
       doc.font('Helvetica-Bold').fontSize(9)
         .text('PERÍODO DE AUSENCIA DEL SERVICIO PRESTADO (DÍA/MES/AÑO)', LEFT + 3, y + 3, { width: CONTENT_W, align: 'center' })
 
-      y = 238
+      y += 15
       const rowH = 22
       MESES.forEach((mes, idx) => {
         const dias = diasPorMes[idx]
