@@ -324,6 +324,16 @@ export async function create(req, res) {
     throw errors.badRequest('El motivo "Regional" requiere indicar la ciudad de cobertura')
   }
 
+  // Auto-confirmación (jul-2026): si quien registra tiene rol autoritativo
+  // (coord/sup/gerencia), la ausencia queda confirmada al instante. Evita el
+  // problema de "se olvida aprobarla y se pierde en la semana". El propio
+  // recurso reportandose sigue pendiente (necesita validacion humana).
+  // Sep-2026 · hotfix: esto vivia en la linea 408 pero se USA en el INSERT
+  // (linea 357), asi que provocaba `Cannot access 'seAutoConfirmara' before
+  // initialization` (TDZ) y cualquier alta de ausencia caia con 500. Se sube.
+  const esRegistroAutoritativo = ROLES_AUTORIDAD_AUSENCIA.has(req.user.role)
+  const seAutoConfirmara = esRegistroAutoritativo
+
   const ausencia = await prisma.absence.create({
     data: {
       resourceId: data.resourceId,
@@ -400,12 +410,9 @@ export async function create(req, res) {
   }
   const tipoLabel = TIPOS_AUSENCIA_LABEL[data.type] ?? data.type
 
-  // Auto-confirmación (jul-2026): si quien registra tiene rol autoritativo,
-  // la ausencia queda confirmada al instante. Evita el problema de "se
-  // olvida aprobarla y se pierde en la semana". El propio recurso siguen
-  // pendiente (necesita validación humana).
-  const esRegistroAutoritativo = ROLES_AUTORIDAD_AUSENCIA.has(req.user.role)
-  const seAutoConfirmara = esRegistroAutoritativo
+  // (Auto-confirmación: `seAutoConfirmara` ya fue calculada arriba, antes del
+  // INSERT, para poder aplicarla directamente al `status`. Aqui se sigue
+  // usando abajo para el texto del email.)
 
   // Nombre del usuario reportador para el texto "Reportada por" (antes salía
   // "Coordinador (a nombre del recurso)" impersonal). Lookup a BD porque el
