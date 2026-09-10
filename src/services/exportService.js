@@ -9,6 +9,22 @@ import ExcelJS from 'exceljs'
 const COLOR_BRAND = '#185FA5'
 const COLOR_GRIS = '#6B7280'
 
+// PROYECTOS-3255 #3.2: aplana objetos (ej. por_familia) a texto legible para Excel/PDF.
+function formatearValorExport(v) {
+  if (v === null || v === undefined) return '—'
+  if (Array.isArray(v)) return v.map(formatearValorExport).join(', ')
+  if (typeof v === 'object') {
+    return Object.entries(v).map(([k, sub]) => {
+      if (sub && typeof sub === 'object') {
+        const partes = Object.entries(sub).map(([kk, vv]) => `${kk}=${vv}`).join(' ')
+        return `${k}: ${partes}`
+      }
+      return `${k}: ${sub}`
+    }).join('; ')
+  }
+  return String(v)
+}
+
 /** Etiquetas legibles para cada tipo de informe */
 const TITULOS = {
   ocupacion: 'Ocupación de Consultorios',
@@ -74,8 +90,8 @@ export function generarPDF(tipo, filas, filtros = {}) {
         if (idx % 2 === 0) doc.fillColor('#F8F9FA').rect(startX, y, 760, 18).fill()
         doc.fillColor('#1A1A17')
         columnas.forEach((col, i) => {
-          const val = fila[col]
-          doc.text(val === null || val === undefined ? '—' : String(val),
+          // PROYECTOS-3255 #3.2: formatearValorExport aplana por_familia y otros objetos.
+          doc.text(formatearValorExport(fila[col]),
             startX + i * colWidth + 4, y + 5, { width: colWidth - 8, ellipsis: true })
         })
         y += 18
@@ -112,7 +128,13 @@ export async function generarExcel(tipo, filas, filtros = {}) {
     }))
     ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
     ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF185FA5' } }
-    filas.forEach((f) => ws.addRow(f))
+    filas.forEach((f) => {
+      // PROYECTOS-3255 #3.2: aplanar objetos para no exportar '[object Object]'
+      const saneada = Object.fromEntries(
+        Object.entries(f).map(([k, v]) => [k, (v !== null && typeof v === 'object') ? formatearValorExport(v) : v]),
+      )
+      ws.addRow(saneada)
+    })
     // bordes suaves
     ws.eachRow((row) => {
       row.eachCell((cell) => {

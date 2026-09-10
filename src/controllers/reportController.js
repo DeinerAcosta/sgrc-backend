@@ -16,6 +16,7 @@ import {
   minutosBaseSemana,
   BASE_MINUTOS_SEMANA_TEORICA,
 } from '../lib/calendario.js'
+import { TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN, whereAusenciasIncapacidadEnRango } from '../lib/absences.js'
 
 // TTL de caché para lecturas analíticas. Suficientemente corto para que los datos
 // se sientan "en vivo" y suficientemente largo para absorber picos de concurrencia.
@@ -337,8 +338,9 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   if (tipos) whereRec.type = { in: tipos }
 
   // PROYECTOS-3255 #1.3: para NO penalizar a recursos incapacitados, cargamos
-  // ausencias medicas confirmadas del rango (motivo='enfermedad' o motivoRef.family='medico').
-  // Se marcan como en_incapacidad y el frontend no aplica semaforo rojo sobre ellos.
+  // ausencias confirmadas del rango cuyo TYPE equivale a incapacidad
+  // (enfermedad | licencia_remunerada — ver TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN).
+  // Se marcan como en_incapacidad y el frontend anula el semaforo/% sobre ellos.
   const [recursos, asigs, mapaSedes, ausenciasMedicas] = await Promise.all([
     prisma.resource.findMany({
       where: whereRec,
@@ -360,19 +362,12 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
         })
       : Promise.resolve([]),
     mapaSedesPorRecurso({ desde, hasta }),
-    // Ausencias medicas confirmadas del rango. Sin rango explicito no las cargamos
-    // (nMeses ni siquiera esta definido aca todavia — no aplica el flag).
+    // Ausencias de incapacidad confirmadas del rango. Sin rango explicito no las cargamos.
+    // PROYECTOS-3255 #1.3: filtro por TYPE IN [enfermedad, licencia_remunerada]
+    // (family='medico' NO existe en el catalogo, era un false-negative silencioso).
     (desde && hasta)
       ? prisma.absence.findMany({
-          where: {
-            status: 'confirmada',
-            startDate: { lte: new Date(hasta) },
-            endDate: { gte: new Date(desde) },
-            OR: [
-              { type: 'enfermedad' },
-              { reasonRef: { family: 'medico' } },
-            ],
-          },
+          where: whereAusenciasIncapacidadEnRango(desde, hasta),
           select: { resourceId: true, startDate: true, endDate: true },
         })
       : Promise.resolve([]),
@@ -413,10 +408,16 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
     // Si la franja se ejecutó completa, ejecutadas = programadas (también netas).
     const h = horasEfectivasFranja(a.startTime, a.endTime, a.resource.type)
     agg.h_prog += h
-    agg.pac_prog += a.patientCapacity ?? 0
+    // PROYECTOS-3255 #2.1: asesor_servicios NO atiende pacientes con cita, no
+    // se acumulan sus pacientes en el indicador (aunque el campo BD legacy contenga valores).
+    if (a.resource.type !== 'asesor_servicios') {
+      agg.pac_prog += a.patientCapacity ?? 0
+    }
     if (a.execution) {
       agg.h_ejec += h
-      agg.pac_at += a.execution.patientsSeen
+      if (a.resource.type !== 'asesor_servicios') {
+        agg.pac_at += a.execution.patientsSeen
+      }
     }
     // Nota: usamos startDate de la SEMANA (no de la asignacion, que solo tiene weekday)
     // para determinar el mes. El mes de una semana es el mes de su lunes en la practica.
@@ -453,12 +454,14 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
       prom_h_mensual: Math.round((agg.h_ejec / nMesesActivos) * 10) / 10,
       pac_prog: agg.pac_prog,
       pac_at: agg.pac_at,
-      // PROYECTOS-3255 #3.1: null (no 0) para no pintar semaforo ROJO falso en
-      // recursos sin actividad. El renderer trata null como '—' sin color.
-      pct_cumplimiento: agg.pac_prog > 0 ? Math.round((agg.pac_at / agg.pac_prog) * 100) : null,
+      // PROYECTOS-3255 #3.1 / #1.3: pct=null (no 0) para no pintar semaforo ROJO falso.
+      // Casos: (a) recurso sin actividad, (b) recurso con incapacidad confirmada en
+      // el rango (no se penaliza a un enfermo). El renderer trata null como '—' sin color.
+      pct_cumplimiento: (incapacidadPorRecurso.get(r.id) ?? 0) > 0
+        ? null
+        : agg.pac_prog > 0 ? Math.round((agg.pac_at / agg.pac_prog) * 100) : null,
       // PROYECTOS-3255 #1.3: dias en incapacidad medica confirmada durante el rango.
-      // Si >0, el frontend muestra badge "En incapacidad" y NO aplica semaforo rojo
-      // sobre el % cumplimiento (no se puede penalizar a un recurso enfermo).
+      // Si >0, el frontend muestra badge "En incapacidad" y NO aplica semaforo rojo.
       dias_incapacidad: incapacidadPorRecurso.get(r.id) ?? 0,
     }
   })
@@ -543,6 +546,23 @@ export async function dataSubutilizacion({ site_id: sede_id, resource_type: tipo
     : []
   const mapaSedes = await mapaSedesPorRecurso()
 
+  // PROYECTOS-3255 #1.3: dias de incapacidad confirmada que solapan la semana
+  // actual, por recurso. Si >0, se muestra badge "Incapacidad" y pct=null para
+  // no penalizar al enfermo (mismo criterio que dataProductividad).
+  const incapacidadPorRecurso = new Map()
+  if (semanaActual) {
+    const ausenciasIncap = await prisma.absence.findMany({
+      where: whereAusenciasIncapacidadEnRango(semanaActual.startDate, semanaActual.endDate),
+      select: { resourceId: true, startDate: true, endDate: true },
+    })
+    for (const a of ausenciasIncap) {
+      const inicio = a.startDate > semanaActual.startDate ? a.startDate : semanaActual.startDate
+      const fin = a.endDate < semanaActual.endDate ? a.endDate : semanaActual.endDate
+      const dias = Math.max(0, Math.round((fin - inicio) / (1000 * 60 * 60 * 24)) + 1)
+      incapacidadPorRecurso.set(a.resourceId, (incapacidadPorRecurso.get(a.resourceId) ?? 0) + dias)
+    }
+  }
+
   return recursos
     .filter((r) => recursoEnSedes(mapaSedes.get(r.id), sedeIds))
     .map((r) => {
@@ -555,7 +575,9 @@ export async function dataSubutilizacion({ site_id: sede_id, resource_type: tipo
         : propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
       // Tope al 100% en el porcentaje mostrado, pero registramos el bruto en otra clave.
       const pctBruto = r.maxHoursPerWeek > 0 ? Math.round((horas / r.maxHoursPerWeek) * 100) : 0
-      const pct = Math.min(100, pctBruto)
+      const diasIncapa = incapacidadPorRecurso.get(r.id) ?? 0
+      // PROYECTOS-3255 #1.3: pct=null cuando hay incapacidad → semaforo se apaga.
+      const pct = diasIncapa > 0 ? null : Math.min(100, pctBruto)
       return {
         resource: r.name, type: r.type, site: nombreSedes(mapaSedes.get(r.id)),
         h_asignadas: Math.round(horas * 10) / 10,
@@ -564,8 +586,9 @@ export async function dataSubutilizacion({ site_id: sede_id, resource_type: tipo
         pct_bruto: pctBruto,                  // por si interesa ver el exceso
         sobreasignado: pctBruto > 100,        // bandera visual para el frontend
         sem_consec: 0,
+        dias_incapacidad: diasIncapa,         // consumido por ReportPage (badge/semaforo)
       }
-    }).sort((a, b) => a.pct_utilizacion - b.pct_utilizacion)
+    }).sort((a, b) => (a.pct_utilizacion ?? 1e9) - (b.pct_utilizacion ?? 1e9))
 }
 
 export async function dataImpacto({ site_id: sede_id, resource_type: tipo_recurso, desde, hasta } = {}) {

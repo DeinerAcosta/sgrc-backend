@@ -30,8 +30,12 @@ describe('calcularCapacidad — RN-11', () => {
 
   it('descuenta 60 min al resto de tipos en la misma franja', () => {
     // 540 − 60 = 480; 480 / 15 = 32
-    expect(calcularCapacidad('08:00', '17:00', 15, 'asesor_servicios')).toBe(32)
     expect(calcularCapacidad('08:00', '17:00', 15, 'auxiliar')).toBe(32)
+  })
+
+  it('PROYECTOS-3255 #2.1 — asesor_servicios siempre devuelve 0 (no atiende pacientes con cita)', () => {
+    expect(calcularCapacidad('08:00', '17:00', 15, 'asesor_servicios')).toBe(0)
+    expect(calcularCapacidad('07:00', '13:00', 15, 'asesor_servicios')).toBe(0)
   })
 
   it('respeta el turno corrido del técnico (sin descuento)', () => {

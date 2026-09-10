@@ -90,6 +90,9 @@ const horasDeFranja = (hi, hf) => (hhmmAMinutos(hf) - hhmmAMinutos(hi)) / 60
  * - capacidad = FLOOR(minutos_disponibles / intervalo_minutos)
  */
 export function calcularCapacidad(horaInicio, horaFin, intervaloMinutos, tipoRecurso = null) {
+  // PROYECTOS-3255 #2.1: asesor_servicios NO atiende pacientes con cita
+  // (hace recepcion/gestion). No se calcula ni almacena numero de pacientes.
+  if (tipoRecurso === 'asesor_servicios') return 0
   const inicio = hhmmAMinutos(horaInicio)
   const fin = hhmmAMinutos(horaFin)
   const minutos = fin - inicio
