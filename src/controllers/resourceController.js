@@ -88,7 +88,29 @@ export async function list(req, res) {
     }
   }
 
-  const recursos = await prisma.resource.findMany({ where, orderBy: { name: 'asc' } })
+  // Sep-2026 · perf [5]: el listado NO trae signatureUrl (MEDIUMTEXT,
+  // rutinariamente 30-100 KB × 137 recursos = 3-4 MB por request cacheado por
+  // React Query). Se expone solo `hasSignature` (boolean); el detalle vuelve
+  // a traer la firma completa via GET /recursos/:id cuando el user abre el modal.
+  const recursos = await prisma.resource.findMany({
+    where,
+    orderBy: { name: 'asc' },
+    select: {
+      id: true, name: true, type: true, specialty: true, slotMinutes: true,
+      payScheme: true, maxHoursPerWeek: true, maxHoursPerDay: true, multiRoom: true,
+      leadCoordinatorId: true, active: true, deactivationReason: true,
+      supportTypes: true, createdAt: true, updatedAt: true,
+      // signatureUrl EXCLUIDO — se lee bajo demanda en getById.
+    },
+  })
+
+  // Query auxiliar barata: ids de recursos que tienen firma cargada.
+  // Devuelve solo id (bytes minimos), no toca el MEDIUMTEXT en el pipe.
+  const conFirma = await prisma.resource.findMany({
+    where: { ...where, signatureUrl: { not: null } },
+    select: { id: true },
+  })
+  const idsConFirma = new Set(conFirma.map((r) => r.id))
 
   // Resolver nombre de cada coordinador-líder en una sola query (evita N+1).
   // Se calcula una sola vez y se usa en ambas ramas (con o sin semana actual).
@@ -111,6 +133,9 @@ export async function list(req, res) {
       currentWeekHours: 0,
       isOvertime: false,
       coordinadorLiderNombre: liderByIdTop.get(r.leadCoordinatorId) ?? null,
+      // Boolean liviano — el frontend usa esto para el badge "Firma cargada".
+      // La firma completa se descarga via GET /recursos/:id al abrir el modal.
+      hasSignature: idsConFirma.has(r.id),
     })))
   }
 
@@ -180,6 +205,7 @@ export async function list(req, res) {
       isOvertime: horasMaxEfectivas != null && horas > horasMaxEfectivas,
       statusBadge: liberadas.has(r.id) ? 'liberada' : null,
       coordinadorLiderNombre: liderByIdTop.get(r.leadCoordinatorId) ?? null,
+      hasSignature: idsConFirma.has(r.id),
     }
   })
 

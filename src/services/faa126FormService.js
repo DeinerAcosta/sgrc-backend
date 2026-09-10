@@ -359,7 +359,12 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
     doc.font('Helvetica').fontSize(7).text('Día reprogramación:', LEFT + 3, y + 13)
     doc.rect(LEFT + 80, y, CONTENT_W - 80, rowH).stroke()
     if (dias.length > 0) {
-      doc.font('Helvetica').fontSize(8).text(dias.join(' · '), LEFT + 85, y + 7, { width: CONTENT_W - 90 })
+      // Sep-2026: height + ellipsis para que vacaciones largas (20-30 dias)
+      // no desborden la fila y pisen la del mes siguiente. Antes se pintaban
+      // 3-4 lineas y ocultaban el label "OCTUBRE:", "NOVIEMBRE:" etc.
+      doc.font('Helvetica').fontSize(8).text(dias.join(' · '), LEFT + 85, y + 4, {
+        width: CONTENT_W - 90, height: rowH - 6, ellipsis: true,
+      })
     }
     y += rowH
   })
@@ -375,11 +380,16 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   y += 18
 
   // ==================== OBSERVACIONES ====================
-  doc.rect(LEFT, y, CONTENT_W, 40).stroke()
+  // Sep-2026: caja crece de 40 a 55px y el texto usa 32px de alto con
+  // ellipsis. Antes truncaba silenciosamente notas de reposicion >2 lineas.
+  const obsH = 55
+  doc.rect(LEFT, y, CONTENT_W, obsH).stroke()
   doc.font('Helvetica-Bold').fontSize(8).text('OBSERVACIONES:', LEFT + 3, y + 3)
   doc.font('Helvetica').fontSize(7).text('Si desea reponer, detalle la fecha, horario y/o modalidad propuesta para la reposición.', LEFT + 100, y + 4, { width: CONTENT_W - 105 })
-  doc.font('Helvetica').fontSize(9).text(observacion || '', LEFT + 3, y + 18, { width: CONTENT_W - 6, height: 20 })
-  y += 40
+  doc.font('Helvetica').fontSize(9).text(observacion || '', LEFT + 3, y + 18, {
+    width: CONTENT_W - 6, height: obsH - 22, ellipsis: true,
+  })
+  y += obsH
 
   // ==================== FIRMA + FECHA DILIGENCIAMIENTO ====================
   // Sep-2026 · feedback usuario: la caja crece a 55px para que la firma tenga
