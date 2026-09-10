@@ -22,6 +22,20 @@ import {
 
 const emptyToUndef = (v) => (v === '' ? undefined : v)
 
+// Sep-2026: helper de scoping para coordinador — mismo criterio que
+// absenceController. Un recurso pertenece al coord si tiene User con sedes,
+// o el coord es su lider, o hay asignaciones del recurso en las sedes.
+// coordUserId=null omite el criterio de lider (uso supervisor/gerencia).
+function recursoAlcanceCoord(misSedes, coordUserId) {
+  const or = [
+    { user: { is: { sites: { some: { siteId: { in: misSedes } } } } } },
+    { assignmentsAsLead:      { some: { room: { siteId: { in: misSedes } } } } },
+    { assignmentsAsAssistant: { some: { room: { siteId: { in: misSedes } } } } },
+  ]
+  if (coordUserId) or.push({ leadCoordinatorId: coordUserId })
+  return { OR: or }
+}
+
 const TIPOS_REPOSICION = ['misma_agenda', 'otra_sede', 'doble_jornada', 'otro']
 
 const crearSchema = z.object({
@@ -111,28 +125,21 @@ export async function list(req, res) {
       throw errors.forbidden('No tienes acceso a esta sede')
     }
     const sedeFilter = sede_id ? [sede_id] : misSedes
+    // Sep-2026: mismo bug que absenceController.list — antes solo miraba
+    // resource.user.sites, ocultando reposiciones de recursos SIN User
+    // (nuevos como Munir/Katiuscka o cualquier huerfano). Ahora el filtro
+    // acepta 3 rutas: User→sedes, leadCoordinator=yo, asignaciones→sedes.
     where.absence = {
-      is: {
-        resource: {
-          is: { user: { is: { sites: { some: { siteId: { in: sedeFilter } } } } } },
-        },
-      },
+      is: { resource: { is: recursoAlcanceCoord(sedeFilter, req.user.id) } },
     }
     if (recurso_id) {
-      // Preserva el filtro anidado y agrega el filtro por recursoId.
-      where.absence = {
-        is: { ...where.absence.is, resourceId: recurso_id },
-      }
+      where.absence = { is: { ...where.absence.is, resourceId: recurso_id } }
     }
   } else {
-    // supervisor / gerencia / directivo
+    // supervisor / gerencia / directivo — mismo scoping ampliado si sede_id.
     if (sede_id) {
       where.absence = {
-        is: {
-          resource: {
-            is: { user: { is: { sites: { some: { siteId: sede_id } } } } },
-          },
-        },
+        is: { resource: { is: recursoAlcanceCoord([sede_id], null) } },
       }
     }
     if (recurso_id) where.absence = { is: { ...(where.absence?.is ?? {}), resourceId: recurso_id } }

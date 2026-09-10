@@ -21,6 +21,25 @@ const TIPOS = ['enfermedad', 'calamidad', 'academico', 'familiar', 'vacaciones',
 // sin esto, Zod rebota con "Datos inválidos" en campos opcionales.
 const emptyToUndef = (v) => (v === '' ? undefined : v)
 
+// Sep-2026: helper de scoping para coordinador. Un recurso "pertenece" al
+// coordinador si CUALQUIERA de estas es cierta:
+//   1. Tiene User cuyas sedes incluyen alguna de las del coord (patron clasico).
+//   2. Su coordinador-lider es este coord (recursos rotativos como Munir/Katiuscka).
+//   3. Tiene asignaciones en alguna sede del coord (fallback para recursos
+//      sin User ni lider explicito pero programados de facto).
+// Antes solo usabamos (1), lo que ocultaba ausencias/reposiciones de recursos
+// sin User o del pool rotativo.
+function recursoAlcanceCoord(misSedes, coordUserId) {
+  return {
+    OR: [
+      { user: { is: { sites: { some: { siteId: { in: misSedes } } } } } },
+      { leadCoordinatorId: coordUserId },
+      { assignmentsAsLead:      { some: { room: { siteId: { in: misSedes } } } } },
+      { assignmentsAsAssistant: { some: { room: { siteId: { in: misSedes } } } } },
+    ],
+  }
+}
+
 const crearSchema = z.object({
   resourceId: z.string().uuid(),
   startDate: z.string(),
@@ -96,9 +115,7 @@ export async function list(req, res) {
       }
     } else if (misSedes.length > 0) {
       // Sin sede_id explícita → restringe a TODAS sus sedes.
-      where.resource = {
-        is: { user: { is: { sites: { some: { siteId: { in: misSedes } } } } } },
-      }
+      where.resource = { is: recursoAlcanceCoord(misSedes, req.user.id) }
     }
   }
   // supervisor / gerencia / directivo: pasan sin restricción extra.
@@ -106,9 +123,11 @@ export async function list(req, res) {
   if (recurso_id && rol !== 'recurso') where.resourceId = recurso_id
 
   if (sedeIdFinal) {
-    where.resource = {
-      is: { user: { is: { sites: { some: { siteId: sedeIdFinal } } } } },
-    }
+    // Sep-2026: el filtro por sede antes solo miraba resource.user.sites, lo
+    // que ocultaba ausencias de recursos SIN User vinculado (Munir/Katiuscka
+    // creados manualmente + otros huerfanos). Ahora incluimos tambien
+    // coord-lider directo y asignaciones en la sede.
+    where.resource = { is: recursoAlcanceCoord([sedeIdFinal], req.user.id) }
   }
 
   // Rango de fechas para el cronograma (ago-2026). Una ausencia "toca" el rango

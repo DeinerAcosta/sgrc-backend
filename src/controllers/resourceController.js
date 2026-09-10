@@ -28,7 +28,10 @@ const recursoSchema = z.object({
   specialty: z.preprocess(emptyToUndef, z.string().max(100).optional().nullable()),
   slotMinutes: z.preprocess(emptyToUndef, z.number().int().min(5).max(60).optional().nullable()),
   payScheme: z.enum(ESQUEMAS),
-  maxHoursPerWeek: z.preprocess(emptyToUndef, z.number().int().min(1).max(60).optional()),
+  // Nullable porque oftalmologos y fonoaudiologas (esquema por_paciente) NO
+  // tienen tope semanal: el frontend envia null explicito. Sin .nullable() Zod
+  // rechazaba con 400 la edicion de cualquier oft/fono existente.
+  maxHoursPerWeek: z.preprocess(emptyToUndef, z.number().int().min(1).max(60).optional().nullable()),
   maxHoursPerDay: z.preprocess(emptyToUndef, z.number().int().min(1).max(24).optional()),
   multiRoom: z.boolean().optional(),
   active: z.boolean().optional(),

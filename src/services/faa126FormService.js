@@ -129,6 +129,20 @@ function fmtDdMmYyyy(d) {
   return `${dd}/${mm}/${yyyy}`
 }
 
+// "Hoy" en zona horaria America/Bogota (UTC-5, sin DST).
+// Sep-2026: antes se usaba fmtDdMmYyyy(new Date()) que formatea en UTC — los
+// PDFs generados entre 19:00 y 23:59 hora Bogota salian con la fecha del dia
+// siguiente porque UTC ya estaba en el dia siguiente. Este helper garantiza
+// que "Fecha diligenciamiento" corresponda al calendario Bogota.
+function fmtHoyBogota() {
+  const partes = new Intl.DateTimeFormat('es-CO', {
+    timeZone: 'America/Bogota',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  }).formatToParts(new Date())
+  const g = (t) => partes.find((p) => p.type === t)?.value ?? ''
+  return `${g('day')}/${g('month')}/${g('year')}`
+}
+
 // Devuelve [dd, mm, yyyy] como strings pad. Si la fecha esta vacia, ['','','']
 // para que el PDF muestre los boxes vacios en vez de "00/00/1970".
 function partesFecha(d) {
@@ -157,7 +171,7 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   const procesoAfectado = TIPO_A_PROCESO[tipoRecurso] ?? 'externa'
   const [dSal, mSal, ySal] = partesFecha(ausencia?.startDate)
   const [dEnt, mEnt, yEnt] = partesFecha(ausencia?.endDate)
-  const fechaDiligenciamiento = fmtDdMmYyyy(new Date())
+  const fechaDiligenciamiento = fmtHoyBogota()
   const observacion = ausencia?.makeupNotes ?? ausencia?.reason ?? ausencia?.actionTaken ?? ''
 
   // v04 · Empresa afectada — para pintar los checkboxes reflejamos el dato
