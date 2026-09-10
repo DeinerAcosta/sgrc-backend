@@ -368,22 +368,32 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   y += 40
 
   // ==================== FIRMA + FECHA DILIGENCIAMIENTO ====================
-  doc.rect(LEFT, y, CONTENT_W, 30).stroke()
-  doc.rect(LEFT, y, 350, 30).stroke()
+  // Sep-2026 · feedback usuario: la caja crece a 55px para que la firma tenga
+  // espacio suficiente y se lea claro. Cuando hay firma cargada, NO se
+  // duplica el nombre debajo — el nombre completo del profesional ya aparece
+  // arriba en la caja "Profesional quien presta el servicio". Sin firma, cae
+  // al nombre tipografico como fallback.
+  const firmaH = 55
+  doc.rect(LEFT, y, CONTENT_W, firmaH).stroke()
+  doc.rect(LEFT, y, 350, firmaH).stroke()
   doc.font('Helvetica').fontSize(8).text('Firma del prestador:', LEFT + 3, y + 3)
   if (firmaBuffer) {
     try {
-      doc.image(firmaBuffer, LEFT + 100, y + 4, { fit: [80, 22] })
-      doc.font('Helvetica-Bold').fontSize(9).text(nombreRecurso.toUpperCase(), LEFT + 185, y + 14, { width: 160 })
+      // Firma centrada horizontalmente dentro de la caja de 350x55.
+      // Fit generoso: 230px ancho x 42px alto — deja 6px margen sup/inf y
+      // 60px a cada lado. Con `align:'center'` PDFKit centra la imagen.
+      doc.image(firmaBuffer, LEFT + 10, y + 8, { fit: [330, 42], align: 'center', valign: 'center' })
     } catch {
-      doc.font('Helvetica-Bold').fontSize(10).text(nombreRecurso.toUpperCase(), LEFT + 110, y + 12)
+      // Imagen corrupta → cae al nombre tipografico
+      doc.font('Helvetica-Bold').fontSize(11).text(nombreRecurso.toUpperCase(), LEFT + 3, y + 25, { width: 344, align: 'center' })
     }
   } else {
-    doc.font('Helvetica-Bold').fontSize(10).text(nombreRecurso.toUpperCase(), LEFT + 110, y + 12)
+    // Sin firma cargada → nombre tipografico centrado
+    doc.font('Helvetica-Bold').fontSize(11).text(nombreRecurso.toUpperCase(), LEFT + 3, y + 25, { width: 344, align: 'center' })
   }
-  doc.font('Helvetica').fontSize(8).text('Fecha diligenciamiento:', LEFT + 360, y + 3)
-  doc.font('Helvetica-Bold').fontSize(10).text(fechaDiligenciamiento, LEFT + 480, y + 12)
-  y += 30
+  doc.font('Helvetica').fontSize(8).fillColor('#000').text('Fecha diligenciamiento:', LEFT + 360, y + 3)
+  doc.font('Helvetica-Bold').fontSize(10).text(fechaDiligenciamiento, LEFT + 480, y + 25)
+  y += firmaH
 
   // ==================== Vo Bo ====================
   doc.rect(LEFT, y, CONTENT_W, 20).stroke()

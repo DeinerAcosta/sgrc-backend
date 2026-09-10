@@ -320,7 +320,9 @@ model Resource {
   // data URL base64 ("data:image/png;base64,...") para no gestionar directorio
   // de uploads separado. El PDF F-AA-126 la lee y la pinta en la caja "Firma
   // del prestador"; si null, cae al nombre tipografico como antes.
-  signatureUrl       String?     @map("firma_url") @db.Text
+  // MediumText (16 MB) porque las firmas escaneadas en base64 superan
+  // rutinariamente los 64 KB del TEXT normal (algunas ~750 KB).
+  signatureUrl       String?     @map("firma_url") @db.MediumText
   createdAt          DateTime    @default(now()) @map("created_at")
   updatedAt          DateTime    @updatedAt @map("updated_at")
 
