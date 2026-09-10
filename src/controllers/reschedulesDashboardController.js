@@ -258,17 +258,26 @@ async function dataReprogramacionesDashboard(query = {}) {
     const tipo = a.resource?.type ?? 'otro'
     const fam = a.reasonRef?.family ?? 'ausencia_profesional'
 
-    if (!espAgg.has(tipo)) espAgg.set(tipo, { type: tipo, count: 0, dias: 0 })
+    if (!espAgg.has(tipo)) espAgg.set(tipo, { type: tipo, count: 0, dias: 0, pacientes: 0 })
     const eb = espAgg.get(tipo)
     eb.count++
     eb.dias += diasEntreInclusive(a.startDate, a.endDate)
+    eb.pacientes += a.patientsAffected ?? 0
 
     const ck = `${fam}|${tipo}`
     if (!cruceAgg.has(ck)) cruceAgg.set(ck, { family: fam, type: tipo, count: 0 })
     cruceAgg.get(ck).count++
   }
-  const porEspecialidad = [...espAgg.values()].sort((a, b) => b.count - a.count)
+  const porEspecialidad = [...espAgg.values()].sort((a, b) => b.pacientes - a.pacientes)
   const cruceFamiliaEspecialidad = [...cruceAgg.values()]
+
+  // ==== 10. Datos NUEVOS (sep-2026 · rediseño FOCA) ====
+  // Se calculan a partir de las mismas colecciones ya cargadas (no queries extra).
+  const nuevos = await calcularDatosFOCA({
+    ausencias: ausF,
+    reposiciones: reposicionesData._raw ?? [],
+    mapaSedes: mapaSedes ?? await mapaSedesPorRecurso(),
+  })
 
   return {
     rango,
@@ -285,9 +294,148 @@ async function dataReprogramacionesDashboard(query = {}) {
     por_familia: porFamilia,
     top_motivos: topMotivos,
     por_recurso: porRecurso,
-    makeups: reposicionesData,
+    makeups: { ...reposicionesData, _raw: undefined },
     por_especialidad: porEspecialidad,
     cruce_familia_especialidad: cruceFamiliaEspecialidad,
+    // FOCA sep-2026 — datos nuevos para el rediseño del dashboard.
+    ...nuevos,
+  }
+}
+
+// ============================================================================
+// Datos adicionales del rediseño FOCA (sep-2026):
+//   por_sede            → tasa de reposicion por sede
+//   sla_reposicion      → cuando se repone (adelantada / mismo dia / 1-7 / 8-30 / >30)
+//   antelacion_reporte  → dias entre creacion de la ausencia y fecha del evento
+//   por_dia_semana      → patron L-D
+//   por_subespecialidad → top subespecialidades (usa recurso.specialty)
+//   medicos_involucrados → count distinct recursos con al menos 1 ausencia
+//   pct_antelacion_ok   → % de ausencias reportadas con antelacion >= 1 dia
+//   sin_cobertura       → pacientes de ausencias que NO se repusieron
+// ============================================================================
+async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
+  // ---- Cobertura por paciente ----
+  // Aproximacion: para cada ausencia con al menos 1 reposicion aprobada,
+  // consideramos "cubiertos" a los patients_affected de esa ausencia.
+  let pacientesCubiertos = 0
+  let pacientesSinCobertura = 0
+  for (const a of ausencias) {
+    const pac = a.patientsAffected ?? 0
+    const cubierta = a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)
+    if (cubierta) pacientesCubiertos += pac
+    else          pacientesSinCobertura += pac
+  }
+
+  // ---- Tasa de reposicion por sede ----
+  // Usa mapaSedes (recursoId -> sedeNombres). Si un recurso pertenece a >1 sede
+  // la ausencia se cuenta a cada sede (mejor sobre-representar que perder dato).
+  const porSedeMap = new Map()  // sedeNombre → { total, aprobadas }
+  for (const a of ausencias) {
+    const info = mapaSedes.get(a.resourceId)
+    if (!info) continue
+    const cubierta = a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)
+    for (const nombre of info.sedeNombres) {
+      if (!porSedeMap.has(nombre)) porSedeMap.set(nombre, { name: nombre, total: 0, aprobadas: 0 })
+      const b = porSedeMap.get(nombre)
+      b.total++
+      if (cubierta) b.aprobadas++
+    }
+  }
+  const porSede = [...porSedeMap.values()]
+    .map((s) => ({ ...s, pct: s.total > 0 ? Math.round((s.aprobadas / s.total) * 100) : 0 }))
+    .sort((a, b) => b.pct - a.pct)
+
+  // ---- SLA de reposicion (dias entre fechaAusencia inicio y fecha_reposicion) ----
+  // requestedAt = solicitada, targetDate = fecha propuesta para reponer.
+  // Signo:
+  //   negativo = reposicion ANTES de la ausencia (adelantada)
+  //   0        = mismo dia
+  //   positivo = dias despues
+  const sla = { adelantada: 0, mismo_dia: 0, uno_a_siete: 0, ocho_a_treinta: 0, mas_30: 0 }
+  for (const r of reposiciones) {
+    if (!r.absence?.startDate || !r.targetDate) continue
+    const dias = Math.round(
+      (new Date(r.targetDate).setHours(0,0,0,0) - new Date(r.absence.startDate).setHours(0,0,0,0))
+      / (24 * 3600 * 1000)
+    )
+    if (dias < 0)       sla.adelantada++
+    else if (dias === 0) sla.mismo_dia++
+    else if (dias <= 7)  sla.uno_a_siete++
+    else if (dias <= 30) sla.ocho_a_treinta++
+    else                 sla.mas_30++
+  }
+
+  // ---- Antelacion del reporte (dias entre createdAt de ausencia y su startDate) ----
+  // Positivo = reportada CON antelacion (correcto).
+  // 0 o negativo = retroactiva (se reporta el mismo dia o despues del hecho).
+  const ant = { retroactivo: 0, uno: 0, dos_a_siete: 0, ocho_a_treinta: 0, mas_30: 0 }
+  let conAntelacion = 0
+  for (const a of ausencias) {
+    const dias = Math.round(
+      (new Date(a.startDate).setHours(0,0,0,0) - new Date(a.createdAt).setHours(0,0,0,0))
+      / (24 * 3600 * 1000)
+    )
+    if (dias <= 0)      ant.retroactivo++
+    else if (dias === 1) ant.uno++
+    else if (dias <= 7)  ant.dos_a_siete++
+    else if (dias <= 30) ant.ocho_a_treinta++
+    else                 ant.mas_30++
+    if (dias >= 1) conAntelacion++
+  }
+  const pctAntelacionOk = ausencias.length > 0
+    ? Math.round((conAntelacion / ausencias.length) * 1000) / 10
+    : 0
+
+  // ---- Patron por dia de la semana (Lun-Dom → 1..0 en JS getUTCDay) ----
+  const dowMap = new Map()
+  for (let i = 0; i <= 6; i++) dowMap.set(i, { dow: i, count: 0, pacientes: 0 })
+  for (const a of ausencias) {
+    const dow = new Date(a.startDate).getUTCDay()
+    const b = dowMap.get(dow)
+    b.count++
+    b.pacientes += a.patientsAffected ?? 0
+  }
+  // Reorden L-D (JS: 0=Dom, 1=Lun ... 6=Sab) → salida Lun...Dom
+  const porDiaSemana = [1, 2, 3, 4, 5, 6, 0].map((d) => dowMap.get(d))
+
+  // ---- Top subespecialidad (necesita resource.specialty) ----
+  // Necesitamos re-query solo el specialty de cada recurso involucrado.
+  const recIds = [...new Set(ausencias.map((a) => a.resourceId))]
+  const recs = recIds.length ? await prisma.resource.findMany({
+    where: { id: { in: recIds } },
+    select: { id: true, type: true, specialty: true },
+  }) : []
+  const specByRid = new Map(recs.map((r) => [r.id, { type: r.type, specialty: r.specialty ?? 'General' }]))
+  const subAgg = new Map()  // key = `${type}|${specialty}` → count, pacientes
+  for (const a of ausencias) {
+    const meta = specByRid.get(a.resourceId)
+    if (!meta) continue
+    const key = `${meta.type}|${meta.specialty || 'General'}`
+    if (!subAgg.has(key)) subAgg.set(key, {
+      type: meta.type,
+      specialty: meta.specialty || 'General',
+      count: 0,
+      pacientes: 0,
+    })
+    const b = subAgg.get(key)
+    b.count++
+    b.pacientes += a.patientsAffected ?? 0
+  }
+  const porSubespecialidad = [...subAgg.values()].sort((a, b) => b.pacientes - a.pacientes).slice(0, 15)
+
+  // ---- Medicos involucrados (recursos con al menos 1 ausencia) ----
+  const medicosInvolucrados = recIds.length
+
+  return {
+    por_sede: porSede,
+    sla_reposicion: sla,
+    antelacion_reporte: ant,
+    pct_antelacion_ok: pctAntelacionOk,
+    por_dia_semana: porDiaSemana,
+    por_subespecialidad: porSubespecialidad,
+    pacientes_cubiertos: pacientesCubiertos,
+    pacientes_sin_cobertura: pacientesSinCobertura,
+    medicos_involucrados: medicosInvolucrados,
   }
 }
 
@@ -300,7 +448,9 @@ async function calcularReposiciones({ desde, hasta, sedeIdsFiltro, mapaSedes, me
       requestedAt: { gte: desde, lte: fechaFinDelDia(hasta) },
     },
     include: {
-      absence: { select: { resourceId: true, resource: { select: { name: true, type: true } } } },
+      // Sep-2026: se agrega startDate para calcular SLA de reposicion (dias
+      // entre fecha de la ausencia y fecha propuesta para reponerla).
+      absence: { select: { resourceId: true, startDate: true, resource: { select: { name: true, type: true } } } },
     },
   })
 
@@ -361,6 +511,9 @@ async function calcularReposiciones({ desde, hasta, sedeIdsFiltro, mapaSedes, me
     tiempo_medio_aprobacion_h: tiempoMedioH,
     por_mes: [...porMesMap.values()],
     top_medicos: [...topRec.values()].sort((a, b) => b.count - a.count).slice(0, 10),
+    // Se expone el array raw para que calcularDatosFOCA calcule SLA sin re-query.
+    // Se elimina antes de devolver la respuesta al cliente.
+    _raw: filtered,
   }
 }
 
