@@ -38,9 +38,11 @@ const recursoSchema = z.object({
   // de TIPOS son válidos. Vacío/null = solo aparece en su tipo principal.
   supportTypes: z.preprocess(emptyToUndef, z.string().max(100).optional().nullable()),
   // PROYECTOS-3255 #5.1 · firma escaneada del profesional (data URL base64).
-  // Limite 500 KB en base64 (~370 KB de imagen) — mas que suficiente para una
-  // firma escaneada en calidad razonable, evita OOMs por errores del cliente.
-  signatureUrl: z.preprocess(emptyToUndef, z.string().max(500_000).optional().nullable()),
+  // Sep-2026: limite subido a 2 MB (era 500 KB) porque el consolidado de firmas
+  // de septiembre incluye escaneos > 500 KB (Alejandra Villalobos 768 KB). La
+  // BD (MEDIUMTEXT, 16 MB) y el frontend (1 MB imagen ~ 1.35 MB en base64) los
+  // aceptan; el cap Zod queda un poco por encima del frontend para dejar margen.
+  signatureUrl: z.preprocess(emptyToUndef, z.string().max(2_000_000).optional().nullable()),
 })
 
 /**
