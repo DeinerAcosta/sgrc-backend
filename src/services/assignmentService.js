@@ -186,6 +186,8 @@ export async function editarAsignacion(id, data, userCtx) {
     const excludeSelf = { id: { not: id } }
 
     // VAL 2 (RN-08): recurso libre en franja
+    // FIX sep-2026: ignorar asignaciones en consultorios INACTIVOS (misma
+    // razon que en crear — el consultorio viejo migrado no debe bloquear).
     if (!recurso.multiRoom) {
       const conflictoRecurso = await tx.assignment.findFirst({
         where: {
@@ -193,6 +195,7 @@ export async function editarAsignacion(id, data, userCtx) {
           weekId: existing.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
         },
         include: { room: { include: { site: true } } },
@@ -211,6 +214,7 @@ export async function editarAsignacion(id, data, userCtx) {
         weekId: existing.weekId,
         weekday: data.weekday,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
       include: { room: { include: { site: true } } },
@@ -225,6 +229,7 @@ export async function editarAsignacion(id, data, userCtx) {
     const subsEd = normalizarSubHorariosAux(data)
 
     // VAL 4 (RN-08 aux): auxiliar libre — usa el sub-horario real
+    // FIX sep-2026: ignorar consultorios inactivos (mismo criterio que VAL 2).
     if (data.assistantId && consultorio.requiresAssistant) {
       const conflictoAux = await tx.assignment.findFirst({
         where: {
@@ -232,6 +237,7 @@ export async function editarAsignacion(id, data, userCtx) {
           weekId: existing.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [{ assistantId: data.assistantId }, { assistant2Id: data.assistantId }, { resourceId: data.assistantId }],
         },
         include: { room: { include: { site: true } } },
@@ -263,6 +269,7 @@ export async function editarAsignacion(id, data, userCtx) {
           weekId: existing.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [{ assistantId: data.assistant2Id }, { assistant2Id: data.assistant2Id }, { resourceId: data.assistant2Id }],
         },
         include: { room: { include: { site: true } } },
@@ -297,6 +304,7 @@ export async function editarAsignacion(id, data, userCtx) {
         weekId: existing.weekId,
         weekday: data.weekday,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
     })
@@ -346,6 +354,7 @@ export async function editarAsignacion(id, data, userCtx) {
         ...excludeSelf,
         weekId: existing.weekId,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
     })
@@ -486,12 +495,16 @@ export async function crearAsignacion(data, userCtx) {
     // ---- VALIDACIÓN 2: recurso libre en franja ese día (RN-08) ----
     // EXCEPCIÓN: si el recurso tiene multiConsultorio=true (médicos que cubren
     // 2-3 salas en paralelo con auxiliares), se omite este conflicto.
+    // FIX sep-2026: se ignoran asignaciones en consultorios INACTIVOS.
+    // No aplica ese día, por lo tanto no debe bloquear. Evita el caso de
+    // consultorios viejos migrados que quedan con asignaciones huerfanas.
     if (!recurso.multiRoom) {
       const conflictoRecurso = await tx.assignment.findFirst({
         where: {
           weekId: data.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [
             { resourceId: data.resourceId },
             { assistantId: data.resourceId },
@@ -507,11 +520,13 @@ export async function crearAsignacion(data, userCtx) {
     }
 
     // ---- VALIDACIÓN 3: ciudad única ese día (RN-09) ----
+    // Mismo criterio: consultorios inactivos no bloquean.
     const otraDelDia = await tx.assignment.findFirst({
       where: {
         weekId: data.weekId,
         weekday: data.weekday,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
       include: { room: { include: { site: true } } },
@@ -535,6 +550,7 @@ export async function crearAsignacion(data, userCtx) {
           weekId: data.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [
             { assistantId: data.assistantId },
             { assistant2Id: data.assistantId },
@@ -568,6 +584,7 @@ export async function crearAsignacion(data, userCtx) {
           weekId: data.weekId,
           weekday: data.weekday,
           status: { not: 'cancelada' },
+          room: { active: true },
           OR: [
             { assistantId: data.assistant2Id },
             { assistant2Id: data.assistant2Id },
@@ -608,6 +625,7 @@ export async function crearAsignacion(data, userCtx) {
         weekId: data.weekId,
         weekday: data.weekday,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
     })
@@ -658,6 +676,7 @@ export async function crearAsignacion(data, userCtx) {
       where: {
         weekId: data.weekId,
         status: { not: 'cancelada' },
+        room: { active: true },
         OR: [{ resourceId: data.resourceId }, { assistantId: data.resourceId }],
       },
     })
