@@ -813,18 +813,18 @@ export async function dataCierreSemanas({ desde, hasta, site_id: sede_id } = {})
     // Deadline uniforme: lunes siguiente al domingo de fin (endDate + 1 dia).
     // Semana lu-do: sem.endDate es domingo, lunes siguiente = +1 dia.
     // Todos los cierres — manuales o del sistema — se muestran con esta fecha,
-    // asi el informe refleja el vencimiento del criterio 1.2 (lunes 23:59)
-    // y no la hora en que corrio el cron o el click del coord.
+    // asi el informe refleja el vencimiento del criterio 1.2 (lunes 23:59).
     const deadline = new Date(sem.endDate.getTime() + 1 * DIA)
-    const diasTrasFin = Math.max(0, Math.round((c.closedAt - sem.endDate) / DIA))
-    const aTiempo = diasTrasFin <= 1 // cerro antes del lunes 23:59 = 1 dia tras domingo
+    // Regla simple: si un humano la cerro (closedBy != null) → "A tiempo",
+    // porque su intervencion evito el cierre automatico. Solo el fallback del
+    // sistema queda como "Auto (Sistema)".
     const responsable = c.closedBy ? (nombre.get(c.closedBy) ?? '— sin registro —') : '(Sistema)'
     return {
       week: `${sem.startDate.toISOString().slice(0, 10)} → ${sem.endDate.toISOString().slice(0, 10)}`,
       site: c.site?.name ?? '—',
       coordinador: responsable,
       fecha_cierre: deadline.toISOString().slice(0, 10),
-      status: !c.closedBy ? 'Auto (Sistema)' : aTiempo ? 'A tiempo' : 'Tarde',
+      status: c.closedBy ? 'A tiempo' : 'Auto (Sistema)',
     }
   }).filter(Boolean)
 
