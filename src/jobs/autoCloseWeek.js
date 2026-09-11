@@ -46,10 +46,13 @@ async function getSistemaUserId() {
 // Cantidad de días de gracia tras el fin de la semana (sábado) antes de cerrar
 // automáticamente. El registro de ejecución cierra el lunes 23:59 siguiente
 // (o el siguiente día hábil si el lunes es festivo); esta gracia de 4 días deja
-// MARGEN: sábado (día 0) + dom + lun (cierre registro) + mar (gracia) = 4 días.
-// Si el lunes es festivo el cierre se corre al martes, y el sistema entraría
-// el miércoles (todavía respeta el flujo del coordinador).
-const GRACE_DIAS = 4
+// PROYECTOS-3255 #1.2 (ajuste sep-2026): GRACE_DIAS=0.
+// El auto-cierre corre el mismo lunes en la noche (cron 2am del martes toma
+// la semana que termino el sabado — 2 dias tras fin ya cumple la ventana).
+// Con esto, semanas cuyo coordinador no cerro el lunes 23:59 se cierran
+// inmediatamente en la primera corrida del cron (madrugada del martes),
+// no 4 dias despues como antes.
+const GRACE_DIAS = 0
 
 export async function jobAutoCierreSemana(ahoraOverride = null) {
   // Con programación libre el job se salta por completo. Si no, cada noche a

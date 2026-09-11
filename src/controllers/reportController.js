@@ -803,32 +803,26 @@ export async function dataCierreSemanas({ desde, hasta, site_id: sede_id } = {})
   const nombre = new Map(usuarios.map((u) => [u.id, u.name]))
 
   const DIA = 1000 * 60 * 60 * 24
-  // GRACE_DIAS = 4 — DEBE mantenerse sincronizado con GRACE_DIAS en
-  // backend/src/jobs/autoCierreSemana.js:25. Es el mismo umbral: el sistema
-  // cierra automáticamente pasado ese día, así que "A tiempo" para el coord
-  // es cualquier cierre manual DENTRO de esa ventana.
-  //
-  // Cadencia real: sábado (día 0) + dom + lun (cierre de registro de ejecución)
-  // + mar + mié (día 4) → el miércoles el job toma over si nadie cerró antes.
-  const GRACE_DIAS = 4
+  // PROYECTOS-3255 #1.2 (ajuste sep-2026): GRACE_DIAS=0. El sistema cierra
+  // exactamente el lunes 23:59 (o madrugada del martes en el primer cron).
+  // "A tiempo" = cerro manualmente antes del lunes 23:59 (fin + 2 dias).
+  const GRACE_DIAS = 0
   const filas = cierres.map((c) => {
     const sem = semanaPorId.get(c.weekId)
     if (!sem) return null
-    // Días entre el fin de la semana (sábado) y la fecha de cierre:
-    //   0 → cerró el mismo sábado (óptimo)
-    //   1 a 4 → dentro del período de gracia, "A tiempo"
-    //   5+ → "Tarde" (solo posible si el auto-cierre estuvo caído)
-    // Negativo (cerró antes del fin) lo mostramos como 0 — no tiene sentido
-    // físico cerrar antes de que termine la ejecución de la semana.
+    // Deadline uniforme: lunes siguiente al sabado de fin (endDate + 2 dias).
+    // Todos los cierres — manuales o del sistema — se muestran con esta fecha,
+    // asi el informe refleja el vencimiento del criterio 1.2 (lunes 23:59)
+    // y no la hora en que corrio el cron o el click del coord.
+    const deadline = new Date(sem.endDate.getTime() + 2 * DIA)
     const diasTrasFin = Math.max(0, Math.round((c.closedAt - sem.endDate) / DIA))
-    const aTiempo = diasTrasFin <= GRACE_DIAS
+    const aTiempo = diasTrasFin <= 2 // hasta el lunes (dia 2 tras sabado)
     const responsable = c.closedBy ? (nombre.get(c.closedBy) ?? '— sin registro —') : '(Sistema)'
     return {
       week: `${sem.startDate.toISOString().slice(0, 10)} → ${sem.endDate.toISOString().slice(0, 10)}`,
       site: c.site?.name ?? '—',
       coordinador: responsable,
-      fecha_cierre: c.closedAt.toISOString().slice(0, 10),
-      dias_tras_fin: diasTrasFin,
+      fecha_cierre: deadline.toISOString().slice(0, 10),
       status: !c.closedBy ? 'Auto (Sistema)' : aTiempo ? 'A tiempo' : 'Tarde',
     }
   }).filter(Boolean)
