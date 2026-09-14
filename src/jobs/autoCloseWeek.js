@@ -87,6 +87,13 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
   const errores = []
   for (const sem of candidatas) {
     try {
+      // Fecha registrada del cierre: el ultimo instante del lunes siguiente al
+      // domingo de fin (endDate + 1 dia a las 23:59:59). Asi el informe
+      // muestra "cerrada el lunes X a las 23:59" en vez de "martes 00:00",
+      // que es cuando fisicamente corrio el cron.
+      const closedAtDeadline = new Date(sem.endDate.getTime() + 24 * 60 * 60 * 1000)
+      closedAtDeadline.setHours(23, 59, 59, 0)
+
       // Cierre POR SEDE: para cada sede con asignaciones en esa semana, crear
       // su CierreSemanaSede con cerradaPor=null (Sistema) — solo si la sede
       // todavía no había sido cerrada manualmente por su coord.
@@ -102,7 +109,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
       const sedesAcerrar = sedesConAsigs.filter((sid) => !yaCerradas.has(sid))
       for (const sedeId of sedesAcerrar) {
         const cierre = await prisma.weekSiteClosure.create({
-          data: { weekId: sem.id, siteId: sedeId, closedBy: null, closedAt: ahora, reason: 'Cierre automático tras período de gracia' },
+          data: { weekId: sem.id, siteId: sedeId, closedBy: null, closedAt: closedAtDeadline, reason: 'Cierre automático tras período de gracia' },
         })
         // Auditoría por cada sede cerrada por el sistema (fix jul-2026).
         if (sistemaUserId) {
@@ -116,7 +123,8 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
               siteId: sedeId,
               startWeek: sem.startDate,
               endWeek: sem.endDate,
-              closedAt: ahora,
+              closedAt: closedAtDeadline,
+              cronRanAt: ahora,
               graceDias: GRACE_DIAS,
             },
             reason: 'Cierre automático tras período de gracia',
@@ -127,7 +135,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
       // cierre, la semana queda en estado='cerrada'.
       await prisma.week.update({
         where: { id: sem.id },
-        data: { status: 'cerrada', closedBy: null, closedAt: ahora },
+        data: { status: 'cerrada', closedBy: null, closedAt: closedAtDeadline },
       })
       if (sistemaUserId) {
         await registrarAuditoria({

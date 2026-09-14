@@ -67,14 +67,17 @@ export function iniciarJobs() {
     }
   }, { timezone: TZ })
 
-  // Auto-cierre de semanas vencidas — todos los días a las 2:00am
-  cron.schedule('0 2 * * *', async () => {
-    console.log('[JOB 2am] Cerrando semanas vencidas automáticamente...')
+  // Auto-cierre de semanas vencidas — todos los días a las 00:00 (medianoche)
+  // Sep-14-2026: cambio de 2am a 00:00 para que la fecha registrada del cierre
+  // (que interpretamos como "el ultimo instante del lunes") coincida con el
+  // deadline visible en el informe (lunes 23:59:59).
+  cron.schedule('0 0 * * *', async () => {
+    console.log('[JOB 00:00] Cerrando semanas vencidas automáticamente...')
     try {
       const r = await jobAutoCierreSemana()
-      console.log('[JOB 2am] Auto-cierre:', JSON.stringify(r))
+      console.log('[JOB 00:00] Auto-cierre:', JSON.stringify(r))
     } catch (e) {
-      console.error('[JOB 2am] Error:', e.message)
+      console.error('[JOB 00:00] Error:', e.message)
     }
   }, { timezone: TZ })
 
@@ -112,7 +115,7 @@ export function iniciarJobs() {
     }
   })
 
-  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (2am diario), sync festivos (1ene 1am), purga auditoría (3am domingos)')
+  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (00:00 diario), sync festivos (1ene 1am), purga auditoría (3am domingos)')
 }
 
 // Mapa para ejecución manual vía endpoint (testing / disparo on-demand)
