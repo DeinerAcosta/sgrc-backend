@@ -168,7 +168,16 @@ function partesFecha(d) {
 function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   const nombreRecurso = ausencia?.resource?.name ?? 'PROFESIONAL'
   const tipoRecurso = ausencia?.resource?.type ?? ''
-  const procesoAfectado = TIPO_A_PROCESO[tipoRecurso] ?? 'externa'
+  // F-AA-126 v05 (sep-14-2026): si la ausencia trae affectedProcess capturado
+  // en el modal, se usa. Si no (ausencias legacy), se infiere del tipo de
+  // recurso como antes (retrocompatible). Valores nuevos usan snake_case largo
+  // — mapeamos al codigo corto que espera el resto del render.
+  const PROCESO_LARGO_A_CORTO = { consulta_externa: 'externa', ayudas_diagnosticas: 'diagnostica', cirugia: 'cirugia' }
+  const procesoAfectado = ausencia?.affectedProcess
+    ? (PROCESO_LARGO_A_CORTO[ausencia.affectedProcess] ?? ausencia.affectedProcess)
+    : (TIPO_A_PROCESO[tipoRecurso] ?? 'externa')
+  // Tipo de novedad: default 'ausencia_periodo' (era el hardcoded historico).
+  const tipoNovedad = ausencia?.noveltyType ?? 'ausencia_periodo'
   const [dSal, mSal, ySal] = partesFecha(ausencia?.startDate)
   const [dEnt, mEnt, yEnt] = partesFecha(ausencia?.endDate)
   const fechaDiligenciamiento = fmtHoyBogota()
@@ -317,11 +326,11 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   doc.font('Helvetica').fontSize(8)
     .text('Tipo de novedad:', LEFT + 3, y + 9)
   doc.text('Cambio permanente', LEFT + 100, y + 5).text('de horario', LEFT + 100, y + 14)
-  drawCheckbox(LEFT + 180, y + 8, false)
+  drawCheckbox(LEFT + 180, y + 8, tipoNovedad === 'cambio_permanente')
   doc.text('Cambio de horario de', LEFT + 215, y + 5).text('periodo determinado', LEFT + 215, y + 14)
-  drawCheckbox(LEFT + 305, y + 8, false)
+  drawCheckbox(LEFT + 305, y + 8, tipoNovedad === 'cambio_periodo')
   doc.text('Ausencia de un período', LEFT + 340, y + 5).text('determinado', LEFT + 340, y + 14)
-  drawCheckbox(LEFT + 440, y + 8, true)
+  drawCheckbox(LEFT + 440, y + 8, tipoNovedad === 'ausencia_periodo')
 
   // ==================== MOTIVO ====================
   y += 25

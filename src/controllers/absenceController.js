@@ -76,6 +76,10 @@ const crearSchema = z.object({
   ),
   // Observaciones de la reposición propuesta (texto libre, opcional).
   makeupNotes: z.preprocess(emptyToUndef, z.string().max(2000).optional()),
+  // F-AA-126 v05 (sep-2026): campos del formato oficial. Solo aplican a
+  // oftalmologo/optometra; en otros roles se ignoran (quedan en NULL).
+  affectedProcess: z.preprocess(emptyToUndef, z.enum(['consulta_externa', 'ayudas_diagnosticas', 'cirugia']).optional()),
+  noveltyType: z.preprocess(emptyToUndef, z.enum(['cambio_permanente', 'cambio_periodo', 'ausencia_periodo']).optional()),
   recordedByCoordinator: z.boolean().optional(),
 })
 
@@ -369,6 +373,9 @@ export async function create(req, res) {
       affectedCompany: data.affectedCompany ?? null,
       wantsMakeup: data.wantsMakeup ?? null,
       makeupNotes: data.wantsMakeup ? (data.makeupNotes?.trim() || null) : null,
+      // F-AA-126 v05 (sep-14-2026): campos del formato oficial que hoy no se capturaban
+      affectedProcess: data.affectedProcess ?? null,
+      noveltyType: data.noveltyType ?? null,
       // Umbral operativo (RN ago-2026): ausencia con más de 15 días de
       // anticipación se considera "programada" (hay margen para reprogramar
       // pacientes con menor impacto); ≤ 15 días es "imprevista". Antes era >= 2.
