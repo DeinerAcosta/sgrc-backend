@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 /**
  * Genera el PDF del formato oficial F-AA-126 v04 "CONTINUIDAD DEL SERVICIO
- * CON LOS PRESTADORES DE SERVICIO". El título de empresa y el subtítulo de
- * especialidades cambian por empresa (FOCA → Fundación Oftalmológica del Caribe
- * · Oftalmología-Otorrinolaringología; VIU → Clínica Oftalmológica del Caribe ·
- * Oftalmología). Fecha actualización 26/08/2026.
+ * CON LOS PRESTADORES DE SERVICIO OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA". El
+ * título de empresa cambia (FOCA → Fundación Oftalmológica del Caribe; VIU →
+ * Clínica Oftalmológica del Caribe); el subtítulo de especialidades es el
+ * mismo para ambas. Fecha actualización 26/08/2026.
  *
  * Diferencias con v03:
  *   - Bloque "¿A QUÉ EMPRESA APLICA LA AUSENCIA?" con FOCA/VIU/AMBAS
@@ -257,18 +257,16 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   // ==================== CABECERA (baja para dejar espacio al logo) ====================
   const H_TOP = 55
   doc.rect(LEFT, H_TOP, CONTENT_W, 60).stroke()
-  // Título/subtítulo cambian por empresa. FOCA = Fundación Oftalmológica del
-  // Caribe (Oftalmología + Otorrinolaringología). VIU = Clínica Oftalmológica
-  // del Caribe (solo Oftalmología). Optometría se retiró del formato oficial
-  // (feedback usuario 15-sep-2026). Legacy sin empresa registrada: se mantiene
-  // el título Clínica por retrocompatibilidad.
+  // El título de empresa cambia: FOCA = Fundación, VIU = Clínica (legacy sin
+  // empresa registrada mantiene Clínica por retrocompatibilidad). El subtítulo
+  // de especialidades es el mismo en las dos empresas: Oftalmología +
+  // Otorrinolaringología. Optometría se retiró del formato oficial (feedback
+  // usuario 15-sep-2026).
   const esFoca = empresaLogo === 'foca'
   const tituloEmpresa = esFoca
     ? 'FUNDACIÓN OFTALMOLÓGICA DEL CARIBE'
     : 'CLÍNICA OFTALMOLÓGICA DEL CARIBE'
-  const especialidadSubtitulo = esFoca
-    ? 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA'
-    : 'OFTALMOLOGÍA'
+  const especialidadSubtitulo = 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA'
   // Título central
   doc.rect(LEFT, H_TOP, CONTENT_W - 100, 30).stroke()
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
