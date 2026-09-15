@@ -45,6 +45,83 @@ function normalizarSubHorariosAux(data) {
 }
 
 /**
+ * Sep-2026 · Ley 2101 · Autorización directivo para AUX que trabajan finde
+ * completo (sábado + domingo la misma semana).
+ *
+ * Regla:
+ *  - Un auxiliar (tipo=auxiliar) puede trabajar sábado O domingo sin problema.
+ *  - Si un auxiliar tiene asignación en AMBOS días del finde, el segundo día
+ *    exige autorización explícita de un directivo (o gerencia). El coord no
+ *    puede saltarse este check.
+ *
+ * Se aplica a los 3 slots donde puede aparecer un aux en la asignación:
+ * `resourceId` (raro), `assistantId` (típico), `assistant2Id` (2 aux).
+ *
+ * @param tx           transacción Prisma
+ * @param data         payload de la asignación (weekId, weekday, ids, autorización)
+ * @param recurso      el `resource` principal ya cargado (para saber si es aux)
+ * @param editingId    id de la asignación si estamos EDITANDO (para excluirse a sí misma)
+ */
+async function validarAutorizacionFinDeSemana(tx, data, recurso, editingId = null) {
+  if (data.weekday !== 'sabado' && data.weekday !== 'domingo') return
+
+  const otroDia = data.weekday === 'sabado' ? 'domingo' : 'sabado'
+
+  const auxsAChequear = []
+  if (recurso.type === 'auxiliar') auxsAChequear.push({ id: data.resourceId, nombre: recurso.name })
+
+  if (data.assistantId) {
+    const a = await tx.resource.findUnique({ where: { id: data.assistantId }, select: { id: true, name: true, type: true } })
+    if (a?.type === 'auxiliar') auxsAChequear.push({ id: a.id, nombre: a.name })
+  }
+  if (data.assistant2Id) {
+    const a = await tx.resource.findUnique({ where: { id: data.assistant2Id }, select: { id: true, name: true, type: true } })
+    if (a?.type === 'auxiliar') auxsAChequear.push({ id: a.id, nombre: a.name })
+  }
+
+  if (auxsAChequear.length === 0) return
+
+  const auxsQueRequierenAutorizacion = []
+  for (const aux of auxsAChequear) {
+    const otraAsig = await tx.assignment.findFirst({
+      where: {
+        weekId: data.weekId,
+        weekday: otroDia,
+        status: { not: 'cancelada' },
+        ...(editingId ? { id: { not: editingId } } : {}),
+        OR: [
+          { resourceId: aux.id },
+          { assistantId: aux.id },
+          { assistant2Id: aux.id },
+        ],
+      },
+      select: { id: true },
+    })
+    if (otraAsig) auxsQueRequierenAutorizacion.push(aux.nombre)
+  }
+
+  if (auxsQueRequierenAutorizacion.length === 0) return
+
+  const listaNombres = auxsQueRequierenAutorizacion.join(', ')
+  if (!data.authorizedById || !data.authorizationReason || data.authorizationReason.trim().length < 5) {
+    throw errors.badRequest(
+      `Asignar a ${listaNombres} tanto sábado como domingo de la misma semana requiere autorización de un directivo (Ley 2101). Seleccioná un directivo del sistema y anotá el motivo (mínimo 5 caracteres).`,
+    )
+  }
+
+  const autorizador = await tx.user.findUnique({
+    where: { id: data.authorizedById },
+    select: { id: true, name: true, role: true, active: true },
+  })
+  if (!autorizador || !autorizador.active) {
+    throw errors.badRequest('El autorizador seleccionado no existe o está inactivo.')
+  }
+  if (!['directivo', 'gerencia'].includes(autorizador.role)) {
+    throw errors.forbidden(`${autorizador.name} no tiene rol de directivo — solo directivos (o gerencia) pueden autorizar fin de semana completo.`)
+  }
+}
+
+/**
  * Valida que la unión de los sub-horarios de aux1 + aux2 cubra COMPLETAMENTE
  * el horario del recurso principal. Solo aplica si el consultorio requiere
  * auxiliar y hay al menos una auxiliar asignada. Si hay hueco, devuelve mensaje
@@ -387,6 +464,9 @@ export async function editarAsignacion(id, data, userCtx) {
     const esHorasExtras = recurso.maxHoursPerWeek != null && horasSemanaTotal > recurso.maxHoursPerWeek
     const tieneHorasNocturnas = data.endTime > '18:00' || data.startTime >= '18:00'
 
+    // ---- VALIDACIÓN 7: autorización directivo para AUX sáb+dom (Ley 2101) ----
+    await validarAutorizacionFinDeSemana(tx, data, recurso, id)
+
     // Override manual del coordinador: si conoce los pacientes REALES que se le
     // programaron desde la agenda externa, los usa; si no, cae al cálculo nominal.
     const pacientesCapacidad = data.expectedPatients != null
@@ -420,6 +500,10 @@ export async function editarAsignacion(id, data, userCtx) {
         patientCapacity: pacientesCapacidad,
         isOvertime: esHorasExtras,
         hasNightHours: tieneHorasNocturnas,
+        // Autorización fin de semana (VAL 7). Si no se necesitó, quedan en null.
+        authorizedById: data.authorizedById ?? null,
+        authorizedAt: data.authorizedById ? new Date() : null,
+        authorizationReason: data.authorizedById ? (data.authorizationReason?.trim() ?? null) : null,
       },
       include: {
         resource: true,
@@ -710,6 +794,9 @@ export async function crearAsignacion(data, userCtx) {
     // Horas nocturnas: cualquier minuto >= 18:00
     const tieneHorasNocturnas = data.endTime > '18:00' || data.startTime >= '18:00'
 
+    // ---- VALIDACIÓN 7: autorización directivo para AUX sáb+dom (Ley 2101) ----
+    await validarAutorizacionFinDeSemana(tx, data, recurso)
+
     // ---- INSERT con todas las validaciones pasadas ----
     // Override manual: si el coord conoce los pacientes REALES, los usa.
     const pacientesCapacidad = data.expectedPatients != null
@@ -745,6 +832,10 @@ export async function crearAsignacion(data, userCtx) {
         hasNightHours: tieneHorasNocturnas,
         isReplacement: data.isReplacement ?? false,
         coveredAbsenceId: data.coveredAbsenceId,
+        // Autorización fin de semana (VAL 7). Si no se necesitó, quedan en null.
+        authorizedById: data.authorizedById ?? null,
+        authorizedAt: data.authorizedById ? new Date() : null,
+        authorizationReason: data.authorizedById ? (data.authorizationReason?.trim() ?? null) : null,
       },
       include: {
         resource: true,

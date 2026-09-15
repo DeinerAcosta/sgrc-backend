@@ -135,6 +135,8 @@ model User {
   // Fase 3 · reposiciones de ausencia
   requestedMakeups            AbsenceMakeup[]   @relation("ReposicionSolicitante")
   approvedMakeups             AbsenceMakeup[]   @relation("ReposicionAprobador")
+  // Autorizaciones fin de semana (auxiliar sáb+dom · Ley 2101)
+  weekendAuthorizations       Assignment[]      @relation("AutorizacionesFinDeSemana")
 
   @@index([role])
   @@map("usuarios")
@@ -410,6 +412,14 @@ model Assignment {
   isReplacement       Boolean          @default(false) @map("es_reemplazo")
   coveredAbsenceId    String?          @map("ausencia_cubierta_id")
   status              EstadoAsignacion @default(activa) @map("estado")
+  // Autorización de fin de semana para auxiliares (Sep-2026 · Ley 2101).
+  // Cuando un auxiliar trabaja SÁBADO Y DOMINGO en la misma semana, la
+  // asignación excepcional requiere autorización explícita de un directivo
+  // (o gerencia). Estos 3 campos guardan quién autorizó, cuándo y el motivo.
+  // NULL para asignaciones normales (L-V o solo un día del finde).
+  authorizedById      String?          @map("autorizado_por")
+  authorizedAt        DateTime?        @map("autorizado_en")
+  authorizationReason String?          @map("motivo_autorizacion") @db.Text
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
@@ -419,6 +429,7 @@ model Assignment {
   assistant2     Resource?  @relation("RecursoAuxiliar2", fields: [assistant2Id], references: [id])
   room           Room       @relation(fields: [roomId], references: [id])
   coveredAbsence Absence?   @relation("AsignacionesReemplazo", fields: [coveredAbsenceId], references: [id])
+  authorizer     User?      @relation("AutorizacionesFinDeSemana", fields: [authorizedById], references: [id])
   execution      Execution?
 
   // Índices críticos para validación de conflictos (Especificación §6.2)

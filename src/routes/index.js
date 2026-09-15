@@ -80,6 +80,10 @@ r.post('/users/bulk', requireRol('supervisor'), wrap(usr.bulkCreate))
 r.put('/users/:id', requireRol('supervisor'), wrap(usr.update))
 r.delete('/users/:id', requireRol('supervisor'), wrap(usr.remove))
 r.post('/users/:id/resend-credentials', requireRol('supervisor'), wrap(usr.reenviarCredenciales))
+// Sep-2026 · Ley 2101 · Lista de directivos activos para el modal Nueva
+// Asignación cuando un aux va a trabajar sáb+dom (autorización obligatoria).
+// El coord tiene que poder consultarla desde el modal, por eso está abierta.
+r.get('/users/directivos', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(usr.listDirectivos))
 // Solicitudes de registro (autorregistro pendiente de aprobación)
 r.get('/users/requests', requireRol('supervisor'), wrap(solReg.list))
 r.post('/users/requests/:id/approve', requireRol('supervisor'), wrap(solReg.aprobar))

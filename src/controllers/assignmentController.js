@@ -103,6 +103,11 @@ const crearSchema = z.object({
   // real de la agenda externa (call center / eCitas) y este número difiere del
   // calculado. Si viene null/undefined, el backend usa la capacidad nominal.
   expectedPatients: z.preprocess(emptyToUndef, z.coerce.number().int().min(0).max(200).nullable().optional()),
+  // Sep-2026 · Ley 2101 · Autorización directivo para aux que trabajan sáb+dom
+  // en la misma semana. Solo se envían cuando el frontend detecta el escenario
+  // y pide al coord elegir un directivo. El backend valida el rol del autorizador.
+  authorizedById: z.preprocess(emptyToUndef, z.string().uuid().optional().nullable()),
+  authorizationReason: z.preprocess(emptyToUndef, z.string().min(5).max(500).optional().nullable()),
 })
 
 export async function list(req, res) {

@@ -288,6 +288,24 @@ export async function heartbeat(req, res) {
   res.json({ ok: true, ts: new Date().toISOString() })
 }
 
+/**
+ * Sep-2026 · Ley 2101 · Lista abreviada de directivos activos para poblar el
+ * dropdown del modal de asignación cuando un aux va a trabajar sáb+dom.
+ * Solo se expone id, nombre y rol — mínimo necesario. Endpoint abierto a
+ * coord, supervisor y gerencia porque el modal lo consume desde el coord.
+ */
+export async function listDirectivos(req, res) {
+  const usuarios = await prisma.user.findMany({
+    where: {
+      role: { in: ['directivo', 'gerencia'] },
+      active: true,
+    },
+    select: { id: true, name: true, role: true },
+    orderBy: [{ role: 'asc' }, { name: 'asc' }],
+  })
+  res.json(usuarios)
+}
+
 export async function list(req, res) {
   const { role: rol, active: activo } = req.query
   const where = {}
