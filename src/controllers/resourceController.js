@@ -4,7 +4,7 @@ import { errors } from '../lib/errors.js'
 import { titleCase } from '../lib/strings.js'
 import { getSemanaActual } from '../lib/week.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
-import { horasEfectivasFranja, horasDeFranja, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
+import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
 
 const TIPOS = ['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico', 'fonoaudiologa', 'otorrino']
 const ESQUEMAS = ['por_paciente', 'fijo', 'mixto']
@@ -141,7 +141,10 @@ export async function list(req, res) {
 
   const asignaciones = await prisma.assignment.findMany({
     where: { weekId: semana.id, status: { not: 'cancelada' } },
-    select: { resourceId: true, assistantId: true, startTime: true, endTime: true, status: true },
+    // `weekday` es indispensable para agrupar por día en la unión multi-sala
+    // (bug real detectado sep-2026: sin este campo, todas las franjas caían en
+    // `undefined` y colapsaban L-V en un solo día, sub-contando).
+    select: { resourceId: true, assistantId: true, weekday: true, startTime: true, endTime: true, status: true },
   })
 
   // Jornada laboral semanal global (Ley 2101 Colombia). Editable desde "Metas del sistema".
@@ -177,13 +180,25 @@ export async function list(req, res) {
     // contra el tope contractual semanal (Ley 2101). Una franja 08:00–17:00
     // son 9h brutas pero 8h efectivas (1h almuerzo) — y son las 8h las que
     // pesan contra el tope.
-    const horas = propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
+    //
+    // FIX (sep-2026 · feedback usuario): para recursos multi-consultorio (un
+    // médico cubre varias salas simultáneas con auxiliares), las horas se
+    // cuentan por UNIÓN por día — no por suma. Antes una doctora con 3 salas
+    // 07:00-13:00 el lunes aparecía con 18h en vez de 6h. El informe de
+    // productividad ya usaba `horasUnionPorDia`; ahora el dashboard también.
+    const horas = r.multiRoom
+      ? horasUnionPorDia(propias, r.type)
+      : propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
     // Horas de PRESENCIA (brutas, sin descontar almuerzo). Se expone al frontend
     // como complemento para el dashboard — el coord ve que Grace hace 6h × 6d
     // = 36h de presencia pero 30h efectivas (comparadas vs. tope Ley 2101).
     // Distinción pedida por el usuario (jul-2026) para evitar confusión entre
     // lo que se ve en el programador (presencia) y lo que cuenta la ley (efectivas).
-    const horasPresencia = propias.reduce((acc, a) => acc + horasDeFranja(a.startTime, a.endTime), 0)
+    //
+    // Idem al fix multi-sala: para multiRoom presencia también es unión por día.
+    const horasPresencia = r.multiRoom
+      ? horasPresenciaUnionPorDia(propias)
+      : propias.reduce((acc, a) => acc + horasDeFranja(a.startTime, a.endTime), 0)
     // Tope semanal NOMINAL: oftalmólogos sin tope (null), resto usa jornada global del parámetro.
     // Si en el futuro algún recurso necesita tope personalizado, podríamos respetar r.horasMaxSemana
     // cuando difiera explícitamente — por ahora siempre la jornada global.

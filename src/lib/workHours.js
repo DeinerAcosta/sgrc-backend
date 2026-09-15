@@ -148,6 +148,30 @@ export function horasUnionPorDia(asignaciones, tipoRecurso = null) {
 }
 
 /**
+ * Presencia semanal UNIDA por día (sin descontar almuerzo). Análoga a
+ * `horasUnionPorDia`, pero devuelve las horas BRUTAS: un médico multi-sala con
+ * 3 consultorios 07:00-13:00 el lunes suma 6h de presencia, NO 18h.
+ *
+ * Se usa en el dashboard/lista de recursos para que "presencia" y "efectivas"
+ * queden en la misma escala cuando el recurso es multi-consultorio.
+ */
+export function horasPresenciaUnionPorDia(asignaciones) {
+  const porDia = new Map()
+  for (const a of asignaciones) {
+    const start = hhmmAMinutos(a.startTime)
+    const end = hhmmAMinutos(a.endTime)
+    if (end <= start) continue
+    if (!porDia.has(a.weekday)) porDia.set(a.weekday, [])
+    porDia.get(a.weekday).push({ start, end })
+  }
+  let totalMin = 0
+  for (const intervalos of porDia.values()) {
+    totalMin += minutosUnion(intervalos)
+  }
+  return totalMin / 60
+}
+
+/**
  * Jornada legal vigente en Colombia (Ley 2101 de 2021).
  *
  * Cronograma del Art. 2:
