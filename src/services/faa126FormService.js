@@ -99,6 +99,23 @@ const TIPO_A_PROCESO = {
   tecnico: 'diagnostica',
 }
 
+// Cargo legible impreso en la caja "Profesional quien presta el servicio".
+// Se deriva del `resource.type`; si no hay match, cae a "Prestador de servicio"
+// (no dejamos el campo vacío en el PDF oficial).
+const TIPO_A_CARGO = {
+  oftalmologo:          'Oftalmólogo/a',
+  optometra:            'Optómetra',
+  otorrino:             'Otorrinolaringólogo/a',
+  otorrinolaringologia: 'Otorrinolaringólogo/a',
+  fonoaudiologa:        'Fonoaudiólogo/a',
+  fonoaudiologo:        'Fonoaudiólogo/a',
+  anestesiologo:        'Anestesiólogo/a',
+  tecnico:              'Técnico/a de diagnóstico',
+  auxiliar:             'Auxiliar de enfermería',
+  auxiliar_enfermeria:  'Auxiliar de enfermería',
+  asesor_servicios:     'Asesor/a de servicios',
+}
+
 // Mapa codigo → checkbox del formato v04. Un mismo motivo del catálogo puede
 // no calzar con ningún checkbox del papel; en ese caso caemos al genérico.
 const CODIGO_A_MOTIVO_V04 = {
@@ -170,6 +187,7 @@ function partesFecha(d) {
 function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   const nombreRecurso = ausencia?.resource?.name ?? 'PROFESIONAL'
   const tipoRecurso = ausencia?.resource?.type ?? ''
+  const cargoRecurso = TIPO_A_CARGO[tipoRecurso] ?? 'Prestador de servicio'
   // F-AA-126 v05 (sep-14-2026): si la ausencia trae affectedProcess capturado
   // en el modal, se usa. Si no (ausencias legacy), se infiere del tipo de
   // recurso como antes (retrocompatible). Valores nuevos usan snake_case largo
@@ -306,11 +324,17 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   doc.text('AMBAS', empX + 163, y + 4)
 
   // ==================== DATOS DEL PROFESIONAL ====================
+  // La caja crece a 50 (antes 40) para dar espacio a la línea de "Cargo:"
+  // debajo del nombre. Las cajas de fecha a la derecha se mantienen 20+20=40
+  // y quedan pegadas arriba; el resto (10px) es el pie de la caja izquierda.
   y += 18
-  doc.rect(LEFT, y, CONTENT_W, 40).stroke()
-  doc.rect(LEFT, y, 280, 40).stroke()
+  const profH = 50
+  doc.rect(LEFT, y, CONTENT_W, profH).stroke()
+  doc.rect(LEFT, y, 280, profH).stroke()
   doc.font('Helvetica').fontSize(8).text('Profesional quien presta el servicio:', LEFT + 3, y + 3)
-  doc.font('Helvetica-Bold').fontSize(11).text(nombreRecurso.toUpperCase(), LEFT + 3, y + 18, { width: 274 })
+  doc.font('Helvetica-Bold').fontSize(10).text(nombreRecurso.toUpperCase(), LEFT + 3, y + 15, { width: 274 })
+  doc.font('Helvetica').fontSize(7).fillColor('#000').text('Cargo:', LEFT + 3, y + 35)
+  doc.font('Helvetica-Bold').fontSize(9).text(cargoRecurso, LEFT + 30, y + 34, { width: 245 })
 
   doc.rect(LEFT + 280, y, CONTENT_W - 280 - 90, 20).stroke()
   doc.font('Helvetica').fontSize(8).text('Fecha de salida', LEFT + 285, y + 7)
