@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 /**
  * Genera el PDF del formato oficial F-AA-126 v04 "CONTINUIDAD DEL SERVICIO
- * CON LOS PRESTADORES DE SERVICIO OFTALMOLOGÍA - OPTOMETRÍA" de Clínica
- * Oftalmológica del Caribe (fecha actualización 26/08/2026).
+ * CON LOS PRESTADORES DE SERVICIO". El título de empresa y el subtítulo de
+ * especialidades cambian por empresa (FOCA → Fundación Oftalmológica del Caribe
+ * · Oftalmología-Otorrinolaringología; VIU → Clínica Oftalmológica del Caribe ·
+ * Oftalmología-Optometría). Fecha actualización 26/08/2026.
  *
  * Diferencias con v03:
  *   - Bloque "¿A QUÉ EMPRESA APLICA LA AUSENCIA?" con FOCA/VIU/AMBAS
@@ -255,14 +257,25 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   // ==================== CABECERA (baja para dejar espacio al logo) ====================
   const H_TOP = 55
   doc.rect(LEFT, H_TOP, CONTENT_W, 60).stroke()
+  // Título/subtítulo cambian por empresa. FOCA = Fundación Oftalmológica del
+  // Caribe (Oftalmología + Otorrinolaringología). VIU = Clínica Oftalmológica
+  // del Caribe (Oftalmología + Optometría). Legacy sin empresa registrada:
+  // se mantiene el título Clínica por retrocompatibilidad.
+  const esFoca = empresaLogo === 'foca'
+  const tituloEmpresa = esFoca
+    ? 'FUNDACIÓN OFTALMOLÓGICA DEL CARIBE'
+    : 'CLÍNICA OFTALMOLÓGICA DEL CARIBE'
+  const especialidadSubtitulo = esFoca
+    ? 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA'
+    : 'OFTALMOLOGÍA - OPTOMETRÍA'
   // Título central
   doc.rect(LEFT, H_TOP, CONTENT_W - 100, 30).stroke()
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
-    .text('CLÍNICA OFTALMOLÓGICA DEL CARIBE', LEFT, H_TOP + 9, { width: CONTENT_W - 100, align: 'center' })
+    .text(tituloEmpresa, LEFT, H_TOP + 9, { width: CONTENT_W - 100, align: 'center' })
   doc.rect(LEFT, H_TOP + 30, CONTENT_W - 100, 30).stroke()
   doc.font('Helvetica-Bold').fontSize(9)
     .text('CONTINUIDAD DEL SERVICIO CON LOS PRESTADORES DE SERVICIO', LEFT, H_TOP + 35, { width: CONTENT_W - 100, align: 'center' })
-    .text('OFTALMOLOGÍA - OPTOMETRÍA', LEFT, H_TOP + 46, { width: CONTENT_W - 100, align: 'center' })
+    .text(especialidadSubtitulo, LEFT, H_TOP + 46, { width: CONTENT_W - 100, align: 'center' })
 
   // Columna derecha: código / versión / fecha
   const rightBoxX = RIGHT - 100
