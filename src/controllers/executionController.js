@@ -146,7 +146,15 @@ export async function pendientesDelDia(req, res) {
   // si manda sede_id se respeta como filtro opcional; si no, devuelve global.
   const sedesUser = await sedesDelUsuario(req)
 
-  const where = { weekId: semana_id, weekday: dia, status: { not: 'cancelada' } }
+  // Los asesores de servicios NO atienden pacientes → no aparecen en el módulo
+  // de Ejecución (ni para el coordinador ni para el auxiliar). Los informes
+  // que iteran ejecución simplemente no reciben aporte de ellos.
+  const where = {
+    weekId: semana_id,
+    weekday: dia,
+    status: { not: 'cancelada' },
+    resource: { type: { not: 'asesor_servicios' } },
+  }
   if (sedesUser !== null) {
     // Coordinador: forzar filtro a SUS sedes
     const sedesFiltradas = sede_id && sedesUser.has(sede_id)
@@ -186,6 +194,9 @@ export async function misPendientesDelDia(req, res) {
       weekId: semana_id,
       weekday: dia,
       status: { not: 'cancelada' },
+      // Asesores no atienden pacientes: si el principal es asesor, el aux
+      // vinculado tampoco debería ver esa asignación en Mi ejecución.
+      resource: { type: { not: 'asesor_servicios' } },
       // Aux: aparece como aux1 o aux2 en la asignación (bug histórico: el sistema
       // usa auxiliarId como principal; auxiliar2Id existe pero rara vez se popula).
       OR: [
