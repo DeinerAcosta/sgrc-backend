@@ -44,6 +44,10 @@ r.post('/auth/change-password', wrap(auth.cambiarPassword))
 
 // Perfil propio
 r.get('/users/me', wrap(auth.me))
+// Sep-2026 · Self-service de firma: cada medico gestiona su firma escaneada
+// desde /perfil, sin depender del admin.
+r.get('/users/me/signature', requireRol('recurso'), wrap(usr.getMiFirma))
+r.put('/users/me/signature', requireRol('recurso'), wrap(usr.actualizarMiFirma))
 r.put('/users/me/heartbeat', wrap(usr.heartbeat))
 r.put('/users/me', wrap(usr.updateMe))
 

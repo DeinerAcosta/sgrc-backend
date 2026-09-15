@@ -289,6 +289,55 @@ export async function heartbeat(req, res) {
 }
 
 /**
+ * Sep-2026 · Feedback usuario · Self-service de firma para el propio recurso.
+ *
+ * El médico (rol=recurso) puede subir/actualizar/borrar su firma escaneada
+ * desde su página de Perfil. Sin este endpoint el aviso solo lo podía hacer
+ * el admin desde el listado de recursos. La firma se guarda como data URL
+ * base64 en `Resource.signatureUrl` (MEDIUMTEXT, hasta ~2 MB).
+ *
+ * Body: { signatureUrl: 'data:image/(png|jpeg);base64,...' | null }
+ *   · null borra la firma (queda el nombre tipográfico como fallback en el PDF)
+ *
+ * Ownership: req.user debe tener rol=recurso y estar vinculado a un Resource.
+ */
+const miFirmaSchema = z.object({
+  signatureUrl: z.union([
+    z.string().regex(/^data:image\/(png|jpe?g);base64,[A-Za-z0-9+/=]+$/, 'Formato inválido (esperado data URL de PNG/JPG)').max(2_000_000, 'Firma demasiado grande (máx 2 MB en base64 ~ 1.5 MB de imagen)'),
+    z.null(),
+  ]),
+})
+
+function assertOwnResource(req) {
+  if (req.user.role !== 'recurso') {
+    throw errors.forbidden('Solo los recursos pueden gestionar su propia firma')
+  }
+  if (!req.user.resourceId) {
+    throw errors.badRequest('Tu usuario no está vinculado a un recurso — pedile al supervisor que lo asocie')
+  }
+}
+
+export async function getMiFirma(req, res) {
+  assertOwnResource(req)
+  const r = await prisma.resource.findUnique({
+    where: { id: req.user.resourceId },
+    select: { id: true, signatureUrl: true },
+  })
+  res.json({ signatureUrl: r?.signatureUrl ?? null, hasSignature: !!r?.signatureUrl })
+}
+
+export async function actualizarMiFirma(req, res) {
+  assertOwnResource(req)
+  const { signatureUrl } = miFirmaSchema.parse(req.body)
+  const actualizado = await prisma.resource.update({
+    where: { id: req.user.resourceId },
+    data: { signatureUrl },
+    select: { id: true, name: true, signatureUrl: true },
+  })
+  res.json({ ok: true, hasSignature: !!actualizado.signatureUrl })
+}
+
+/**
  * Sep-2026 · Ley 2101 · Lista abreviada de directivos activos para poblar el
  * dropdown del modal de asignación cuando un aux va a trabajar sáb+dom.
  * Solo se expone id, nombre y rol — mínimo necesario. Endpoint abierto a
