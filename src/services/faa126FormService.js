@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
  * CON LOS PRESTADORES DE SERVICIO". El título de empresa y el subtítulo de
  * especialidades cambian por empresa (FOCA → Fundación Oftalmológica del Caribe
  * · Oftalmología-Otorrinolaringología; VIU → Clínica Oftalmológica del Caribe ·
- * Oftalmología-Optometría). Fecha actualización 26/08/2026.
+ * Oftalmología). Fecha actualización 26/08/2026.
  *
  * Diferencias con v03:
  *   - Bloque "¿A QUÉ EMPRESA APLICA LA AUSENCIA?" con FOCA/VIU/AMBAS
@@ -259,15 +259,16 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   doc.rect(LEFT, H_TOP, CONTENT_W, 60).stroke()
   // Título/subtítulo cambian por empresa. FOCA = Fundación Oftalmológica del
   // Caribe (Oftalmología + Otorrinolaringología). VIU = Clínica Oftalmológica
-  // del Caribe (Oftalmología + Optometría). Legacy sin empresa registrada:
-  // se mantiene el título Clínica por retrocompatibilidad.
+  // del Caribe (solo Oftalmología). Optometría se retiró del formato oficial
+  // (feedback usuario 15-sep-2026). Legacy sin empresa registrada: se mantiene
+  // el título Clínica por retrocompatibilidad.
   const esFoca = empresaLogo === 'foca'
   const tituloEmpresa = esFoca
     ? 'FUNDACIÓN OFTALMOLÓGICA DEL CARIBE'
     : 'CLÍNICA OFTALMOLÓGICA DEL CARIBE'
   const especialidadSubtitulo = esFoca
     ? 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA'
-    : 'OFTALMOLOGÍA - OPTOMETRÍA'
+    : 'OFTALMOLOGÍA'
   // Título central
   doc.rect(LEFT, H_TOP, CONTENT_W - 100, 30).stroke()
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
