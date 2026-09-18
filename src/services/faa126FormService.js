@@ -373,20 +373,17 @@ function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
 
   y += 15
   const rowH = 22
-  MESES.forEach((mes, idx) => {
-    const dias = diasPorMes[idx]
+  // Sep-2026 · feedback usuario: las filas de "Día reprogramación" por mes
+  // deben quedar EN BLANCO en el PDF. Antes se pre-llenaban con la lista
+  // de días afectados y pacientes ("06 · 07 (306 pac.) · 08 (593 pac.) ...")
+  // — el usuario prefiere que esas celdas se completen a mano después de
+  // aprobar la reprogramación efectiva. Se dejan las cajas dibujadas con el
+  // label del mes, sin contenido en la caja derecha.
+  MESES.forEach((mes) => {
     doc.rect(LEFT, y, 80, rowH).stroke()
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#000').text(`${mes}:`, LEFT + 3, y + 3)
     doc.font('Helvetica').fontSize(7).text('Día reprogramación:', LEFT + 3, y + 13)
     doc.rect(LEFT + 80, y, CONTENT_W - 80, rowH).stroke()
-    if (dias.length > 0) {
-      // Sep-2026: height + ellipsis para que vacaciones largas (20-30 dias)
-      // no desborden la fila y pisen la del mes siguiente. Antes se pintaban
-      // 3-4 lineas y ocultaban el label "OCTUBRE:", "NOVIEMBRE:" etc.
-      doc.font('Helvetica').fontSize(8).text(dias.join(' · '), LEFT + 85, y + 4, {
-        width: CONTENT_W - 90, height: rowH - 6, ellipsis: true,
-      })
-    }
     y += rowH
   })
 
