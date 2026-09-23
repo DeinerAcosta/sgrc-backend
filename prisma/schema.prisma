@@ -262,7 +262,6 @@ model Site {
   backofficeAssignments BackofficeAssignment[]
   weekClosures          WeekSiteClosure[]
   resourceRequests      ResourceRequest[]
-  complaints            Complaint[]
 
   @@index([city])
   @@index([active])
@@ -335,7 +334,6 @@ model Resource {
   absences                Absence[]
   backofficeAssignments   BackofficeAssignment[]
   loanRequests            ResourceRequest[]      @relation("SolicitudRecursoRecurso")
-  complaints              Complaint[]
 
   @@index([type])
   @@index([active])
@@ -520,7 +518,6 @@ model Absence {
   replacementAssignments      Assignment[]           @relation("AsignacionesReemplazo")
   sourceBackofficeAssignments BackofficeAssignment[]
   makeups                     AbsenceMakeup[]
-  complaints                  Complaint[]
 
   @@index([resourceId])
   @@index([status])
@@ -755,38 +752,3 @@ model AuditEntry {
   @@map("auditoria")
 }
 
-
-// ============ QUEJAS (PROYECTOS-3255 #4.1) ============
-// MVP del modulo Queja. Estados y prioridad se validan en el controller
-// via Zod (no como enum Prisma) para permitir agregar valores sin migracion.
-model Complaint {
-  id             String    @id @default(uuid())
-  resourceId     String    @map("recurso_id")
-  siteId         String    @map("sede_id")
-  // Vinculo opcional a la ausencia que origino la queja (paciente reclama por
-  // reprogramacion, etc.). Nullable — algunas quejas son estructurales.
-  absenceId      String?   @map("ausencia_id")
-  // origen: 'paciente' | 'interno' | 'directivo'
-  source         String    @map("origen") @db.VarChar(20)
-  description    String    @map("descripcion") @db.Text
-  // prioridad: 'baja' | 'media' | 'alta'
-  priority       String    @default("media") @map("prioridad") @db.VarChar(10)
-  // estado: 'pendiente' | 'en_atencion' | 'resuelta' | 'desestimada'
-  status         String    @default("pendiente") @map("estado") @db.VarChar(20)
-  notes          String?   @map("notas") @db.Text
-  reportedBy     String    @map("reportado_por")
-  attendedBy     String?   @map("atendido_por")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-  resolvedAt     DateTime? @map("resolved_at")
-
-  resource Resource @relation(fields: [resourceId], references: [id])
-  site     Site     @relation(fields: [siteId], references: [id])
-  absence  Absence? @relation(fields: [absenceId], references: [id], onDelete: SetNull)
-
-  @@index([resourceId])
-  @@index([siteId])
-  @@index([status])
-  @@index([absenceId])
-  @@map("quejas")
-}

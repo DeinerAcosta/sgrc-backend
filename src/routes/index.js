@@ -22,7 +22,6 @@ import * as aus from '../controllers/absenceController.js'
 import * as ejec from '../controllers/executionController.js'
 import * as boff from '../controllers/backofficeController.js'
 import * as inf from '../controllers/reportController.js'
-import * as queja from '../controllers/complaintController.js'
 import * as notif from '../controllers/notificationController.js'
 import * as audit from '../controllers/auditController.js'
 import * as job from '../controllers/jobController.js'
@@ -182,13 +181,6 @@ r.post('/backoffice-execution', wrap(boff.registrar))
 r.get('/reports/occupancy', wrap(inf.ocupacion))
 r.get('/reports/advisor-occupancy', wrap(inf.ocupacionAsesores))
 r.get('/reports/productivity', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.productividad))
-
-// PROYECTOS-3255 #4.1 · Quejas
-r.get('/complaints', requireRol('coordinador', 'supervisor', 'gerencia', 'directivo'), wrap(queja.list))
-r.get('/complaints/:id', requireRol('coordinador', 'supervisor', 'gerencia', 'directivo'), wrap(queja.getById))
-r.post('/complaints', requireRol('coordinador', 'supervisor', 'gerencia', 'directivo'), wrap(queja.create))
-r.put('/complaints/:id', requireRol('coordinador', 'supervisor', 'gerencia', 'directivo'), wrap(queja.update))
-r.delete('/complaints/:id', requireRol('supervisor', 'gerencia'), wrap(queja.remove))
 
 r.get('/reports/absenteeism', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.ausentismo))
 r.get('/reports/underuse', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.subutilizacion))
