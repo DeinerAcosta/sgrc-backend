@@ -5,8 +5,9 @@ import { titleCase } from '../lib/strings.js'
 import { getSemanaActual } from '../lib/week.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
+import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
 
-const TIPOS = ['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico', 'fonoaudiologa', 'otorrino']
+const TIPOS = TIPOS_RECURSO
 const ESQUEMAS = ['por_paciente', 'fijo', 'mixto']
 
 // La especialidad de un consultorio determina qué tipo de recurso lo puede atender

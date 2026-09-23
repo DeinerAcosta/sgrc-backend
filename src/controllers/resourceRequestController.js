@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar } from '../services/notificationService.js'
+import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
 
 /**
  * Módulo: Solicitudes de recurso entre sedes (#131).
@@ -24,7 +25,6 @@ import { notificar } from '../services/notificationService.js'
 const emptyToUndef = (v) => (v === '' ? undefined : v)
 
 const TIPOS_VALIDOS = ['prestamo', 'alta_nueva']
-const TIPOS_RECURSO = ['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico', 'fonoaudiologa']
 
 const crearSchema = z.object({
   targetSiteId:    z.string().uuid(),

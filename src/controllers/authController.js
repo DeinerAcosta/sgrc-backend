@@ -10,6 +10,7 @@ import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { notificarSupervisores } from '../services/notificationService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
 
 /**
  * POST /auth/login
@@ -224,7 +225,7 @@ const registroSchema = z.object({
   phone: z.preprocess(emptyToUndef, z.string().max(20).optional().nullable()),
   role: z.enum(['recurso', 'coordinador', 'directivo']),
   // Datos opcionales si es recurso (los validamos en el servicio cuando aprueben)
-  resourceType: z.preprocess(emptyToUndef, z.enum(['oftalmologo','optometra','anestesiologo','asesor_servicios','auxiliar','tecnico']).optional().nullable()),
+  resourceType: z.preprocess(emptyToUndef, z.enum(TIPOS_RECURSO).optional().nullable()),
   specialty: z.preprocess(emptyToUndef, z.string().max(100).optional().nullable()),
   maxHoursPerWeek: z.preprocess(emptyToUndef, z.number().int().min(1).max(60).optional().nullable()),
   maxHoursPerDay: z.preprocess(emptyToUndef, z.number().int().min(1).max(24).optional().nullable()),

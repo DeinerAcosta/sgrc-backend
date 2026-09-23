@@ -7,12 +7,12 @@ import { titleCase } from '../lib/strings.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { invalidarUsuarioEnCache } from '../middleware/auth.js'
+import { TIPOS_RECURSO, TIPOS_RECURSO_SET, TIPOS_POR_PACIENTE } from '../lib/resourceTypes.js'
 
 const ROLES = ['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia']
-const TIPOS_RECURSO_VALIDOS = ['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico', 'fonoaudiologa']
-// Tipos cuyo esquema de pago es "por paciente": sin tope semanal contractual,
-// sin subespecialidad ni multi-consultorio. Hoy son oftalmólogo y fonoaudióloga.
-const TIPOS_POR_PACIENTE = new Set(['oftalmologo', 'fonoaudiologa'])
+// Listas compartidas en lib/resourceTypes.js — antes estaban copiadas aqui y
+// quedaron sin 'otorrino', que si existe en la BD y en el frontend.
+const TIPOS_RECURSO_VALIDOS = TIPOS_RECURSO
 
 // Contraseña por defecto cuando se crea desde el formulario admin (sin pedirla).
 // Igual que el resto de usuarios cargados en lote para evitar inconsistencias.
@@ -95,7 +95,7 @@ const bulkSchema = z.object({
 })
 
 const ROLES_VALIDOS = new Set(['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia'])
-const TIPOS_VALIDOS = new Set(['oftalmologo', 'optometra', 'anestesiologo', 'asesor_servicios', 'auxiliar', 'tecnico', 'fonoaudiologa'])
+const TIPOS_VALIDOS = TIPOS_RECURSO_SET
 const ESQUEMAS_VALIDOS = new Set(['por_paciente', 'fijo', 'mixto'])
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
