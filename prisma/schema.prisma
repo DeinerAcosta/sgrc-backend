@@ -499,11 +499,9 @@ model Absence {
   // modalidad). Se imprime en el PDF v04 y el modal de reposición lo usa
   // como sugerencia inicial.
   makeupNotes           String?        @map("observaciones_reposicion") @db.Text
-  // F-AA-126 v05 (sep-2026): campos del formato oficial que hoy no se capturaban.
-  // Aplican solo a oftalmologo/optometra (los que usan el F-AA-126); en otros
-  // roles quedan en NULL.
-  affectedProcess       String?        @map("proceso_afecta") @db.VarChar(30)
-  noveltyType           String?        @map("tipo_novedad") @db.VarChar(40)
+  // Sep-23-2026: se retiraron `proceso_afecta` y `tipo_novedad` (F-AA-126 v05).
+  // El diligenciamiento se simplifico y esos dos bloques ya no se capturan en el
+  // modal. La migracion 20260923180000_quitar_proceso_novedad borra las columnas.
   actionTaken           String?        @map("accion_tomada") @db.Text
   dailyImpact           Json?          @map("impacto_por_dia")
   rejectionReason       String?        @map("motivo_rechazo") @db.Text

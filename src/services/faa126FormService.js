@@ -170,16 +170,12 @@ function partesFecha(d) {
 function dibujarPaginaFormato(doc, ausencia, empresaLogo) {
   const nombreRecurso = ausencia?.resource?.name ?? 'PROFESIONAL'
   const tipoRecurso = ausencia?.resource?.type ?? ''
-  // F-AA-126 v05 (sep-14-2026): si la ausencia trae affectedProcess capturado
-  // en el modal, se usa. Si no (ausencias legacy), se infiere del tipo de
-  // recurso como antes (retrocompatible). Valores nuevos usan snake_case largo
-  // — mapeamos al codigo corto que espera el resto del render.
-  const PROCESO_LARGO_A_CORTO = { consulta_externa: 'externa', ayudas_diagnosticas: 'diagnostica', cirugia: 'cirugia' }
-  const procesoAfectado = ausencia?.affectedProcess
-    ? (PROCESO_LARGO_A_CORTO[ausencia.affectedProcess] ?? ausencia.affectedProcess)
-    : (TIPO_A_PROCESO[tipoRecurso] ?? 'externa')
-  // Tipo de novedad: default 'ausencia_periodo' (era el hardcoded historico).
-  const tipoNovedad = ausencia?.noveltyType ?? 'ausencia_periodo'
+  // Sep-23-2026: el modal dejo de pedir "proceso que afecta" y "tipo de
+  // novedad". El PDF los deduce igual que antes de la v05: el proceso, del tipo
+  // de recurso; la novedad, fija en "ausencia de un periodo determinado", que es
+  // el unico caso que el sistema registra.
+  const procesoAfectado = TIPO_A_PROCESO[tipoRecurso] ?? 'externa'
+  const tipoNovedad = 'ausencia_periodo'
   const [dSal, mSal, ySal] = partesFecha(ausencia?.startDate)
   const [dEnt, mEnt, yEnt] = partesFecha(ausencia?.endDate)
   const fechaDiligenciamiento = fmtHoyBogota()
