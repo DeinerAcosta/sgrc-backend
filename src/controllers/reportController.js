@@ -13,10 +13,51 @@ import {
 } from '../lib/workHours.js'
 import {
   cargarFestivosDelRango,
+  esDomingoOFestivo,
   minutosBaseSemana,
   BASE_MINUTOS_SEMANA_TEORICA,
 } from '../lib/calendario.js'
 import { TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN, whereAusenciasIncapacidadEnRango } from '../lib/absences.js'
+
+/**
+ * Días HÁBILES que cubre una ausencia: excluye domingos y festivos.
+ *
+ * Sep-2026 · decisión de dirección. Antes se reportaban días calendario
+ * (`fin - inicio + 1`), así que unas vacaciones de dos semanas contaban 14 días
+ * aunque la sede solo opere 12. Los sábados SÍ cuentan: la operación es de
+ * lunes a sábado.
+ *
+ * Se calcula al vuelo en el informe, no se guarda: así los registros históricos
+ * quedan corregidos sin tener que reprocesar nada.
+ */
+/** Carga de una sola vez los festivos que cubren todas las ausencias del lote. */
+async function festivosDeAusencias(ausencias) {
+  if (!ausencias || ausencias.length === 0) return new Set()
+  let min = null
+  let max = null
+  for (const a of ausencias) {
+    const ini = new Date(a.startDate)
+    const fin = new Date(a.endDate)
+    if (!min || ini < min) min = ini
+    if (!max || fin > max) max = fin
+  }
+  // Rangos corruptos (año 0206, fin < inicio) podrían pedir décadas de festivos.
+  if (!min || !max || max < min) return new Set()
+  return cargarFestivosDelRango(min, max)
+}
+
+function diasHabilesDeAusencia(ausencia, festivosSet) {
+  let dias = 0
+  const cursor = new Date(ausencia.startDate)
+  const fin = new Date(ausencia.endDate)
+  // Guarda contra fechas corruptas (fin < inicio): devuelve 0 en vez de colgarse.
+  if (fin < cursor) return 0
+  while (cursor <= fin) {
+    if (!esDomingoOFestivo(cursor, festivosSet)) dias++
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dias
+}
 
 // TTL de caché para lecturas analíticas. Suficientemente corto para que los datos
 // se sientan "en vivo" y suficientemente largo para absorber picos de concurrencia.
@@ -500,6 +541,7 @@ export async function dataAusentismo({ desde, hasta, site_id: sede_id, resource_
 
   const ausencias = await prisma.absence.findMany({ where, include: { resource: true } })
   const mapaSedes = await mapaSedesPorRecurso({ desde, hasta })
+  const festivos = await festivosDeAusencias(ausencias)
 
   const porRecurso = new Map()
   for (const a of ausencias) {
@@ -519,7 +561,7 @@ export async function dataAusentismo({ desde, hasta, site_id: sede_id, resource_
     // ≤15 días = imprevista. Alimentan el análisis de reprogramación.
     if (a.isPlanned) r.programadas++
     else r.imprevistas++
-    r.dias += Math.round((a.endDate - a.startDate) / (1000 * 60 * 60 * 24)) + 1
+    r.dias += diasHabilesDeAusencia(a, festivos)
     r.pac_afectados += a.patientsAffected ?? 0
     r.cost += Number(a.opportunityCost ?? 0)
     r.quejas += a.complaintsLogged ?? 0
@@ -671,6 +713,7 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
     include: { resource: true, reasonRef: { select: { family: true } } },
   })
   const mapaSedes = await mapaSedesPorRecurso({ desde, hasta })
+  const festivos = await festivosDeAusencias(ausencias)
 
   const porRecurso = new Map()
   for (const a of ausencias) {
@@ -694,7 +737,7 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
     // ≤15 días = imprevista. Alimentan el análisis de reprogramación.
     if (a.isPlanned) r.programadas++
     else r.imprevistas++
-    r.dias += Math.round((a.endDate - a.startDate) / (1000 * 60 * 60 * 24)) + 1
+    r.dias += diasHabilesDeAusencia(a, festivos)
     r.pac_afectados += a.patientsAffected ?? 0
     r.quejas += a.complaintsLogged ?? 0
     const oport = Number(a.opportunityCost ?? 0)
@@ -706,7 +749,7 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
     const fam = a.reasonRef?.family ?? 'sin_familia'
     if (!r.por_familia[fam]) r.por_familia[fam] = { absences: 0, dias: 0, total: 0 }
     r.por_familia[fam].absences++
-    r.por_familia[fam].dias += Math.round((a.endDate - a.startDate) / (1000 * 60 * 60 * 24)) + 1
+    r.por_familia[fam].dias += diasHabilesDeAusencia(a, festivos)
     r.por_familia[fam].total += oport + personal
   }
 

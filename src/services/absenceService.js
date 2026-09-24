@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 
 /**
  * Lógica de cálculo de impacto de ausencias y liberación de auxiliares.
@@ -12,6 +13,32 @@ import { format } from 'date-fns'
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
 const TIPOS_QUE_LIBERAN_AUXILIAR = ['oftalmologo', 'anestesiologo']
+
+/**
+ * Tipos de recurso cuya ausencia AFECTA PACIENTES.
+ *
+ * Sep-2026 · decisión de dirección. Son los que tienen agenda propia, y
+ * coinciden uno a uno con las especialidades que tienen costo de reprogramación
+ * cargado: oftalmología, anestesiología, otorrinolaringología, métodos
+ * diagnósticos (técnico), fonoaudiología y optometría.
+ *
+ * Auxiliares y asesores de servicios quedan FUERA: no tienen agenda propia,
+ * acompañan la consulta de otro. Contarlos imputaba al auxiliar todos los
+ * pacientes del médico al que asiste —como si se hubiera perdido la agenda
+ * entera— y además los contaba dos veces cuando el médico también faltaba.
+ * Eran el 75% del impacto reportado en producción.
+ *
+ * Su ausencia se sigue registrando y sigue saliendo en los informes; lo que
+ * queda en cero es `pacientes_impactados` y `costo_oportunidad`.
+ */
+export const TIPOS_QUE_IMPACTAN_PACIENTES = new Set([
+  'oftalmologo',
+  'anestesiologo',
+  'otorrino',
+  'tecnico',
+  'fonoaudiologa',
+  'optometra',
+])
 
 const hhmmAMin = (hhmm) => {
   const [h, m] = hhmm.split(':').map(Number)
@@ -101,21 +128,54 @@ export async function calcularImpacto(tx, ausencia) {
   })
   const costoVigente = buildCostoResolver(parametros, ausencia.startDate)
 
+  // Sep-2026 · solo los tipos con agenda propia generan impacto en pacientes.
+  // Para los demás la ausencia se registra igual, pero en cero.
+  const impactaPacientes = TIPOS_QUE_IMPACTAN_PACIENTES.has(ausencia.resource?.type)
+
+  // Sep-2026 · domingos y festivos no cuentan: la sede no atiende, así que no
+  // hay agenda que perder. Los sábados SÍ (la operación es lunes a sábado).
+  const festivos = await cargarFestivosDelRango(ausencia.startDate, ausencia.endDate, tx)
+
+  // Sep-2026 · las semanas que cruza la ausencia, para acotar cada día a la
+  // suya. Antes se buscaba por `dia_semana` sin filtrar semana, así que una
+  // ausencia de un lunes sumaba los pacientes de TODOS los lunes cargados en la
+  // base — el número se multiplicaba por la cantidad de semanas existentes y
+  // crecía solo con el tiempo. Una ausencia de 18 días ahora suma los turnos de
+  // la primera semana, luego los de la segunda, y así: cada día contra la suya.
+  const semanas = await tx.week.findMany({
+    where: { startDate: { lte: ausencia.endDate }, endDate: { gte: ausencia.startDate } },
+    select: { id: true, startDate: true, endDate: true },
+    orderBy: { startDate: 'asc' },
+  })
+  const semanaDe = (fechaIso) => {
+    const d = new Date(`${fechaIso}T00:00:00.000Z`)
+    return semanas.find((s) => d >= s.startDate && d <= s.endDate) ?? null
+  }
+
   let pacImpactados = 0
   let costoOportunidad = 0
+  let diasHabiles = 0
   const impactoPorDia = []
 
   for (const { date: fecha, day: dia } of fechas) {
+    if (esDomingoOFestivo(fecha, festivos)) continue
+    diasHabiles++
+
+    const semana = impactaPacientes ? semanaDe(fecha) : null
+
     // El recurso ausente puede aparecer como titular O como auxiliar
     // (RN-18: cuenta TODAS sus asignaciones del día, no solo las titulares).
-    const asigsDia = await tx.assignment.findMany({
-      where: {
-        OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
-        weekday: dia,
-        status: { not: 'cancelada' },
-      },
-      include: { room: true },
-    })
+    const asigsDia = semana
+      ? await tx.assignment.findMany({
+          where: {
+            weekId: semana.id,
+            OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
+            weekday: dia,
+            status: { not: 'cancelada' },
+          },
+          include: { room: true },
+        })
+      : []
 
     let pacDia = 0
     let costoDia = 0
@@ -138,7 +198,18 @@ export async function calcularImpacto(tx, ausencia) {
   const pctQuejas = (ausencia.noticeDays ?? 0) > 30 ? 0.09 : 0.08
   const quejasEstimadas = Math.round(pacImpactados * pctQuejas)
 
-  return { fechas, pacImpactados, opportunityCost: costoOportunidad, dailyImpact: impactoPorDia, factorMotivo, quejasEstimadas }
+  // `diasHabiles` excluye domingos y festivos: es el dato que deben mostrar los
+  // informes, no los días calendario del rango.
+  return {
+    fechas,
+    diasHabiles,
+    pacImpactados,
+    opportunityCost: costoOportunidad,
+    dailyImpact: impactoPorDia,
+    factorMotivo,
+    quejasEstimadas,
+    impactaPacientes,
+  }
 }
 
 /**

@@ -353,6 +353,33 @@ export async function create(req, res) {
   const esRegistroAutoritativo = ROLES_AUTORIDAD_AUSENCIA.has(req.user.role)
   const seAutoConfirmara = esRegistroAutoritativo
 
+  // ---- ANTI-DUPLICADO (sep-2026) ----
+  // En produccion habia ausencias registradas hasta 6 veces con las mismas
+  // fechas exactas: cada copia volvia a sumar sus pacientes y sus dias en los
+  // informes. Una persona no puede estar ausente dos veces a la vez, asi que
+  // rechazamos cualquier solape con una ausencia viva del mismo recurso.
+  //
+  // Solape de rangos: inicioA <= finB  AND  finA >= inicioB.
+  // Las rechazadas no cuentan (se pueden volver a pedir).
+  const solapada = await prisma.absence.findFirst({
+    where: {
+      resourceId: data.resourceId,
+      status: { not: 'rechazada' },
+      startDate: { lte: fechaFin },
+      endDate: { gte: fechaInicio },
+    },
+    select: { id: true, startDate: true, endDate: true, status: true },
+  })
+  if (solapada) {
+    const f = (d) => new Date(d).toISOString().slice(0, 10)
+    const mismasFechas = f(solapada.startDate) === f(fechaInicio) && f(solapada.endDate) === f(fechaFin)
+    throw errors.badRequest(
+      mismasFechas
+        ? `Esta ausencia ya está registrada (${f(solapada.startDate)} a ${f(solapada.endDate)}, estado: ${solapada.status}). No se registró de nuevo.`
+        : `El recurso ya tiene una ausencia ${solapada.status} del ${f(solapada.startDate)} al ${f(solapada.endDate)}, que se cruza con estas fechas. Edita la existente en vez de crear otra.`
+    )
+  }
+
   const ausencia = await prisma.absence.create({
     data: {
       resourceId: data.resourceId,
