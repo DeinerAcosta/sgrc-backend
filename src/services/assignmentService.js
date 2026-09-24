@@ -179,7 +179,12 @@ export function calcularCapacidad(horaInicio, horaFin, intervaloMinutos, tipoRec
   // descuentan. minutosAlmuerzo() encapsula toda la lógica (único punto de verdad).
   const almuerzo = minutosAlmuerzo(minutos, inicio, fin, tipoRecurso)
   const disponibles = minutos - almuerzo
-  return Math.floor(disponibles / (intervaloMinutos || 15))
+  // Sep-2026 · el default era 15 acá y 10 en el modal del frontend, así que el
+  // coordinador veía una capacidad y se guardaba otra un tercio menor. Decisión
+  // de dirección: la consulta dura 10 minutos para todos los tipos. El valor
+  // queda además explícito en recursos.intervalo_minutos (migración
+  // 20260924160000), así que este default solo actúa como red de seguridad.
+  return Math.floor(disponibles / (intervaloMinutos || 10))
 }
 
 /**

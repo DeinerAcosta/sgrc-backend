@@ -64,7 +64,18 @@ export async function create(req, res) {
  */
 export async function cerrar(req, res) {
   const semanaId = req.params.id
-  let { site_id: sede_id } = req.body ?? {}
+  // Sep-2026 · FIX: esto leia `site_id` y siempre salia undefined. El middleware
+  // snakeBodyToCamel (middleware/caseConverter.js, montado en index.js) convierte
+  // TODO el body de snake_case a camelCase antes de llegar aca, asi que el
+  // `site_id` que manda el frontend llega como `siteId`.
+  //
+  // Consecuencias que tenia: a supervisor y gerencia les respondia "Falta
+  // sede_id en el cuerpo", y al coordinador le aplicaba el fallback de abajo y
+  // le cerraba SIEMPRE su primera sede, aunque en el Programador tuviera
+  // seleccionada otra. Eso ultimo es corrupcion de datos silenciosa.
+  //
+  // `copiar()` mas abajo ya leia bien `siteId`; era solo este.
+  let { siteId: sede_id } = req.body ?? {}
 
   const semana = await prisma.week.findUnique({ where: { id: semanaId } })
   if (!semana) throw errors.notFound('Semana no encontrada')

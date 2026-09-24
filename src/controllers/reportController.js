@@ -976,14 +976,28 @@ async function atendidosDeSemana(semanaId, dia = null) {
   return asigs.reduce((acc, a) => acc + (a.execution?.patientsSeen ?? 0), 0)
 }
 
-/** Días de la semana: convierte un día en su fecha exacta dentro de la semana
- * (la semana arranca en domingo según RN-04). Devuelve Date UTC al inicio del día. */
-const DIAS_ORDEN = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+/**
+ * Convierte un nombre de día en su fecha exacta dentro de la semana.
+ *
+ * Sep-2026 · FIX: antes devolvía el día siguiente. La lista arrancaba en domingo
+ * ("la semana arranca en domingo según RN-04") y ese índice se sumaba a
+ * `startDate`. Pero las semanas se crean con `startOfWeek(..., weekStartsOn: 1)`
+ * desde jul-2026 y en producción TODAS arrancan en LUNES: para 'lunes' el
+ * índice 1 daba martes. En el dashboard, filtrar por un día mostraba el
+ * siguiente.
+ *
+ * Ahora el desplazamiento se mide contra el día real en que arranca cada
+ * semana, en vez de asumirlo. Funciona con semanas que empiecen lunes o
+ * domingo, que es lo que hay mezclado en la base.
+ */
+const DIAS_POR_DOW = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
 function fechaDelDia(semana, dia) {
-  const idx = DIAS_ORDEN.indexOf(dia)
-  if (idx < 0) return null
-  const d = new Date(semana.startDate)
-  d.setUTCDate(d.getUTCDate() + idx)
+  const idx = DIAS_POR_DOW.indexOf(dia)
+  if (idx < 0 || !semana?.startDate) return null
+  const inicio = new Date(semana.startDate)
+  const offset = (idx - inicio.getUTCDay() + 7) % 7
+  const d = new Date(inicio)
+  d.setUTCDate(d.getUTCDate() + offset)
   return d
 }
 
@@ -1087,7 +1101,14 @@ async function computeDashboard({ weekId: semanaId, day: dia } = {}) {
   ])
 
   const costoTotalAusentismo = ausencias.reduce((acc, a) => acc + Number(a.opportunityCost ?? 0), 0)
-  const recursosOciosos = subutil.filter((r) => r.pct_utilizacion < 60).length
+  // Sep-2026 · FIX: `pct_utilizacion` viene en null cuando el recurso estuvo en
+  // incapacidad confirmada esa semana (PROYECTOS-3255 #1.3, para no penalizar al
+  // enfermo). Pero en JavaScript `null < 60` es TRUE, así que el KPI los contaba
+  // como ociosos — justo lo contrario de lo que buscaba esa regla. El job de
+  // alertas ya los excluía (jobs/alerts.js); este contador se había quedado atrás.
+  const recursosOciosos = subutil.filter(
+    (r) => typeof r.pct_utilizacion === 'number' && r.pct_utilizacion < 60,
+  ).length
 
   // Ocupación por sede — semanal (la pasamos por la semana base)
   const porSede = new Map()
