@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "revisar:sedes": "node prisma/revisar-sedes-coordinadores.js",
-    "verificar:params": "node scripts/verificar-params.cjs"
+    "verificar:params": "node scripts/verificar-params.cjs",
+    "verificar:impacto": "node scripts/verificar-impacto-ausencias.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
