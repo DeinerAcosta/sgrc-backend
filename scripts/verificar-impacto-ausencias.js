@@ -110,12 +110,17 @@ async function main() {
     let pacReal = 0
     let costoReal = 0
     let dias = 0
+    let diasSinSemana = 0
     const cursor = new Date(a.startDate)
     while (cursor <= a.endDate) {
       dias++
       const dia = DIAS[cursor.getUTCDay()]
       // LA DIFERENCIA: solo la semana que contiene ESTA fecha.
       const semana = semanas.find((s) => cursor >= s.startDate && cursor <= s.endDate)
+      // Distinguir "no hay semana cargada para esa fecha" de "hay semana pero
+      // esa persona no tenia turno": en el primer caso el 0 no significa que no
+      // hubo impacto, significa que no hay con que compararlo.
+      if (!semana) diasSinSemana++
       if (semana) {
         const asigs = await prisma.assignment.findMany({
           where: {
@@ -144,7 +149,15 @@ async function main() {
     if (CON_AGENDA_PROPIA.has(a.resource.type)) totProf += guardado
     else totApoyo += guardado
 
-    const factorInflado = pacReal > 0 ? (guardado / pacReal).toFixed(1) + 'x' : (guardado > 0 ? '∞' : '—')
+    // Marca por que el recalculo dio 0, para no confundir "no hubo impacto"
+    // con "no hay datos para compararlo".
+    let nota = ''
+    if (pacReal === 0 && guardado > 0) {
+      nota = diasSinSemana === dias ? 'sin semana cargada'
+           : diasSinSemana > 0      ? `${diasSinSemana}/${dias} dias sin semana`
+           : 'sin turnos esa semana'
+    }
+    const factorInflado = pacReal > 0 ? (guardado / pacReal).toFixed(1) + 'x' : (guardado > 0 ? '—' : '')
     console.log(
       a.resource.name.slice(0, 25).padEnd(26) +
       a.resource.type.slice(0, 13).padEnd(14) +
@@ -152,7 +165,7 @@ async function main() {
       String(dias).padStart(5) +
       String(guardado).padStart(10) +
       String(pacReal).padStart(8) +
-      '  ' + factorInflado
+      '  ' + factorInflado.padEnd(8) + nota
     )
   }
 
@@ -179,6 +192,65 @@ async function main() {
   console.log('  que acompaña, como si se hubiera perdido la agenda entera. Si ese')
   console.log('  dia el medico igual atendio, ese numero no corresponde — y ademas')
   console.log('  se cuenta dos veces si el medico tambien estuvo ausente.')
+  console.log('')
+
+  // ---------------------------------------------------------------- dupes ----
+  // Misma persona, mismas fechas exactas, mas de un registro. Cada copia suma
+  // otra vez sus pacientes y sus dias en los informes.
+  linea()
+  console.log('AUSENCIAS DUPLICADAS')
+  linea()
+  const porClave = new Map()
+  for (const a of ausencias) {
+    const k = `${a.resourceId}|${fmt(a.startDate)}|${fmt(a.endDate)}`
+    if (!porClave.has(k)) porClave.set(k, [])
+    porClave.get(k).push(a)
+  }
+  const dupes = [...porClave.values()].filter((g) => g.length > 1)
+  if (dupes.length === 0) {
+    console.log('  OK · no hay ausencias repetidas.')
+  } else {
+    let pacDeMas = 0
+    let diasDeMas = 0
+    console.log(`  ${dupes.length} ausencia(s) registradas mas de una vez:`)
+    console.log('')
+    for (const g of dupes.sort((x, y) => (y[0].patientsAffected ?? 0) - (x[0].patientsAffected ?? 0))) {
+      const a = g[0]
+      const d = Math.round((a.endDate - a.startDate) / 86400000) + 1
+      const copias = g.length - 1
+      pacDeMas += (a.patientsAffected ?? 0) * copias
+      diasDeMas += d * copias
+      console.log(`    ${a.resource.name.slice(0, 28).padEnd(29)} ${fmt(a.startDate)} a ${fmt(a.endDate)}` +
+                  `  x${g.length}  (${a.patientsAffected ?? 0} pac. c/u)`)
+    }
+    console.log('')
+    console.log(`  Las copias suman de mas: ${pacDeMas.toLocaleString('es-CO')} pacientes y ${diasDeMas} dias`)
+    console.log('  en los informes de ausentismo, encima del inflado por semana.')
+  }
+  console.log('')
+
+  // ------------------------------------------------------------- corruptas ----
+  linea()
+  console.log('FECHAS IMPOSIBLES')
+  linea()
+  const malas = ausencias.filter((a) => {
+    const ini = new Date(a.startDate)
+    const fin = new Date(a.endDate)
+    return fin < ini || ini.getUTCFullYear() < 2020 || ini.getUTCFullYear() > 2100
+        || fin.getUTCFullYear() < 2020 || fin.getUTCFullYear() > 2100
+  })
+  if (malas.length === 0) {
+    console.log('  OK · todas las fechas son coherentes.')
+  } else {
+    console.log(`  ${malas.length} ausencia(s) con fechas que no pueden ser. Hay que corregirlas a mano:`)
+    console.log('')
+    for (const a of malas) {
+      const fin = new Date(a.endDate)
+      const motivo = fin < new Date(a.startDate) ? 'termina antes de empezar' : 'año fuera de rango'
+      console.log(`    ${a.resource.name.slice(0, 28).padEnd(29)} ${fmt(a.startDate)} a ${fmt(a.endDate)}   ${motivo}`)
+      console.log(`      id: ${a.id}`)
+    }
+  }
   console.log('')
 }
 
