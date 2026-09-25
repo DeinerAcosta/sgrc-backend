@@ -705,18 +705,30 @@ export async function dataSubutilizacion({ site_id: sede_id, resource_type: tipo
       const horas = r.multiRoom
         ? horasUnionPorDia(propias, r.type)
         : propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
-      // Tope al 100% en el porcentaje mostrado, pero registramos el bruto en otra clave.
-      const pctBruto = r.maxHoursPerWeek > 0 ? Math.round((horas / r.maxHoursPerWeek) * 100) : 0
+      // Sep-2026 · SIN TOPE SEMANAL NO HAY PORCENTAJE. Antes, si
+      // `maxHoursPerWeek` era null, el cálculo devolvía 0 — y un oftalmólogo con
+      // 32,5 horas asignadas aparecía al 0% de utilización y además contaba
+      // como "recurso con tiempo ocioso". En producción hay 94 oftalmólogos con
+      // esquema 'fijo' pero tope en NULL: una combinación que el alta de
+      // usuarios no puede producir (viene de una carga antigua) y que el filtro
+      // `payScheme IN (fijo, mixto)` deja entrar al informe.
+      // Ahora se devuelve null: la columna muestra "—" y el semáforo se apaga,
+      // igual que con una incapacidad. El KPI de ociosos ya ignora los null.
+      const sinTope = !(r.maxHoursPerWeek > 0)
+      const pctBruto = sinTope ? null : Math.round((horas / r.maxHoursPerWeek) * 100)
       const diasIncapa = incapacidadPorRecurso.get(r.id) ?? 0
       // PROYECTOS-3255 #1.3: pct=null cuando hay incapacidad → semaforo se apaga.
-      const pct = diasIncapa > 0 ? null : Math.min(100, pctBruto)
+      const pct = (sinTope || diasIncapa > 0) ? null : Math.min(100, pctBruto)
       return {
         resource: r.name, type: r.type, site: nombreSedes(mapaSedes.get(r.id)),
         h_asignadas: Math.round(horas * 10) / 10,
         h_disponibles: r.maxHoursPerWeek,
         pct_utilizacion: pct,
         pct_bruto: pctBruto,                  // por si interesa ver el exceso
-        sobreasignado: pctBruto > 100,        // bandera visual para el frontend
+        // `pctBruto` es null sin tope: `null > 100` da false, así que un recurso
+        // sin tope nunca sale marcado como sobreasignado. Es lo correcto — sin
+        // denominador no se puede afirmar que esté por encima de nada.
+        sobreasignado: pctBruto > 100,
         sem_consec: 0,
         dias_incapacidad: diasIncapa,         // consumido por ReportPage (badge/semaforo)
       }
@@ -1247,6 +1259,8 @@ async function computeDashboard({ weekId: semanaId, day: dia } = {}) {
   // enfermo). Pero en JavaScript `null < 60` es TRUE, así que el KPI los contaba
   // como ociosos — justo lo contrario de lo que buscaba esa regla. El job de
   // alertas ya los excluía (jobs/alerts.js); este contador se había quedado atrás.
+  // El mismo null llega ahora cuando el recurso no tiene tope semanal definido
+  // (horas_max_semana en NULL): sin denominador no hay porcentaje que comparar.
   const recursosOciosos = subutil.filter(
     (r) => typeof r.pct_utilizacion === 'number' && r.pct_utilizacion < 60,
   ).length
