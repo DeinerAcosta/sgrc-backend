@@ -7,7 +7,7 @@ import { titleCase } from '../lib/strings.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { invalidarUsuarioEnCache } from '../middleware/auth.js'
-import { TIPOS_RECURSO, TIPOS_RECURSO_SET, TIPOS_POR_PACIENTE } from '../lib/resourceTypes.js'
+import { TIPOS_RECURSO, TIPOS_RECURSO_SET, ESQUEMAS_PAGO_SET, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 
 const ROLES = ['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia']
 // Listas compartidas en lib/resourceTypes.js — antes estaban copiadas aqui y
@@ -96,7 +96,7 @@ const bulkSchema = z.object({
 
 const ROLES_VALIDOS = new Set(['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia'])
 const TIPOS_VALIDOS = TIPOS_RECURSO_SET
-const ESQUEMAS_VALIDOS = new Set(['por_paciente', 'fijo', 'mixto'])
+const ESQUEMAS_VALIDOS = ESQUEMAS_PAGO_SET
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /**
@@ -163,16 +163,26 @@ export async function bulkCreate(req, res) {
         // conflicto de horario al mismo tiempo en distintos consultorios.
         // Optómetras y anestesiólogos físicamente están en una sala por vez.
         // Especialidad: solo aplica a oftalmólogos (sub-especialidad médica).
+        // Sep-2026 · ESTA ERA LA FUGA QUE CREÓ LOS 94 OFTALMÓLOGOS ROTOS.
+        // El tope y el esquema se decidían por separado y con criterios
+        // distintos: el tope mirando el TIPO (oftalmólogo ⇒ null) y el esquema
+        // tomando lo que trajera el CSV (⇒ 'fijo'). Un lote con
+        // esquemaPago=fijo para oftalmólogos producía la combinación imposible
+        // `fijo` + tope NULL sin lanzar un solo error, y esos recursos salían
+        // al 0% de utilización en el informe de ociosos.
+        // Ahora ambos campos los resuelve un único helper que garantiza
+        // `por_paciente ⇔ tope null` (ver lib/resourceTypes.js).
         const recursoId_ = await prisma.resource.create({
           data: {
             name: titleCase(u.name),
             type: u.resourceType,
             specialty: u.resourceType === 'oftalmologo' ? (u.specialty || null) : null,
-            // Tipos por_paciente (oftalmólogo, fonoaudióloga): sin tope semanal contractual.
-            // Resto: usa el valor pasado o default 44h (Ley 2101 vigente).
-            maxHoursPerWeek: TIPOS_POR_PACIENTE.has(u.resourceType) ? null : (u.maxHoursPerWeek ?? 44),
+            ...normalizarEsquemaYTope({
+              type: u.resourceType,
+              payScheme: u.payScheme,
+              maxHoursPerWeek: u.maxHoursPerWeek,
+            }),
             maxHoursPerDay: u.maxHoursPerDay ?? 10,
-            payScheme: u.payScheme ?? (TIPOS_POR_PACIENTE.has(u.resourceType) ? 'por_paciente' : 'fijo'),
             slotMinutes: u.slotMinutes,
             // multi_consultorio aplica solo a oftalmólogos (rotan entre salas en paralelo).
             multiRoom: u.resourceType === 'oftalmologo',
@@ -446,17 +456,18 @@ export async function create(req, res) {
     // multi-consultorio y sin tope semanal.
     let recursoId = data.resourceId ?? null
     if (data.role === 'recurso' && !recursoId) {
-      const esPorPaciente = TIPOS_POR_PACIENTE.has(data.resourceType)
       const r = await tx.resource.create({
         data: {
           name: titleCase(data.name),
           type: data.resourceType,
           specialty: data.resourceType === 'oftalmologo' ? (data.specialty || null) : null,
-          // Tipos por_paciente (oftalmólogo, fonoaudióloga): sin tope semanal.
-          // Resto: jornada Ley 2101 vigente (44h).
-          maxHoursPerWeek: esPorPaciente ? null : 44,
+          // Esquema y tope los fija el invariante de lib/resourceTypes.js:
+          // por_paciente (oftalmólogo, fonoaudióloga) sin tope, el resto con la
+          // jornada Ley 2101 vigente. Aquí no llega esquema del cliente, así
+          // que lo deduce del tipo — mismo resultado que antes, pero por la
+          // única vía que puede escribir estos dos campos.
+          ...normalizarEsquemaYTope({ type: data.resourceType, payScheme: data.payScheme }),
           maxHoursPerDay: 10,
-          payScheme: esPorPaciente ? 'por_paciente' : 'fijo',
           multiRoom: data.resourceType === 'oftalmologo',
           // Oftalmólogos y anestesiólogos rotan entre sedes — sin líder fijo.
           // Fonoaudiólogas sí quedan con líder (trabajan estables en su sede).

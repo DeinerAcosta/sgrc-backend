@@ -48,10 +48,23 @@ export async function jobAlertaOciosos() {
 
   let alertas = 0
   let saltadosPorAusencia = 0
+  let saltadosSinTope = 0
   for (const r of recursosFijos) {
     // Skip: si el recurso esta cubierto por una ausencia confirmada de la semana
     if (recursosConAusenciaActiva.has(r.id)) {
       saltadosPorAusencia++
+      continue
+    }
+    // Sep-2026 · Skip explicito: sin tope semanal no hay horas ociosas que
+    // medir. El filtro de arriba es por esquema de pago, y en produccion habia
+    // 94 oftalmologos marcados 'fijo' con `horas_max_semana` en NULL, asi que
+    // entraban aqui. No generaban alerta —`null - 30` da -30 y no pasa el
+    // umbral— pero era por accidente: bastaba un dia con 0 asignaciones para
+    // que `disponibles` fuera 0 y siguiera sin alertar, o un cambio de signo
+    // en el calculo para empezar a mandar avisos con "Tope contractual: null h".
+    // Lo dejamos dicho en vez de depender de la aritmetica de null.
+    if (!(r.maxHoursPerWeek > 0)) {
+      saltadosSinTope++
       continue
     }
     const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
@@ -119,6 +132,7 @@ export async function jobAlertaOciosos() {
     recursos_revisados: recursosFijos.length,
     alertas,
     saltados_por_ausencia: saltadosPorAusencia,
+    saltados_sin_tope: saltadosSinTope,
   }
 }
 

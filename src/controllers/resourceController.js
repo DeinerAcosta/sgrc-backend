@@ -5,7 +5,7 @@ import { titleCase } from '../lib/strings.js'
 import { getSemanaActual } from '../lib/week.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
-import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
+import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 
 const TIPOS = TIPOS_RECURSO
 
@@ -27,7 +27,9 @@ async function valorIncentivoPorPaciente() {
     return INCENTIVO_POR_PACIENTE_DEFECTO
   }
 }
-const ESQUEMAS = ['por_paciente', 'fijo', 'mixto']
+// Reexport local: la lista canónica vive en lib/resourceTypes.js junto con el
+// invariante esquema ↔ tope, para que no se vuelva a desincronizar.
+const ESQUEMAS = ESQUEMAS_PAGO
 
 // La especialidad de un consultorio determina qué tipo de recurso lo puede atender
 const ESPECIALIDAD_A_TIPO = {
@@ -256,7 +258,15 @@ export async function getById(req, res) {
 export async function create(req, res) {
   const data = recursoSchema.parse(req.body)
   // RN-12: intervalo solo lo modifica supervisor (la ruta ya está protegida por rol)
-  const r = await prisma.resource.create({ data: { ...data, name: titleCase(data.name) } })
+  const r = await prisma.resource.create({
+    data: {
+      ...data,
+      name: titleCase(data.name),
+      // Invariante esquema ↔ tope (ver lib/resourceTypes.js): 'por_paciente'
+      // nunca lleva tope semanal, y fijo/mixto siempre lo llevan.
+      ...normalizarEsquemaYTope(data),
+    },
+  })
   res.status(201).json(r)
 }
 
@@ -265,10 +275,25 @@ export async function update(req, res) {
   const anterior = await prisma.resource.findUnique({ where: { id: req.params.id } })
   if (!anterior) throw errors.notFound()
 
+  // Invariante esquema ↔ tope, solo cuando la petición toca alguno de los tres
+  // campos implicados. Se resuelve contra el registro anterior porque el update
+  // es parcial: si solo llega `payScheme`, el tope hay que deducirlo de lo que
+  // ya había. Una edición ajena (p.ej. activar/desactivar) NO toca estos
+  // campos — no queremos reparar datos de forma silenciosa en un guardado que
+  // no venía a eso.
+  const tocaEsquema = ['type', 'payScheme', 'maxHoursPerWeek'].some((k) => data[k] !== undefined)
+  const normalizado = tocaEsquema
+    ? normalizarEsquemaYTope({
+        type: data.type ?? anterior.type,
+        payScheme: data.payScheme ?? anterior.payScheme,
+        maxHoursPerWeek: data.maxHoursPerWeek ?? anterior.maxHoursPerWeek,
+      })
+    : {}
+
   // RN-14: si se desactiva, las asignaciones futuras se mantienen (el coordinador las resuelve)
   const r = await prisma.resource.update({
     where: { id: req.params.id },
-    data: { ...data, ...(data.name ? { name: titleCase(data.name) } : {}) },
+    data: { ...data, ...(data.name ? { name: titleCase(data.name) } : {}), ...normalizado },
   })
 
   if (anterior.active !== r.active) {

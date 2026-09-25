@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "revisar:sedes": "node prisma/revisar-sedes-coordinadores.js",
     "verificar:params": "node scripts/verificar-params.cjs",
-    "verificar:impacto": "node scripts/verificar-impacto-ausencias.js"
+    "verificar:impacto": "node scripts/verificar-impacto-ausencias.js",
+    "corregir:esquema": "node scripts/corregir-esquema-tope.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

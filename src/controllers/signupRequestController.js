@@ -6,6 +6,7 @@ import { errors } from '../lib/errors.js'
 import { titleCase } from '../lib/strings.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
+import { normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 
 /** Genera una contraseña provisional alfanumérica de 12 caracteres. */
 function generarPasswordProvisional() {
@@ -56,17 +57,24 @@ export async function aprobar(req, res) {
   let recursoId = null
   if (sol.role === 'recurso') {
     if (!sol.resourceType) throw errors.badRequest('La solicitud no especificó el tipo de recurso')
-    // Tipos por_paciente (oftalmólogo, fonoaudióloga): sin tope semanal por defecto.
-    const TIPOS_POR_PACIENTE = new Set(['oftalmologo', 'fonoaudiologa'])
-    const esPorPaciente = TIPOS_POR_PACIENTE.has(sol.resourceType)
+    // Sep-2026 · misma fuga que la carga en lote: el tope se decidía por TIPO y
+    // el esquema por lo que trajera la solicitud, así que un oftalmólogo al que
+    // se le aprobara esquema 'fijo' quedaba con tope NULL (combinación
+    // imposible → 0% de utilización en el informe de ociosos). La lista de
+    // tipos, además, estaba redeclarada a mano aquí, justo lo que
+    // lib/resourceTypes.js vino a evitar. Ahora ambos campos salen del
+    // invariante compartido.
     const recurso = await prisma.resource.create({
       data: {
         name: titleCase(sol.name),
         type: sol.resourceType,
         specialty: sol.specialty,
-        maxHoursPerWeek: esPorPaciente ? null : (sol.maxHoursPerWeek ?? 44),
+        ...normalizarEsquemaYTope({
+          type: sol.resourceType,
+          payScheme: sol.payScheme,
+          maxHoursPerWeek: sol.maxHoursPerWeek,
+        }),
         maxHoursPerDay: sol.maxHoursPerDay ?? 10,
-        payScheme: sol.payScheme ?? (esPorPaciente ? 'por_paciente' : 'fijo'),
         slotMinutes: sol.slotMinutes,
       },
     })
