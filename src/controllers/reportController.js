@@ -9,9 +9,11 @@ import {
   horasDeFranja,
   horasEfectivasFranja,
   horasUnionPorDia,
+  minutosUnion,
   JORNADA_LEGAL_SEMANAL,
 } from '../lib/workHours.js'
 import {
+  cargarBaseHoraria,
   cargarFestivosDelRango,
   esDomingoOFestivo,
   minutosBaseSemana,
@@ -196,7 +198,11 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
   const festivosSet = semanaObj
     ? await cargarFestivosDelRango(semanaObj.startDate, semanaObj.endDate)
     : new Set()
-  const hBaseSemana = minutosBaseSemana(semanaObj, festivosSet) / 60
+  // Sep-2026 · la base horaria ya no es la constante de 64h: sale de Metas del
+  // sistema (base_horas_lun_vie_min / base_horas_sabado_min). Si gerencia la
+  // cambia a 70h, este informe se recalcula solo.
+  const baseHoraria = await cargarBaseHoraria()
+  const hBaseSemana = minutosBaseSemana(semanaObj, festivosSet, baseHoraria) / 60
 
   const [asignaciones] = await Promise.all([
     prisma.assignment.findMany({
@@ -205,32 +211,75 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
     }),
   ])
 
+  // Sep-2026 · EL DENOMINADOR SON TODOS LOS CONSULTORIOS ACTIVOS, no solo los
+  // que tuvieron programación. Antes la lista se armaba a partir de las
+  // asignaciones, así que un consultorio sin programar esa semana no existía
+  // para el informe: en producción entraban 100 de 211 y el porcentaje
+  // respondía "de los consultorios que se usaron, qué tan llenos están" en vez
+  // de "qué tan ocupada está la capacidad instalada".
+  //
+  // Excepción: cuando se filtra por tipo de recurso, sembrar los 211 llenaría
+  // el informe de ceros de consultorios que ese tipo nunca usa. Ahí se mantiene
+  // el comportamiento anterior.
+  //
+  // Asesoría queda fuera: no es un consultorio físico sino N asesores en
+  // paralelo bajo un mismo "Área Asesores" lógico, y contra una base por
+  // consultorio da porcentajes irreales. Sus KPIs viven en Ocupación de
+  // asesores, que escala la base por número de asesores.
   const porCons = new Map()
+  if (!tipos) {
+    const consultorios = await prisma.room.findMany({
+      where: {
+        active: true,
+        specialty: { not: 'asesoria' },
+        ...(sedeIds ? { siteId: { in: sedeIds } } : {}),
+      },
+      include: { site: { select: { name: true } } },
+    })
+    for (const c of consultorios) {
+      porCons.set(c.id, {
+        room: c.name,
+        site: c.site.name,
+        specialty: c.specialty,
+        _franjas: new Map(),
+        h_base: hBaseSemana,
+      })
+    }
+  }
+
   for (const a of asignaciones) {
-    // Asesoría NO es un consultorio físico — son N asesores atendiendo en
-    // recepción/módulos en paralelo bajo un mismo "Area Asesores" lógico. El
-    // cálculo de ocupación con h_base fijo de 64h da porcentajes irreales
-    // (>200%). Se excluye de este informe; los KPIs de asesores viven en
-    // Productividad por recurso (que sí los mide bien individualmente).
     if (a.room.specialty === 'asesoria') continue
     const k = a.room.id
     if (!porCons.has(k)) {
+      // Consultorio desactivado con programación vieja, o filtro por tipo.
       porCons.set(k, {
         room: a.room.name,
         site: a.room.site.name,
         specialty: a.room.specialty,
-        h_asignadas: 0,
+        _franjas: new Map(),
         h_base: hBaseSemana,
       })
     }
-    porCons.get(k).h_asignadas += horasDeFranja(a.startTime, a.endTime)
+    // Sep-2026 · las franjas se guardan y se UNEN por día; antes se sumaban.
+    // En producción hay 653 pares de asignaciones que se pisan en el mismo
+    // consultorio en una sola semana (dos recursos a la vez en la misma sala):
+    // sumarlas contaba 12h de ocupación donde la sala estuvo ocupada 6.
+    // Misma unión que ya se aplica a los médicos multi-consultorio.
+    const fr = porCons.get(k)._franjas
+    if (!fr.has(a.weekday)) fr.set(a.weekday, [])
+    fr.get(a.weekday).push({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })
   }
 
-  return Array.from(porCons.values()).map((f) => ({
-    ...f,
-    h_asignadas: Math.round(f.h_asignadas * 10) / 10,
-    pct_ocupacion: f.h_base > 0 ? Math.round((f.h_asignadas / f.h_base) * 100) : 0,
-  }))
+  return Array.from(porCons.values()).map(({ _franjas, ...f }) => {
+    let minutos = 0
+    for (const franjas of _franjas.values()) minutos += minutosUnion(franjas)
+    const horas = minutos / 60
+    return {
+      ...f,
+      h_asignadas: Math.round(horas * 10) / 10,
+      pct_ocupacion: f.h_base > 0 ? Math.round((horas / f.h_base) * 100) : 0,
+    }
+  })
 }
 
 /**
@@ -394,11 +443,12 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
           select: {
             resourceId: true,
             weekId: true,
+            weekday: true,
             startTime: true,
             endTime: true,
             patientCapacity: true,
-            resource: { select: { type: true } },
-            execution: { select: { patientsSeen: true } },
+            resource: { select: { type: true, multiRoom: true } },
+            execution: { select: { patientsSeen: true, shiftStatus: true } },
           },
         })
       : Promise.resolve([]),
@@ -442,20 +492,36 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
         h_prog: 0, h_ejec: 0, pac_prog: 0, pac_at: 0,
         semanasActivas: new Set(),
         mesesActivos: new Set(),
+        // Sep-2026 · franjas guardadas por semana para poder UNIRLAS en los
+        // médicos multi-consultorio (ver el ajuste después del bucle).
+        _tipo: a.resource.type,
+        _multiRoom: !!a.resource.multiRoom,
+        _prog: new Map(),
+        _ejec: new Map(),
       })
     }
     const agg = agregados.get(k)
     // Horas EFECTIVAS (descontando almuerzo): es lo que realmente trabajó.
     // Si la franja se ejecutó completa, ejecutadas = programadas (también netas).
     const h = horasEfectivasFranja(a.startTime, a.endTime, a.resource.type)
+    if (!agg._prog.has(a.weekId)) agg._prog.set(a.weekId, [])
+    agg._prog.get(a.weekId).push(a)
     agg.h_prog += h
     // PROYECTOS-3255 #2.1: asesor_servicios NO atiende pacientes con cita, no
     // se acumulan sus pacientes en el indicador (aunque el campo BD legacy contenga valores).
     if (a.resource.type !== 'asesor_servicios') {
       agg.pac_prog += a.patientCapacity ?? 0
     }
-    if (a.execution) {
+    // Sep-2026 · una jornada marcada `no_ejecutada` NO suma horas ejecutadas.
+    // Antes bastaba con que existiera el registro: las 76 jornadas que el
+    // coordinador marcó explícitamente como no ejecutadas contaban como
+    // cumplidas al 100%, y el "% de cumplimiento" era en realidad "% de turnos
+    // con registro". `parcial` sigue sumando completo: el sistema no captura
+    // cuántas horas se cubrieron, así que queda como dato pendiente de definir.
+    if (a.execution && a.execution.shiftStatus !== 'no_ejecutada') {
       agg.h_ejec += h
+      if (!agg._ejec.has(a.weekId)) agg._ejec.set(a.weekId, [])
+      agg._ejec.get(a.weekId).push(a)
       if (a.resource.type !== 'asesor_servicios') {
         agg.pac_at += a.execution.patientsSeen
       }
@@ -468,6 +534,23 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
       const mes = `${startDate.getUTCFullYear()}-${String(startDate.getUTCMonth() + 1).padStart(2, '0')}`
       agg.mesesActivos.add(mes)
     }
+  }
+
+  // Sep-2026 · MULTI-CONSULTORIO: horas por UNIÓN, no por suma.
+  // Un médico que cubre 3 salas de 07:00 a 13:00 trabaja 6 horas, no 18. Tiempos
+  // ociosos ya lo calculaba así (`r.multiRoom ? horasUnionPorDia : suma`), pero
+  // Productividad las sumaba: la misma persona, la misma semana, daba horas
+  // distintas según la pantalla que mirara dirección. Se unen por semana — no
+  // globalmente — porque el mismo día de la semana se repite en cada semana del
+  // rango y unirlos todos volvería a subestimar.
+  for (const agg of agregados.values()) {
+    if (!agg._multiRoom) continue
+    let prog = 0
+    for (const asigs of agg._prog.values()) prog += horasUnionPorDia(asigs, agg._tipo)
+    let ejec = 0
+    for (const asigs of agg._ejec.values()) ejec += horasUnionPorDia(asigs, agg._tipo)
+    agg.h_prog = prog
+    agg.h_ejec = ejec
   }
 
   // Left-join en memoria: una fila POR CADA recurso activo, tenga o no asignaciones.
@@ -756,7 +839,7 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
   return Array.from(porRecurso.values()).sort((a, b) => b.total - a.total)
 }
 
-export async function dataHorasProgEjec({ site_id: sede_id, resource_type: tipo_recurso } = {}) {
+export async function dataHorasProgEjec({ desde, hasta, site_id: sede_id, resource_type: tipo_recurso } = {}) {
   const sedeIds = aLista(sede_id)
   const tipos = aLista(tipo_recurso)
 
@@ -765,10 +848,19 @@ export async function dataHorasProgEjec({ site_id: sede_id, resource_type: tipo_
   if (sedeIds) whereAsig.room = { siteId: { in: sedeIds } }
   if (tipos) whereAsig.resource = { type: { in: tipos } }
 
-  // Solo semanas ya iniciadas — una semana futura no tiene ejecución y arruina la gráfica
+  // Solo semanas ya iniciadas — una semana futura no tiene ejecución y arruina la gráfica.
+  //
+  // Sep-2026 · el informe IGNORABA el rango de fechas de la pantalla: devolvía
+  // siempre las últimas 8 semanas, pusieras el rango que pusieras. Ahora
+  // `desde`/`hasta` filtran por el fin de la semana —igual que en Cierre de
+  // semanas— y el tope de 8 solo aplica cuando no se pidió rango.
+  const whereSemana = { startDate: { lte: new Date() } }
+  if (desde) whereSemana.endDate = { gte: new Date(desde) }
+  if (hasta) whereSemana.endDate = { ...(whereSemana.endDate ?? {}), lte: new Date(hasta) }
+
   const semanas = await prisma.week.findMany({
-    where: { startDate: { lte: new Date() } },
-    take: 8,
+    where: whereSemana,
+    ...(desde || hasta ? {} : { take: 8 }),
     orderBy: { startDate: 'desc' },
     include: {
       assignments: {
@@ -786,7 +878,8 @@ export async function dataHorasProgEjec({ site_id: sede_id, resource_type: tipo_
       // Horas EFECTIVAS: si la franja se ejecutó completa, ejecutadas = programadas
       const h = horasEfectivasFranja(a.startTime, a.endTime, a.resource?.type)
       porSede.get(key).h_programadas += h
-      if (a.execution) porSede.get(key).h_ejecutadas += h
+      // Sep-2026 · ver dataProductividad: una jornada no_ejecutada no suma horas.
+      if (a.execution && a.execution.shiftStatus !== 'no_ejecutada') porSede.get(key).h_ejecutadas += h
     }
     for (const [sede, vals] of porSede.entries()) {
       filas.push({
@@ -846,28 +939,69 @@ export async function dataCierreSemanas({ desde, hasta, site_id: sede_id } = {})
   const nombre = new Map(usuarios.map((u) => [u.id, u.name]))
 
   const DIA = 1000 * 60 * 60 * 24
-  // PROYECTOS-3255 #1.2 (ajuste sep-2026): GRACE_DIAS=0. El sistema cierra
-  // exactamente el lunes 23:59 (o madrugada del martes en el primer cron).
-  // "A tiempo" = cerro manualmente antes del lunes 23:59 (fin + 2 dias).
-  const GRACE_DIAS = 0
-  const filas = cierres.map((c) => {
-    const sem = semanaPorId.get(c.weekId)
+
+  // Sep-2026 · EL INFORME AHORA MIDE CUMPLIMIENTO DE VERDAD. Tres cambios:
+  //
+  //   1. Se listan TODAS las sedes que tuvieron programación esa semana, no
+  //      solo las que cerraron. Antes una sede que nunca cerró simplemente no
+  //      aparecía, así que un informe llamado "Cumplimiento de cierre por sede"
+  //      no podía mostrar un incumplimiento.
+  //   2. "Fecha de cierre" muestra `closedAt` — cuándo se cerró de verdad. Antes
+  //      imprimía el plazo, idéntico para todas las filas de la misma semana.
+  //   3. El estado compara contra el plazo. Antes era "A tiempo" siempre que lo
+  //      cerrara una persona, sin mirar la fecha: nunca podía salir "Tarde".
+  //
+  // Plazo: lunes siguiente al domingo de fin (endDate + 1 día), 23:59.
+  const cierrePorClave = new Map(cierres.map((c) => [`${c.weekId}|${c.siteId}`, c]))
+
+  // Sedes con programación en esas semanas — el universo que DEBÍA cerrar.
+  const sedesConProgramacion = await prisma.assignment.findMany({
+    where: { weekId: { in: semanaIds }, status: { not: 'cancelada' } },
+    select: { weekId: true, room: { select: { siteId: true, site: { select: { name: true } } } } },
+  })
+  const paresEsperados = new Map()
+  for (const a of sedesConProgramacion) {
+    const sid = a.room?.siteId
+    if (!sid) continue
+    if (sedeIds && !sedeIds.includes(sid)) continue
+    paresEsperados.set(`${a.weekId}|${sid}`, { weekId: a.weekId, siteId: sid, siteName: a.room.site?.name ?? '—' })
+  }
+  // Una sede pudo cerrar sin tener programación (cierre vacío): también entra.
+  for (const c of cierres) {
+    const k = `${c.weekId}|${c.siteId}`
+    if (!paresEsperados.has(k)) {
+      paresEsperados.set(k, { weekId: c.weekId, siteId: c.siteId, siteName: c.site?.name ?? '—' })
+    }
+  }
+
+  const filas = [...paresEsperados.values()].map(({ weekId, siteId, siteName }) => {
+    const sem = semanaPorId.get(weekId)
     if (!sem) return null
-    // Deadline uniforme: lunes siguiente al domingo de fin (endDate + 1 dia).
-    // Semana lu-do: sem.endDate es domingo, lunes siguiente = +1 dia.
-    // Todos los cierres — manuales o del sistema — se muestran con esta fecha,
-    // asi el informe refleja el vencimiento del criterio 1.2 (lunes 23:59).
+    const c = cierrePorClave.get(`${weekId}|${siteId}`)
     const deadline = new Date(sem.endDate.getTime() + 1 * DIA)
-    // Regla simple: si un humano la cerro (closedBy != null) → "A tiempo",
-    // porque su intervencion evito el cierre automatico. Solo el fallback del
-    // sistema queda como "Auto (Sistema)".
+    const deadlineIso = deadline.toISOString().slice(0, 10)
+
+    if (!c) {
+      const vencido = Date.now() > deadline.getTime() + DIA   // pasó el lunes completo
+      return {
+        week: `${sem.startDate.toISOString().slice(0, 10)} → ${sem.endDate.toISOString().slice(0, 10)}`,
+        site: siteName,
+        coordinador: '—',
+        fecha_cierre: `— (plazo ${deadlineIso})`,
+        status: vencido ? 'SIN CERRAR' : 'Pendiente',
+      }
+    }
+
     const responsable = c.closedBy ? (nombre.get(c.closedBy) ?? '— sin registro —') : '(Sistema)'
+    const cerradoEn = c.closedAt ? new Date(c.closedAt) : null
+    // El plazo vence al final del lunes: deadline + 1 día completo.
+    const aTiempo = cerradoEn ? cerradoEn.getTime() <= deadline.getTime() + DIA : false
     return {
       week: `${sem.startDate.toISOString().slice(0, 10)} → ${sem.endDate.toISOString().slice(0, 10)}`,
-      site: c.site?.name ?? '—',
+      site: siteName,
       coordinador: responsable,
-      fecha_cierre: deadline.toISOString().slice(0, 10),
-      status: c.closedBy ? 'A tiempo' : 'Auto (Sistema)',
+      fecha_cierre: cerradoEn ? cerradoEn.toISOString().slice(0, 10) : deadlineIso,
+      status: !c.closedBy ? 'Auto (Sistema)' : aTiempo ? 'A tiempo' : 'Tarde',
     }
   }).filter(Boolean)
 
@@ -1198,10 +1332,14 @@ export async function metricasDeSemanas(semanas) {
         startTime: true,
         endTime: true,
         patientCapacity: true,
-        execution: { select: { id: true } },
+        execution: { select: { id: true, shiftStatus: true } },
       },
     }),
-    prisma.room.count({ where: { active: true } }),
+    // Sep-2026 · mismo denominador que dataOcupacion: consultorios activos SIN
+    // asesoria. Antes esta pantalla contaba TODOS los activos (232, asesoria
+    // incluida) y la otra solo los que tenian programacion (100): la misma
+    // semana daba 53% en un informe y ~23% en el otro.
+    prisma.room.count({ where: { active: true, specialty: { not: 'asesoria' } } }),
     prisma.absence.findMany({
       where: {
         status: 'confirmada',
@@ -1216,9 +1354,11 @@ export async function metricasDeSemanas(semanas) {
   // PROYECTOS-3255 #1.1: baseTotal por SEMANA (descontando festivos de ESA semana).
   // Antes era una constante para todas — semanas con festivo daban % de ocupacion
   // subestimado (denominador inflado).
+  // Sep-2026 · la base horaria sale de Metas del sistema, no de una constante.
+  const baseHoraria = await cargarBaseHoraria()
   const basePorSemana = new Map()
   for (const s of validas) {
-    basePorSemana.set(s.id, consultoriosBase * minutosBaseSemana(s, festivosRango))
+    basePorSemana.set(s.id, consultoriosBase * minutosBaseSemana(s, festivosRango, baseHoraria))
   }
 
   const acc = new Map(ids.map((id) => [id, { pacientes: 0, progMin: 0, ejecMin: 0 }]))
@@ -1228,7 +1368,8 @@ export async function metricasDeSemanas(semanas) {
     const minutos = hhmmAMinutos(a.endTime) - hhmmAMinutos(a.startTime)
     m.pacientes += a.patientCapacity ?? 0
     m.progMin += minutos
-    if (a.execution) m.ejecMin += minutos
+    // Sep-2026 · ver dataProductividad: una jornada no_ejecutada no suma horas.
+    if (a.execution && a.execution.shiftStatus !== 'no_ejecutada') m.ejecMin += minutos
   }
 
   // El coste se acumula en CÉNTIMOS enteros. Las columnas son Decimal(12,2) y

@@ -13,10 +13,61 @@
 
 import { prisma as prismaDefault } from './prisma.js'
 
-export const MINUTOS_DIA_LV = 720        // 12h L-V
-export const MINUTOS_SABADO = 240        // 4h sabado
+export const MINUTOS_DIA_LV = 720        // 12h L-V  (valor por defecto)
+export const MINUTOS_SABADO = 240        // 4h sabado (valor por defecto)
 export const BASE_MINUTOS_SEMANA_TEORICA = 5 * MINUTOS_DIA_LV + MINUTOS_SABADO   // 3840 (64h)
 export const DIAS_LABORABLES_SEMANA = 6  // L-S
+
+/**
+ * BASE HORARIA CONFIGURABLE (sep-2026)
+ * ====================================
+ * Las 64h semanales por consultorio NO son una constante del negocio: gerencia
+ * las ajusta desde Metas del sistema (`base_horas_lun_vie_min` y
+ * `base_horas_sabado_min`, en minutos). Los dos parametros YA existian, se
+ * guardaban en `parametros_sistema` y se editaban en pantalla — pero ningun
+ * calculo los leia: la ocupacion seguia usando las constantes de arriba, asi
+ * que cambiar el valor no movia un solo indicador.
+ *
+ * Ahora la ocupacion se recalcula con lo que este configurado. Si la operacion
+ * pasa a 70h semanales, se cambia ahi y los informes siguen.
+ *
+ * Cache de 60s: estos indicadores recorren muchas semanas y no tiene sentido
+ * consultar la tabla de parametros en cada una. Un cambio en Metas se refleja
+ * en menos de un minuto, o al instante si el caller invalida la cache.
+ */
+const BASE_POR_DEFECTO = { lv: MINUTOS_DIA_LV, sab: MINUTOS_SABADO, teorica: BASE_MINUTOS_SEMANA_TEORICA }
+const TTL_BASE_MS = 60_000
+let _baseCache = null
+
+/** Lee la base horaria configurada: minutos por dia L-V, por sabado, y el total teorico. */
+export async function cargarBaseHoraria(prisma = prismaDefault) {
+  const ahora = Date.now()
+  if (_baseCache && _baseCache.expira > ahora) return _baseCache.valor
+
+  let valor = BASE_POR_DEFECTO
+  try {
+    const rows = await prisma.systemSetting.findMany({
+      where: { key: { in: ['base_horas_lun_vie_min', 'base_horas_sabado_min'] } },
+    })
+    const obj = Object.fromEntries(rows.map((r) => [r.key, Number(r.value)]))
+    const lv = Number.isFinite(obj.base_horas_lun_vie_min) && obj.base_horas_lun_vie_min > 0
+      ? obj.base_horas_lun_vie_min : MINUTOS_DIA_LV
+    const sab = Number.isFinite(obj.base_horas_sabado_min) && obj.base_horas_sabado_min >= 0
+      ? obj.base_horas_sabado_min : MINUTOS_SABADO
+    valor = { lv, sab, teorica: 5 * lv + sab }
+  } catch {
+    // Si la tabla no responde, preferimos el default antes que tumbar el informe.
+    valor = BASE_POR_DEFECTO
+  }
+
+  _baseCache = { valor, expira: ahora + TTL_BASE_MS }
+  return valor
+}
+
+/** Olvida la base cacheada — la llama updateSistema para que el cambio se vea ya. */
+export function invalidarBaseHoraria() {
+  _baseCache = null
+}
 
 const toIso = (d) => new Date(d).toISOString().slice(0, 10)
 
@@ -79,11 +130,11 @@ export function contarFestivosEnSemana(semana, festivosSet = new Set()) {
  * en realidad no hay semana identificada. El caller decide como manejar el 0
  * (guard >0 ya presente en dataOcupacion y metricasDeSemanas).
  */
-export function minutosBaseSemana(semana, festivosSet = new Set()) {
+export function minutosBaseSemana(semana, festivosSet = new Set(), base = BASE_POR_DEFECTO) {
   if (!semana) return 0
   const { lv, sab } = contarFestivosEnSemana(semana, festivosSet)
-  const base = BASE_MINUTOS_SEMANA_TEORICA - (lv * MINUTOS_DIA_LV) - (sab * MINUTOS_SABADO)
-  return Math.max(0, base)
+  const total = base.teorica - (lv * base.lv) - (sab * base.sab)
+  return Math.max(0, total)
 }
 
 /**

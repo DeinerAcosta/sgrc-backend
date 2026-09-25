@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
+import { invalidarBaseHoraria } from '../lib/calendario.js'
 import { errors } from '../lib/errors.js'
 
 // tipoConsulta es un slug libre: minúsculas, letras/dígitos/guion bajo, sin
@@ -137,6 +138,12 @@ export async function updateSistema(req, res) {
       create: { key: clave, value: valor, reason: motivo, updatedBy: req.user.id },
     })
   }
+
+  // La base horaria por consultorio se cachea 60s en calendario.js. Al cambiarla
+  // desde aquí la olvidamos, para que los informes tomen el valor nuevo de
+  // inmediato en vez de esperar a que expire.
+  invalidarBaseHoraria()
+
   await registrarAuditoria({
     userId: req.user.id,
     action: 'cambiar_parametro_sistema',
