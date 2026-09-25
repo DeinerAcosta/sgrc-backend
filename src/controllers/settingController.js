@@ -120,6 +120,9 @@ export async function getSistema(req, res) {
     // 15-jul-2025 → 14-jul-2026: 44h ← VIGENTE · desde 15-jul-2026: 42h
     // Configurable porque la fecha de transición depende de la empresa.
     jornada_semanal_horas: Number(obj.jornada_semanal_horas ?? 44),
+    // Incentivo por paciente atendido (esquema mixto). Antes estaba quemado
+    // en 8.000 dentro de resourceController.
+    incentivo_por_paciente_cop: Number(obj.incentivo_por_paciente_cop ?? 8000),
   })
 }
 

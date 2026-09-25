@@ -8,6 +8,25 @@ import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUn
 import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
 
 const TIPOS = TIPOS_RECURSO
+
+/**
+ * Valor del incentivo por paciente atendido (COP), para el esquema de pago
+ * mixto. Sep-2026: estaba quemado en 8.000 dentro del cálculo de
+ * productividad individual, con el comentario "valor referencial" — nadie
+ * podía ajustarlo sin tocar código. Ahora sale de `parametros_sistema`
+ * (clave `incentivo_por_paciente_cop`), igual que las metas y la base horaria.
+ * Si no está configurado, mantiene los 8.000 históricos.
+ */
+const INCENTIVO_POR_PACIENTE_DEFECTO = 8000
+async function valorIncentivoPorPaciente() {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key: 'incentivo_por_paciente_cop' } })
+    const v = Number(row?.value)
+    return Number.isFinite(v) && v >= 0 ? v : INCENTIVO_POR_PACIENTE_DEFECTO
+  } catch {
+    return INCENTIVO_POR_PACIENTE_DEFECTO
+  }
+}
 const ESQUEMAS = ['por_paciente', 'fijo', 'mixto']
 
 // La especialidad de un consultorio determina qué tipo de recurso lo puede atender
@@ -364,19 +383,35 @@ export async function productividad(req, res) {
         },
         select: {
           weekId: true,
+          weekday: true,
           startTime: true,
           endTime: true,
-          execution: { select: { patientsSeen: true } },
+          execution: { select: { patientsSeen: true, shiftStatus: true } },
         },
       })
     : []
 
-  const acumulado = new Map(semanas.map((s) => [s.id, { horas: 0, pacientes: 0 }]))
+  const acumulado = new Map(semanas.map((s) => [s.id, { horas: 0, pacientes: 0, asigs: [] }]))
   for (const a of asigs) {
     const acc = acumulado.get(a.weekId)
     if (!acc) continue
+    acc.asigs.push(a)
     acc.horas += horasEfectivasFranja(a.startTime, a.endTime, recurso.type)
-    acc.pacientes += a.execution?.patientsSeen ?? 0
+    // Sep-2026 · una jornada marcada `no_ejecutada` no aporta pacientes
+    // atendidos, aunque el registro traiga el pre-llenado de la capacidad.
+    if (a.execution && a.execution.shiftStatus !== 'no_ejecutada') {
+      acc.pacientes += a.execution.patientsSeen ?? 0
+    }
+  }
+
+  // Sep-2026 · multi-consultorio: horas por UNIÓN, no por suma. Un médico que
+  // cubre 3 salas de 07:00 a 13:00 trabaja 6 horas, no 18. Es el criterio que
+  // ya aplican Tiempos ociosos y Productividad global; esta pantalla las sumaba
+  // y mostraba una cifra distinta de la misma persona.
+  if (recurso.multiRoom) {
+    for (const acc of acumulado.values()) {
+      acc.horas = horasUnionPorDia(acc.asigs, recurso.type)
+    }
   }
 
   const porSemana = semanas.map((s) => {
@@ -405,12 +440,24 @@ export async function productividad(req, res) {
   const actual = porSemana[0]
   const horasMes = porSemana.reduce((acc, s) => acc + s.horas, 0)
   const pacientesMes = porSemana.reduce((acc, s) => acc + s.pacientes, 0)
-  const promedioHoras = Math.round((horasMes / 4) * 10) / 10
-  const promedioPacientes = Math.round(pacientesMes / 4)
 
-  // Incentivo: solo aplica a optómetras (esquema mixto) — Levantamiento §3.2
+  // Sep-2026 · el promedio se divide por las semanas que REALMENTE existen, no
+  // siempre por 4. `porSemana` se rellena con ceros hasta 4 para que la gráfica
+  // tenga serie completa, y dividir por 4 cuando solo hay 2 semanas cargadas
+  // partía el promedio a la mitad. Mismo arreglo que ya se hizo en el informe
+  // global de productividad (PROYECTOS-3255 #3.3).
+  const nSemanas = Math.max(1, semanas.length)
+  const promedioHoras = Math.round((horasMes / nSemanas) * 10) / 10
+  const promedioPacientes = Math.round(pacientesMes / nSemanas)
+
+  // Incentivo: solo aplica a esquema mixto (optómetras) — Levantamiento §3.2.
+  // Sep-2026 · el valor por paciente ya no está quemado: sale de Metas del
+  // sistema (`incentivo_por_paciente_cop`). Estaba fijo en 8.000 con el
+  // comentario "valor referencial", así que nadie podía ajustarlo sin tocar
+  // código.
+  const incentivoPorPaciente = await valorIncentivoPorPaciente()
   const incentivoAcumulado = recurso.payScheme === 'mixto'
-    ? pacientesMes * 8000 // valor referencial por paciente
+    ? pacientesMes * incentivoPorPaciente
     : null
 
   res.json({

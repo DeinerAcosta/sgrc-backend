@@ -9,6 +9,7 @@
 // Rango default: últimos 3 meses. Se puede sobreescribir.
 
 import { prisma } from '../lib/prisma.js'
+import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
 
 const TTL_REPROG = 60_000  // 60s — dashboard ejecutivo, no necesita tiempo real
@@ -154,6 +155,12 @@ async function dataReprogramacionesDashboard(query = {}) {
   }
   const ausF = sedeIdsFiltro ? ausencias.filter((a) => perteneceASede(a.resourceId)) : ausencias
 
+  // Sep-2026 · los "días perdidos" son días HÁBILES (sin domingos ni festivos),
+  // igual que en Ausentismo e impacto. Antes este tablero contaba días
+  // calendario y la misma ausencia daba dos cifras distintas según la pantalla.
+  // Se cargan una sola vez para todo el rango.
+  const festivos = await cargarFestivosDelRango(desdeD, hastaD)
+
   // ==== 3. KPIs generales ====
   let diasPerdidos = 0
   let pacientesImpactados = 0
@@ -163,7 +170,7 @@ async function dataReprogramacionesDashboard(query = {}) {
   let conReposicionAprobada = 0
 
   for (const a of ausF) {
-    const dias = diasEntreInclusive(a.startDate, a.endDate)
+    const dias = diasEntreInclusive(a.startDate, a.endDate, festivos)
     diasPerdidos += dias
     pacientesImpactados += a.patientsAffected ?? 0
     costoOportunidad += Number(a.opportunityCost ?? 0)
@@ -186,7 +193,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (!seriePorMesMap.has(mes)) continue
     const b = seriePorMesMap.get(mes)
     b.count++
-    b.dias += diasEntreInclusive(a.startDate, a.endDate)
+    b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
     b.pacientes += a.patientsAffected ?? 0
   }
   const porMes = [...seriePorMesMap.values()]
@@ -198,7 +205,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (!famAgg.has(fam)) famAgg.set(fam, { family: fam, label: FAMILIA_LABEL[fam] ?? fam, count: 0, dias: 0, pacientes: 0 })
     const b = famAgg.get(fam)
     b.count++
-    b.dias += diasEntreInclusive(a.startDate, a.endDate)
+    b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
     b.pacientes += a.patientsAffected ?? 0
   }
   const porFamilia = [...famAgg.values()]
@@ -238,7 +245,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     }
     const b = recAgg.get(rid)
     b.count++
-    b.dias += diasEntreInclusive(a.startDate, a.endDate)
+    b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
     b.pacientes += a.patientsAffected ?? 0
     if (a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)) {
       b.approved_makeups++
@@ -261,7 +268,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (!espAgg.has(tipo)) espAgg.set(tipo, { type: tipo, count: 0, dias: 0, pacientes: 0 })
     const eb = espAgg.get(tipo)
     eb.count++
-    eb.dias += diasEntreInclusive(a.startDate, a.endDate)
+    eb.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
     eb.pacientes += a.patientsAffected ?? 0
 
     const ck = `${fam}|${tipo}`
@@ -520,11 +527,26 @@ async function calcularReposiciones({ desde, hasta, sedeIdsFiltro, mapaSedes, me
 // ============================================================================
 // Helpers de fechas
 // ============================================================================
-function diasEntreInclusive(a, b) {
-  const start = new Date(a)
-  const end   = new Date(b ?? a)
-  const ms = end.setHours(0,0,0,0) - start.setHours(0,0,0,0)
-  return Math.max(1, Math.round(ms / (24 * 3600 * 1000)) + 1)
+/**
+ * Días HÁBILES que cubre una ausencia: excluye domingos y festivos.
+ *
+ * Sep-2026 · antes contaba días calendario, así que este tablero reportaba para
+ * la misma ausencia una cifra de "días" distinta de la de Ausentismo e impacto.
+ * Los sábados SÍ cuentan: la operación es de lunes a sábado.
+ *
+ * `festivosSet` lo carga la función principal una sola vez para todo el rango.
+ * Sin él (Set vacío) solo se descuentan los domingos.
+ */
+function diasEntreInclusive(a, b, festivosSet = new Set()) {
+  const cursor = new Date(a)
+  const fin = new Date(b ?? a)
+  if (fin < cursor) return 0
+  let dias = 0
+  while (cursor <= fin) {
+    if (!esDomingoOFestivo(cursor, festivosSet)) dias++
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dias
 }
 
 function fechaFinDelDia(d) {
