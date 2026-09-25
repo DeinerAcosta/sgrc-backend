@@ -241,8 +241,13 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
         room: c.name,
         site: c.site.name,
         specialty: c.specialty,
-        _franjas: new Map(),
+        // OJO con el orden de estas claves: ReportPage lee la tabla por
+        // POSICIÓN, así que `h_asignadas` tiene que ir ANTES que `h_base` para
+        // coincidir con las columnas. Se declara aquí aunque se calcule al
+        // final, para fijar la posición.
+        h_asignadas: 0,
         h_base: hBaseSemana,
+        _franjas: new Map(),
       })
     }
   }
@@ -252,12 +257,14 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
     const k = a.room.id
     if (!porCons.has(k)) {
       // Consultorio desactivado con programación vieja, o filtro por tipo.
+      // Mismo orden de claves que arriba: h_asignadas antes que h_base.
       porCons.set(k, {
         room: a.room.name,
         site: a.room.site.name,
         specialty: a.room.specialty,
-        _franjas: new Map(),
+        h_asignadas: 0,
         h_base: hBaseSemana,
+        _franjas: new Map(),
       })
     }
     // Sep-2026 · las franjas se guardan y se UNEN por día; antes se sumaban.
