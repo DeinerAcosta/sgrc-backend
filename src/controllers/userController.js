@@ -414,51 +414,77 @@ export async function create(req, res) {
   if (data.role === 'recurso' && !data.resourceType) {
     throw errors.badRequest('Para rol "recurso" debes indicar el tipo (auxiliar, técnico, optómetra, oftalmólogo, anestesiólogo, asesor_servicios).')
   }
+  // Sep-2026 · correo repetido, avisado ANTES de tocar nada. El índice único de
+  // `usuarios.email` ya lo impedía, pero el error llegaba a la pantalla como
+  // "Valor único duplicado" —la traducción genérica del P2002 de Prisma— sin
+  // decir qué campo chocaba ni con quién.
+  const emailNormalizado = data.email.toLowerCase()
+  const yaExiste = await prisma.user.findUnique({
+    where: { email: emailNormalizado },
+    select: { name: true, active: true },
+  })
+  if (yaExiste) {
+    throw errors.badRequest(
+      `El correo ${emailNormalizado} ya está registrado a nombre de ${yaExiste.name}` +
+      `${yaExiste.active ? '' : ' (usuario inactivo)'}. Usa otro correo o edita el usuario existente.`
+    )
+  }
+
   // Si no envían password (creación rápida desde admin), usar la provisional fija.
   const passwordPlano = data.password ?? DEFAULT_PASSWORD
   const passwordHash = await bcrypt.hash(passwordPlano, 12)
 
-  // Si es recurso, crear primero el registro en `recursos` y vincularlo al usuario.
-  // Mismas reglas que la carga masiva: oftalmólogos son multi-consultorio sin tope semanal.
-  let recursoId = data.resourceId ?? null
-  if (data.role === 'recurso' && !recursoId) {
-    const esPorPaciente = TIPOS_POR_PACIENTE.has(data.resourceType)
-    const r = await prisma.resource.create({
+  // Sep-2026 · TRANSACCIÓN. El recurso y el usuario se creaban en dos
+  // operaciones sueltas: si la segunda fallaba —típicamente por correo
+  // repetido— el recurso quedaba creado y huérfano, sin usuario que lo
+  // apuntara, y cada reintento dejaba otra copia. En producción aparecieron
+  // "Jimmy Mencias" tres veces y "Gustavo Amaury" dos, todos en el mismo
+  // minuto. Ahora o entran los dos o no entra ninguno.
+  const u = await prisma.$transaction(async (tx) => {
+    // Si es recurso, se crea primero el registro en `recursos` y se vincula al
+    // usuario. Mismas reglas que la carga masiva: los oftalmólogos son
+    // multi-consultorio y sin tope semanal.
+    let recursoId = data.resourceId ?? null
+    if (data.role === 'recurso' && !recursoId) {
+      const esPorPaciente = TIPOS_POR_PACIENTE.has(data.resourceType)
+      const r = await tx.resource.create({
+        data: {
+          name: titleCase(data.name),
+          type: data.resourceType,
+          specialty: data.resourceType === 'oftalmologo' ? (data.specialty || null) : null,
+          // Tipos por_paciente (oftalmólogo, fonoaudióloga): sin tope semanal.
+          // Resto: jornada Ley 2101 vigente (44h).
+          maxHoursPerWeek: esPorPaciente ? null : 44,
+          maxHoursPerDay: 10,
+          payScheme: esPorPaciente ? 'por_paciente' : 'fijo',
+          multiRoom: data.resourceType === 'oftalmologo',
+          // Oftalmólogos y anestesiólogos rotan entre sedes — sin líder fijo.
+          // Fonoaudiólogas sí quedan con líder (trabajan estables en su sede).
+          leadCoordinatorId: ['oftalmologo', 'anestesiologo'].includes(data.resourceType)
+            ? null
+            : (data.leadCoordinatorId ?? null),
+        },
+      })
+      recursoId = r.id
+    }
+
+    return tx.user.create({
       data: {
         name: titleCase(data.name),
-        type: data.resourceType,
-        specialty: data.resourceType === 'oftalmologo' ? (data.specialty || null) : null,
-        // Tipos por_paciente (oftalmólogo, fonoaudióloga): sin tope semanal.
-        // Resto: jornada Ley 2101 vigente (44h).
-        maxHoursPerWeek: esPorPaciente ? null : 44,
-        maxHoursPerDay: 10,
-        payScheme: esPorPaciente ? 'por_paciente' : 'fijo',
-        multiRoom: data.resourceType === 'oftalmologo',
-        // Oftalmólogos y anestesiólogos rotan entre sedes — sin líder fijo.
-        // Fonoaudiólogas sí quedan con líder (trabajan estables en su sede).
-        leadCoordinatorId: ['oftalmologo', 'anestesiologo'].includes(data.resourceType)
-          ? null
-          : (data.leadCoordinatorId ?? null),
+        email: emailNormalizado,
+        phone: data.phone,
+        passwordHash,
+        role: data.role,
+        resourceId: recursoId,
+        active: data.active ?? true,
+        sites: data.sites?.length
+          ? { create: data.sites.map((sedeId) => ({ siteId: sedeId })) }
+          : undefined,
       },
+      select: SELECT_PUBLIC,
     })
-    recursoId = r.id
-  }
-
-  const u = await prisma.user.create({
-    data: {
-      name: titleCase(data.name),
-      email: data.email.toLowerCase(),
-      phone: data.phone,
-      passwordHash,
-      role: data.role,
-      resourceId: recursoId,
-      active: data.active ?? true,
-      sites: data.sites?.length
-        ? { create: data.sites.map((sedeId) => ({ siteId: sedeId })) }
-        : undefined,
-    },
-    select: SELECT_PUBLIC,
   })
+
   await registrarAuditoria({
     userId: req.user.id,
     action: 'crear_usuario',
