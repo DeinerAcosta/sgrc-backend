@@ -5,6 +5,11 @@ import { SIN_TOPE_DIARIO, ESPECIALIDADES_PERMITEN_APOYO, minutosAhhmm, solapan, 
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
 
+// Roles que pueden tocar una sede ya cerrada (con motivo). Gerencia es
+// super-usuario y tiene "Editar semana cerrada" en su menú: antes solo
+// supervisor pasaba y gerencia recibía "No tienes permiso".
+export const ROLES_EDITAN_CERRADA = new Set(['supervisor', 'gerencia'])
+
 /**
  * Lógica central del SGRC — Diagrama 3.
  * Ejecuta las 6 verificaciones en orden estricto antes de INSERT.
@@ -243,7 +248,7 @@ export async function editarAsignacion(id, data, userCtx) {
     // El modo de programación libre levanta esta restricción temporalmente
     // (ver lib/modoProgramacion.js). El resto de validaciones siguen igual.
     if (cierreSede && !programacionLibre()) {
-      if (userCtx.role !== 'supervisor') {
+      if (!ROLES_EDITAN_CERRADA.has(userCtx.role)) {
         throw errors.forbidden('No tienes permiso para modificar esta sede — su cierre semanal ya fue procesado')
       }
       if (!data.supervisorReason || data.supervisorReason.trim().length < 5) {
@@ -523,7 +528,7 @@ export async function editarAsignacion(id, data, userCtx) {
       // Estado previo, para que la auditoría pueda registrar qué cambió y no
       // solo cómo quedó. `existing` se cargó al principio de la transacción.
       anterior: existing,
-      wasSupervisor: userCtx.role === 'supervisor' && !!cierreSede,
+      wasSupervisor: ROLES_EDITAN_CERRADA.has(userCtx.role) && !!cierreSede,
     }
   }, { isolationLevel: 'ReadCommitted' })
 }
@@ -557,7 +562,7 @@ export async function crearAsignacion(data, userCtx) {
     })
     // Ver comentario equivalente en editarAsignacion.
     if (cierreSede && !programacionLibre()) {
-      if (userCtx.role !== 'supervisor') {
+      if (!ROLES_EDITAN_CERRADA.has(userCtx.role)) {
         throw errors.forbidden('No tienes permiso para asignar en esta sede — su cierre semanal ya fue procesado')
       }
       if (!data.supervisorReason || data.supervisorReason.trim().length < 5) {
@@ -850,7 +855,7 @@ export async function crearAsignacion(data, userCtx) {
       },
     })
 
-    return { assignment: nueva, wasSupervisor: userCtx.role === 'supervisor' && semana.status === 'cerrada' }
+    return { assignment: nueva, wasSupervisor: ROLES_EDITAN_CERRADA.has(userCtx.role) && semana.status === 'cerrada' }
   }, { isolationLevel: 'ReadCommitted' })
   // READ COMMITTED: tras esperar el FOR UPDATE, la 2ª transacción ve el INSERT ya
   // commiteado por la 1ª y detecta el conflicto. En REPEATABLE READ (default de

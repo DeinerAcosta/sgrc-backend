@@ -109,6 +109,12 @@ export async function list(req, res) {
     sedeIdFinal = null   // el filtro por sede ya no aplica
   } else if (rol === 'coordinador') {
     const misSedes = req.user.sites ?? []
+    // Coord SIN sedes no ve nada — antes caía sin filtro y recibía las
+    // ausencias de TODAS las sedes (mismo arreglo que reposiciones).
+    if (misSedes.length === 0) {
+      res.json([])
+      return
+    }
     if (sedeIdFinal) {
       if (!misSedes.includes(sedeIdFinal)) {
         throw errors.forbidden('No tienes acceso a esta sede')

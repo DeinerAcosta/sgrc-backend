@@ -3,7 +3,7 @@ import PDFDocument from 'pdfkit'
 import ExcelJS from 'exceljs'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
-import { crearAsignacion, editarAsignacion } from '../services/assignmentService.js'
+import { crearAsignacion, editarAsignacion, ROLES_EDITAN_CERRADA } from '../services/assignmentService.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
@@ -300,9 +300,20 @@ export async function remove(req, res) {
   // el id de una asignación de otra ciudad para eliminarla.
   assertSedePermitida(req.user, a.room.siteId, a.room.site?.name)
 
-  // RN — semana cerrada solo supervisor
-  if (a.week.status === 'cerrada' && req.user.role !== 'supervisor' && !programacionLibre()) {
-    throw errors.forbidden('Semana cerrada — solo supervisor puede modificar')
+  // RN — semana o SEDE cerrada: solo supervisor/gerencia. Antes solo se miraba
+  // la semana global, así que un coord podía borrar asignaciones de su sede
+  // después de cerrarla (mientras otras sedes seguían abiertas). Misma regla
+  // que crear/editar en assignmentService.
+  if (!programacionLibre() && !ROLES_EDITAN_CERRADA.has(req.user.role)) {
+    if (a.week.status === 'cerrada') {
+      throw errors.forbidden('Semana cerrada — solo supervisor o gerencia pueden modificar')
+    }
+    const cierreSede = await prisma.weekSiteClosure.findUnique({
+      where: { weekId_siteId: { weekId: a.weekId, siteId: a.room.siteId } },
+    })
+    if (cierreSede) {
+      throw errors.forbidden('No puedes borrar asignaciones de esta sede — su cierre semanal ya fue procesado')
+    }
   }
 
   // El borrado era la única mutación de programación sin ningún rastro. Es
