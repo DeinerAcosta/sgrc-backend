@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { ordenConsultorios } from './siteController.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
+import { ESPECIALIDADES_EXIGEN_APOYO } from '../lib/timeSlots.js'
 
 // Mantener sincronizado con enum `Especialidad` en prisma/schema.prisma:43-50
 // y con `ESPECIALIDADES` en frontend/src/utils/helpers.js.
@@ -10,7 +11,10 @@ import { assertSedePermitida } from '../lib/siteScope.js'
 // pero Zod aquí la rechazaba con "Datos inválidos" al editar consultorio.
 // Jul-2026: agregado 'otorrinolaringologia' (con auxiliar, rotativo).
 const ESPECIALIDADES = ['oftalmologia', 'optometria', 'anestesiologia', 'diagnostico', 'asesoria', 'fonoaudiologia', 'otorrinolaringologia']
-const REQUIEREN_AUX = new Set(['oftalmologia', 'anestesiologia', 'otorrinolaringologia'])
+// Sep-2026: esta lista estaba copiada aqui y decia lo correcto, pero las de
+// lib/timeSlots.js (y las dos del frontend) se habian quedado sin otorrino. Ya
+// no se copia: sale de la fuente unica, que es la que usan las validaciones.
+const REQUIEREN_AUX = ESPECIALIDADES_EXIGEN_APOYO
 
 const emptyToNull = (v) => (v === '' || v === undefined ? null : v)
 

@@ -21,11 +21,32 @@ export const SIN_TOPE_DIARIO = new Set([
 ])
 
 /**
- * Especialidades cuyos consultorios admiten un recurso de apoyo
- * (auxiliar_id / auxiliar2_id). En optometría y asesoría no aplica.
+ * APOYO EN CONSULTORIO — fuente unica
+ * ===================================
+ *
+ * EXIGEN: el profesional no puede atender solo, la auxiliar es obligatoria.
+ * PERMITEN: admiten apoyo, obligatorio o no. Diagnostico solo permite (y ahi
+ * el apoyo es OTRO TECNICO, no una auxiliar).
+ *
+ * Sep-2026 · se agrega 'otorrinolaringologia'. Los 7 consultorios de otorrino
+ * ya estaban marcados `requiere_auxiliar = true` en BD desde jul-2026
+ * (roomController los crea asi), pero la especialidad nunca se agrego a estas
+ * listas: el modal de asignacion no mostraba el campo de auxiliar y un segundo
+ * auxiliar habria sido rechazado con "Este consultorio no acepta apoyo".
+ * Nadie lo noto porque no habia ni una sola asignacion en esos consultorios.
+ *
+ * Misma familia que el bug de jul-2026 en que crear un Otorrino fallaba con
+ * "Datos invalidos": el tipo se agrego a la BD y al desplegable, pero no a las
+ * listas de validacion repartidas por el codigo. Por eso ahora `REQUIEREN_AUX`
+ * de roomController sale de aqui en vez de estar copiado alli.
  */
+export const ESPECIALIDADES_EXIGEN_APOYO = new Set([
+  'oftalmologia', 'anestesiologia', 'otorrinolaringologia',
+])
+
+/** Admiten apoyo (auxiliar_id / auxiliar2_id). Optometria y asesoria no. */
 export const ESPECIALIDADES_PERMITEN_APOYO = new Set([
-  'oftalmologia', 'anestesiologia', 'diagnostico',
+  ...ESPECIALIDADES_EXIGEN_APOYO, 'diagnostico',
 ])
 
 export const minutosAhhmm = (m) =>
