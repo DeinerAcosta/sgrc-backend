@@ -80,13 +80,32 @@ export async function cerrar(req, res) {
   const semana = await prisma.week.findUnique({ where: { id: semanaId } })
   if (!semana) throw errors.notFound('Semana no encontrada')
 
-  // Si no vino sede_id y el usuario es coordinador, tomar su primera sede.
-  if (!sede_id && req.user.role === 'coordinador') {
-    const us = await prisma.userSite.findFirst({ where: { userId: req.user.id } })
-    if (!us) throw errors.badRequest('No tienes sedes asignadas')
-    sede_id = us.siteId
+  // Sep-28-2026 · SE QUITA EL FALLBACK A "LA PRIMERA SEDE DEL COORDINADOR".
+  //
+  // Era esto:
+  //     if (!sede_id && req.user.role === 'coordinador') {
+  //       const us = await prisma.userSite.findFirst({ where: { userId: req.user.id } })
+  //       sede_id = us.siteId            // ← la primera que devuelva la BD
+  //     }
+  //
+  // Adivinar la sede cuando el cliente no la manda es corrupcion de datos
+  // silenciosa: la peticion responde 200, el cierre se crea, y queda cerrada
+  // una sede que nadie pidio cerrar. Paso en produccion — una coordinadora con
+  // 5 sedes tenia "Sede Galapa" en el selector y el sistema le cerro "Sede
+  // Malambo", que es su sites[0]. Le llego una pestana con el bundle viejo (el
+  // modal de cierre calculaba su propia sede), el body salio sin site_id y este
+  // fallback remato el error en vez de frenarlo.
+  //
+  // Ahora falta sede = 400 explicito. Un cliente desactualizado recibe un error
+  // que se ve, en vez de cerrar la sede equivocada sin que nadie se entere.
+  // `findFirst` ademas no llevaba `orderBy`, asi que "la primera" era la que el
+  // motor quisiera devolver: ni siquiera era predecible.
+  if (!sede_id) {
+    throw errors.badRequest(
+      'Falta la sede a cerrar. Si el problema persiste, recarga la pagina con Ctrl+Shift+R: ' +
+      'tu navegador puede tener una version antigua del programador.',
+    )
   }
-  if (!sede_id) throw errors.badRequest('Falta sede_id en el cuerpo')
 
   // El coord solo puede cerrar sus propias sedes; supervisor/gerencia, cualquiera.
   if (req.user.role === 'coordinador') {
