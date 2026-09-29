@@ -1,5 +1,5 @@
 import cron from 'node-cron'
-import { jobAlertaOciosos, jobConsultoriosSinAsignar } from './alerts.js'
+import { jobResumenCoordinador } from './alerts.js'
 import { jobResumenDiario } from './dailyDigest.js'
 import { jobAutoCierreSemana } from './autoCloseWeek.js'
 import { jobSincronizarFestivos } from './syncHolidays.js'
@@ -34,25 +34,15 @@ export function iniciarJobs() {
     return
   }
 
-  // RN-25: alerta de recursos ociosos — todos los días a las 6:00am
+  // RN-25: resumen diario del coordinador — todos los días a las 6:00am.
+  // Solo manda correo si la lista cambio desde el ultimo envio (ver alerts.js).
   cron.schedule('0 6 * * *', async () => {
-    console.log('[JOB 6am] Ejecutando alerta de recursos ociosos...')
+    console.log('[JOB 6am] Ejecutando resumen diario del coordinador...')
     try {
-      const r = await jobAlertaOciosos()
-      console.log('[JOB 6am] Ociosos:', JSON.stringify(r))
+      const r = await jobResumenCoordinador()
+      console.log('[JOB 6am] Resumen coordinador:', JSON.stringify(r))
     } catch (e) {
       console.error('[JOB 6am] Error:', e.message)
-    }
-  }, { timezone: TZ })
-
-  // Consultorios sin asignar — lunes a las 6:00am
-  cron.schedule('0 6 * * 1', async () => {
-    console.log('[JOB lunes] Ejecutando alerta de consultorios sin asignar...')
-    try {
-      const r = await jobConsultoriosSinAsignar()
-      console.log('[JOB lunes] Consultorios:', JSON.stringify(r))
-    } catch (e) {
-      console.error('[JOB lunes] Error:', e.message)
     }
   }, { timezone: TZ })
 
@@ -115,13 +105,12 @@ export function iniciarJobs() {
     }
   })
 
-  console.log('⏰ Jobs programados: ociosos (6am diario), consultorios sin asignar (6am lunes), resumen diario (7am diario), auto-cierre semanas (00:00 diario), sync festivos (1ene 1am), purga auditoría (3am domingos)')
+  console.log('⏰ Jobs programados: resumen coordinador (6am diario), resumen diario (7am diario), auto-cierre semanas (00:00 diario), sync festivos (1ene 1am), purga auditoría (3am domingos)')
 }
 
 // Mapa para ejecución manual vía endpoint (testing / disparo on-demand)
 export const JOBS_MANUALES = {
-  'alerta-ociosos': jobAlertaOciosos,
-  'consultorios-sin-asignar': jobConsultoriosSinAsignar,
+  'resumen-coordinador': jobResumenCoordinador,
   'resumen-diario': jobResumenDiario,
   'auto-cierre-semana': jobAutoCierreSemana,
   'sincronizar-festivos': jobSincronizarFestivos,

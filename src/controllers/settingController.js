@@ -123,6 +123,12 @@ export async function getSistema(req, res) {
     // Incentivo por paciente atendido (esquema mixto). Antes estaba quemado
     // en 8.000 dentro de resourceController.
     incentivo_por_paciente_cop: Number(obj.incentivo_por_paciente_cop ?? 8000),
+    // Sep-2026 · Umbral del resumen diario al coordinador: se le avisa de los
+    // recursos que estén por debajo de este % de su tope semanal. Antes el job
+    // usaba "más de 4 h libres", que con topes de 44 h marcaba al 76% de la
+    // gente y convertía el aviso en ruido diario. Se alinea con el KPI
+    // "Recursos con tiempo ocioso" del informe, que ya usaba < 60%.
+    alerta_utilizacion_min_pct: Number(obj.alerta_utilizacion_min_pct ?? 60),
   })
 }
 
