@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js'
 import { notificar, notificarCoordinadoresDeSede } from '../services/notificationService.js'
 import { getSemanaActual } from '../lib/week.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
+import { fechaSolo } from '../lib/fechas.js'
 
 /**
  * RN-25: Alerta de recursos ociosos.
@@ -44,7 +45,7 @@ export async function jobAlertaOciosos() {
     oftalmologo: 'Oftalmólogo', anestesiologo: 'Anestesiólogo', optometra: 'Optómetra',
     assistant: 'Auxiliar de enfermería', tecnico: 'Técnico de diagnóstico', asesor_servicios: 'Asesor de servicios',
   }
-  const fechaSemana = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+  const fechaSemana = fechaSolo
 
   let alertas = 0
   let saltadosPorAusencia = 0
@@ -157,7 +158,7 @@ export async function jobConsultoriosSinAsignar() {
   })
   const consConAsignacion = new Set(asignaciones.map((a) => a.roomId))
 
-  const fechaSemana = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+  const fechaSemana = fechaSolo
   const ESPECIALIDADES_LABEL = {
     oftalmologia: 'Oftalmología', optometria: 'Optometría', anestesiologia: 'Anestesiología',
     diagnostico: 'Diagnóstico', asesoria: 'Asesoría',

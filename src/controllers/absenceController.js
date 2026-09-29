@@ -6,6 +6,7 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notificarDirectivos, notificarDireccionMedica } from '../services/notificationService.js'
 import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/absenceService.js'
 import { generarFormatoFAA126 } from '../services/faa126FormService.js'
+import { fechaSolo } from '../lib/fechas.js'
 
 // Tipos de recurso "médicos" que califican para el formato F-AA-126 (formato
 // oficial de continuidad del servicio para prestadores oftalmología-optometría).
@@ -271,7 +272,7 @@ async function notificarRecursoAusenciaConfirmada(tx, ausencia, actualizada, { p
     where: { resourceId: ausencia.resourceId },
   })
   if (!usuarioRecurso) return
-  const fmt = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+  const fmt = fechaSolo
   const fechaInicioTxt = fmt(ausencia.startDate)
   const fechaFinTxt = fmt(ausencia.endDate)
   const periodoTxt = fechaInicioTxt === fechaFinTxt ? fechaInicioTxt : `${fechaInicioTxt} al ${fechaFinTxt}`
@@ -449,7 +450,7 @@ export async function create(req, res) {
     where: { id: { in: sedeIds } }, select: { name: true },
   })).map((s) => s.name).join(', ') || '(sin asignaciones esa fecha)'
 
-  const fmt = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+  const fmt = fechaSolo
   const fechaInicioTxt = fmt(fechaInicio)
   const fechaFinTxt = fmt(fechaFin)
   const periodoTxt = fechaInicioTxt === fechaFinTxt ? fechaInicioTxt : `${fechaInicioTxt} al ${fechaFinTxt}`
@@ -671,9 +672,7 @@ export async function confirmar(req, res) {
   })
 
   // Copia informativa a Dirección Médica (ago-2026) — buzones institucionales.
-  const fmtDir = (d) => new Date(d).toLocaleDateString('es-CO', {
-    day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota',
-  })
+  const fmtDir = fechaSolo
   const finiDir = fmtDir(resultado.actualizada.startDate)
   const ffinDir = fmtDir(resultado.actualizada.endDate)
   const periodoDir = finiDir === ffinDir ? finiDir : `${finiDir} al ${ffinDir}`

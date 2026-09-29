@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js'
 import { notificar, notificarSupervisores } from '../services/notificationService.js'
 import { registrarAuditoria } from '../middleware/audit.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { fechaSolo } from '../lib/fechas.js'
 
 // Cache del ID del usuario "Sistema" — se resuelve/crea la primera vez que corre
 // el job (get-or-create idempotente por email). Se usa como usuarioId en las
@@ -150,7 +151,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
       }
       cerradas++
 
-      const fmt = (d) => new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+      const fmt = fechaSolo
       const rangoBonito = `${fmt(sem.startDate)} — ${fmt(sem.endDate)}`
       const totalAsigs = await prisma.assignment.count({ where: { weekId: sem.id, status: { not: 'cancelada' } } })
 
@@ -229,7 +230,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
         contexto: 'Notificación del módulo de Cierre de Semana — el job diario detectó errores',
         criticidad: 'alta',
         detalles: errores.slice(0, 10).map((e) => [
-          new Date(e.startWeek).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' }),
+          fechaSolo(e.startWeek),
           e.message,
         ]),
       })

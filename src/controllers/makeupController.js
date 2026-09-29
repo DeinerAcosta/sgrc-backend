@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
+import { fechaSolo } from '../lib/fechas.js'
 import {
   notificar,
   notificarCoordinadoresDeSede,
@@ -254,7 +255,7 @@ export async function crear(req, res) {
     await notificarCoordinadoresDeSede(sedeId, {
       type: 'reposicion_solicitada',
       title: `Reposición solicitada: ${ausencia.resource?.name ?? 'profesional'}`,
-      message: `<p>El profesional <strong>${ausencia.resource?.name ?? ''}</strong> propuso una reposición para la ausencia del <strong>${new Date(ausencia.startDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</strong>. Requiere tu aprobación.</p>`,
+      message: `<p>El profesional <strong>${ausencia.resource?.name ?? ''}</strong> propuso una reposición para la ausencia del <strong>${fechaSolo(ausencia.startDate)}</strong>. Requiere tu aprobación.</p>`,
       contexto: 'Acción requerida — Reposiciones',
       criticidad: 'media',
       referenceId: reposicion.id,
@@ -442,9 +443,7 @@ export async function marcarRealizada(req, res) {
 // Helpers
 // ============================================================================
 function detallesResumen(rep, ausencia) {
-  const fmtDate = (d) => new Date(d).toLocaleDateString('es-CO', {
-    day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota',
-  })
+  const fmtDate = fechaSolo
   return [
     ['Profesional',         ausencia?.resource?.name ?? '—'],
     ['Ausencia original',   fmtDate(ausencia.startDate)],
