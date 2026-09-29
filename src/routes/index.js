@@ -74,7 +74,11 @@ r.get('/resources/:id/absences', wrap(rec.ausenciasDelRecurso))
 r.get('/resources/:id/productivity', requireRol('directivo', 'supervisor'), wrap(rec.productividad))
 r.get('/resources/:id', wrap(rec.getById))
 r.post('/resources', requireRol('supervisor'), wrap(rec.create))
+r.get('/resources/:id/dependencies', requireRol('supervisor'), wrap(rec.dependencias))
 r.put('/resources/:id', requireRol('supervisor'), wrap(rec.update))
+// Sep-2026: no existia forma de borrar un recurso. Solo supervisor, y el
+// controlador se niega si tiene historial (responde 409 con el detalle).
+r.delete('/resources/:id', requireRol('supervisor'), wrap(rec.remove))
 
 // ============ USUARIOS (admin) ============
 r.get('/users', requireRol('supervisor'), wrap(usr.list))

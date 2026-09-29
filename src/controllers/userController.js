@@ -37,6 +37,9 @@ const crearUsuarioSchema = z.object({
   leadCoordinatorId: z.preprocess(emptyToUndef, z.string().uuid().optional().nullable()),
   specialty: z.preprocess(emptyToUndef, z.string().max(100).optional().nullable()),
   reason: z.preprocess(emptyToUndef, z.string().optional()),
+  // Sep-2026 · Confirmación para crear un recurso cuyo nombre ya existe. Es un
+  // aviso, no una prohibición: dos personas pueden llamarse igual.
+  allowDuplicateName: z.boolean().optional(),
 })
 
 const editarUsuarioSchema = z.object({
@@ -438,6 +441,25 @@ export async function create(req, res) {
       `El correo ${emailNormalizado} ya está registrado a nombre de ${yaExiste.name}` +
       `${yaExiste.active ? '' : ' (usuario inactivo)'}. Usa otro correo o edita el usuario existente.`
     )
+  }
+
+  // Sep-2026 · nombre repetido. El chequeo de correo de arriba NO atrapa los
+  // duplicados reales: en producción aparecieron 5 personas cargadas dos o tres
+  // veces (Ruby Celeste Guerrero ×3), y cada carga usó un correo distinto, así
+  // que el índice de email las dejó pasar. Aquí se avisa y la pantalla pregunta
+  // si es otra persona; con `allowDuplicateName` se crea igual.
+  if (data.role === 'recurso' && !data.resourceId && !data.allowDuplicateName) {
+    const iguales = await prisma.resource.findMany({
+      where: { name: { equals: data.name.trim() } },
+      select: { id: true, name: true, type: true, active: true, user: { select: { email: true } } },
+    })
+    if (iguales.length > 0) {
+      throw errors.conflict(
+        `Ya existe ${iguales.length === 1 ? 'un recurso' : `${iguales.length} recursos`} con el nombre "${data.name.trim()}". ` +
+        'Si es otra persona distinta, confirma para crearlo de todas formas.',
+        { code: 'nombre_duplicado', existentes: iguales },
+      )
+    }
   }
 
   // Si no envían password (creación rápida desde admin), usar la provisional fija.

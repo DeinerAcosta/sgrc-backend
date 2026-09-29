@@ -68,7 +68,31 @@ const recursoSchema = z.object({
   // BD (MEDIUMTEXT, 16 MB) y el frontend (1 MB imagen ~ 1.35 MB en base64) los
   // aceptan; el cap Zod queda un poco por encima del frontend para dejar margen.
   signatureUrl: z.preprocess(emptyToUndef, z.string().max(2_000_000).optional().nullable()),
+  // Sep-2026 · El alta se frena si ya existe alguien con ese nombre. Con este
+  // campo en true se crea igual: dos personas pueden llamarse igual de verdad,
+  // asi que es un aviso, no una prohibicion. No se guarda en la BD.
+  allowDuplicateName: z.boolean().optional(),
 })
+
+/**
+ * Busca recursos que ya se llamen igual. Se usa para AVISAR al crear, no para
+ * bloquear: los 5 duplicados que aparecieron en produccion (Ruby tres veces,
+ * Jeiny, Juliana, Keyla y Shaila dos) nacieron de cargar dos veces a la misma
+ * persona sin que nada lo advirtiera. El control por correo repetido no los
+ * atrapa, porque cada carga uso un correo distinto.
+ *
+ * La comparacion la hace MySQL con su colacion por defecto, que ignora
+ * mayusculas; el trim cubre los espacios de sobra al pegar desde un Excel.
+ */
+async function nombresParecidos(nombre, excluirId = null) {
+  return prisma.resource.findMany({
+    where: {
+      name: { equals: String(nombre).trim() },
+      ...(excluirId ? { id: { not: excluirId } } : {}),
+    },
+    select: { id: true, name: true, type: true, active: true, user: { select: { email: true } } },
+  })
+}
 
 /**
  * GET /recursos
@@ -255,8 +279,127 @@ export async function getById(req, res) {
   res.json(r)
 }
 
+/**
+ * Cuenta TODO lo que apunta a un recurso. Son las seis referencias que existen
+ * en el schema — revisadas una por una, porque quedarse en "asignaciones y
+ * ausencias" dejaba fuera backoffice y las solicitudes de recurso, y el borrado
+ * habria reventado contra la llave foranea en vez de avisar.
+ */
+async function dependenciasDeRecurso(id) {
+  const [titular, aux1, aux2, ausencias, backoffice, solicitudes] = await Promise.all([
+    prisma.assignment.count({ where: { resourceId: id } }),
+    prisma.assignment.count({ where: { assistantId: id } }),
+    prisma.assignment.count({ where: { assistant2Id: id } }),
+    prisma.absence.count({ where: { resourceId: id } }),
+    prisma.backofficeAssignment.count({ where: { assistantId: id } }),
+    prisma.resourceRequest.count({ where: { resourceId: id } }),
+  ])
+  const detalle = {
+    asignaciones: titular + aux1 + aux2,
+    ausencias,
+    backoffice,
+    solicitudes,
+  }
+  return { ...detalle, total: Object.values(detalle).reduce((a, b) => a + b, 0) }
+}
+
+/**
+ * GET /resources/:id/dependencies — cuanto historial tiene el recurso.
+ *
+ * La pantalla lo consulta ANTES de ofrecer "Eliminar definitivamente": asi el
+ * usuario sabe de entrada si se puede o no, en vez de intentarlo y chocar.
+ */
+export async function dependencias(req, res) {
+  const r = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, name: true, user: { select: { email: true } } },
+  })
+  if (!r) throw errors.notFound('Recurso no encontrado')
+  const deps = await dependenciasDeRecurso(r.id)
+  res.json({
+    ...deps,
+    puedeEliminarse: deps.total === 0,
+    tieneUsuario: !!r.user,
+    usuarioEmail: r.user?.email ?? null,
+  })
+}
+
+/**
+ * DELETE /resources/:id — borrado DEFINITIVO, solo si no tiene historial.
+ *
+ * Sep-2026. Hasta ahora no habia forma de borrar un recurso: no existia la ruta,
+ * y el catalogo solo permitia desactivar. Los recursos sin usuario vinculado
+ * (5 en produccion, entre ellos duplicados de Ruby y Jeiny) quedaban fuera de
+ * todo alcance, porque el borrado de usuarios tampoco los tocaba.
+ *
+ * Con historial NO se borra, y no es una limitacion tecnica sino la decision
+ * correcta: las asignaciones y ausencias de semanas cerradas sostienen los
+ * informes de meses pasados. Se responde 409 con el detalle para que la pantalla
+ * explique por que y ofrezca desactivar, que es lo que preserva la historia.
+ *
+ * Si son dos cargas de la misma persona, lo que toca no es borrar sino fusionar
+ * (scripts/fusionar-recursos.js): mover el historial al recurso bueno y despues
+ * borrar la copia, que ya queda vacia.
+ */
+export async function remove(req, res) {
+  const recurso = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { user: { select: { id: true, email: true } } },
+  })
+  if (!recurso) throw errors.notFound('Recurso no encontrado')
+
+  const deps = await dependenciasDeRecurso(recurso.id)
+  if (deps.total > 0) {
+    throw errors.conflict(
+      `No se puede eliminar a ${recurso.name}: tiene historial en el sistema ` +
+      `(${deps.asignaciones} asignación(es), ${deps.ausencias} ausencia(s), ` +
+      `${deps.backoffice} tarea(s) de backoffice, ${deps.solicitudes} solicitud(es)). ` +
+      'Desactívalo en su lugar: deja de aparecer para programar y conserva los informes.',
+      { code: 'tiene_historial', ...deps },
+    )
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Un usuario vinculado se queda sin recurso; se desvincula explicitamente
+    // para no chocar contra la llave foranea.
+    if (recurso.user) {
+      await tx.user.update({ where: { id: recurso.user.id }, data: { resourceId: null } })
+    }
+    await tx.resource.delete({ where: { id: recurso.id } })
+  })
+
+  await registrarAuditoria({
+    userId: req.user.id,
+    action: 'eliminar_recurso',
+    entity: 'recursos',
+    entityId: recurso.id,
+    oldValue: {
+      name: recurso.name, type: recurso.type, active: recurso.active,
+      usuarioDesvinculado: recurso.user?.email ?? null,
+    },
+    reason: req.body?.reason ?? null,
+    ipAddress: getIp(req),
+  })
+
+  res.json({ ok: true, message: `${recurso.name} eliminado definitivamente` })
+}
+
 export async function create(req, res) {
-  const data = recursoSchema.parse(req.body)
+  const { allowDuplicateName, ...data } = recursoSchema.parse(req.body)
+
+  // Aviso de duplicado: se devuelve 409 con las coincidencias para que la
+  // pantalla pregunte "¿es otra persona?" y reenvíe con allowDuplicateName.
+  if (!allowDuplicateName) {
+    const iguales = await nombresParecidos(data.name)
+    if (iguales.length > 0) {
+      throw errors.conflict(
+        `Ya existe ${iguales.length === 1 ? 'un recurso' : `${iguales.length} recursos`} con el nombre "${data.name.trim()}". ` +
+        'Si es otra persona distinta, confirma para crearlo de todas formas.',
+        { code: 'nombre_duplicado', existentes: iguales },
+      )
+    }
+  }
+
   // RN-12: intervalo solo lo modifica supervisor (la ruta ya está protegida por rol)
   const r = await prisma.resource.create({
     data: {

@@ -21,7 +21,8 @@
     "verificar:params": "node scripts/verificar-params.cjs",
     "verificar:impacto": "node scripts/verificar-impacto-ausencias.js",
     "corregir:esquema": "node scripts/corregir-esquema-tope.js",
-    "reabrir:sede": "node scripts/reabrir-sede.js"
+    "reabrir:sede": "node scripts/reabrir-sede.js",
+    "fusionar:recursos": "node scripts/fusionar-recursos.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
