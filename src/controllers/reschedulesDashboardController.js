@@ -141,7 +141,8 @@ async function dataReprogramacionesDashboard(query = {}) {
   // El filtro `resource_type` de la consulta sigue sirviendo para afinar DENTRO
   // de ese conjunto, pero no puede ampliarlo: se intersecta. Pedir
   // `?resource_type=auxiliar` devuelve vacío en vez de saltarse la regla.
-  whereAus.resource = { is: { type: { in: tiposConAgendaPermitidos(tiposFiltro) } } }
+  const tiposPermitidos = tiposConAgendaPermitidos(tiposFiltro)
+  whereAus.resource = { is: { type: { in: tiposPermitidos } } }
 
   const ausencias = await prisma.absence.findMany({
     where: whereAus,
@@ -264,7 +265,7 @@ async function dataReprogramacionesDashboard(query = {}) {
 
   // ==== 8. Reposiciones (tab 3) ====
   const reposicionesData = await calcularReposiciones({
-    desde: desdeD, hasta: hastaD, sedeIdsFiltro, mapaSedes, meses,
+    desde: desdeD, hasta: hastaD, sedeIdsFiltro, mapaSedes, meses, tiposPermitidos,
   })
 
   // ==== 9. Por especialidad + cruce familia × especialidad (tab 4) ====
@@ -458,10 +459,25 @@ async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
 // ============================================================================
 // Reposiciones (mismo rango de fechas — se cuentan por solicitadoEn)
 // ============================================================================
-async function calcularReposiciones({ desde, hasta, sedeIdsFiltro, mapaSedes, meses }) {
+async function calcularReposiciones({ desde, hasta, sedeIdsFiltro, mapaSedes, meses, tiposPermitidos }) {
   const reps = await prisma.absenceMakeup.findMany({
     where: {
       requestedAt: { gte: desde, lte: fechaFinDelDia(hasta) },
+      // Oct-2026 · §8 · MISMO RECORTE QUE LAS AUSENCIAS.
+      //
+      // Faltaba aqui y por eso en Reprogramaciones seguia apareciendo una
+      // auxiliar: el filtro de "solo personal con agenda propia" se habia
+      // puesto en la consulta de AUSENCIAS, pero las REPOSICIONES se
+      // consultaban aparte y sin recortar.
+      //
+      // Contaminaba mas de lo que parece: el campo se llama `top_medicos`, y
+      // ademas entraban en los contadores de solicitadas/aprobadas/rechazadas,
+      // en el % de aprobacion, en el tiempo medio y —via `_raw`— en el SLA de
+      // reposicion que calcula calcularDatosFOCA.
+      //
+      // Se usa la misma lista ya calculada arriba, no una copia: si se vuelven
+      // a separar, se vuelven a desincronizar.
+      absence: { is: { resource: { is: { type: { in: tiposPermitidos } } } } },
     },
     include: {
       // Sep-2026: se agrega startDate para calcular SLA de reposicion (dias
