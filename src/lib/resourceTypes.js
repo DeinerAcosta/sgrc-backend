@@ -32,11 +32,164 @@ export const TIPOS_RECURSO = [
 export const TIPOS_RECURSO_SET = new Set(TIPOS_RECURSO)
 
 /**
- * Tipos cuyo esquema de pago es "por paciente": sin tope semanal contractual,
- * sin subespecialidad ni multi-consultorio. NO es la lista completa — es una
- * regla de negocio aparte, no derivable de la de arriba.
+ * Tipos cuyo esquema de pago es "por paciente": SIN TOPE SEMANAL contractual.
+ * Es una regla de negocio aparte, no derivable de la lista de tipos.
+ *
+ * Es solo el DEFECTO que propone el formulario al elegir el tipo. La regla real
+ * la marca el esquema de pago (ver normalizarEsquemaYTope).
+ *
+ * Oct-2026 · se agrega 'otorrino' por decision de Hector: el otorrino opera
+ * igual que el oftalmologo y tampoco tiene tope semanal. El comentario anterior
+ * decia "sin subespecialidad ni multi-consultorio", lo cual era falso incluso
+ * para el oftalmologo — es el tipo multi-consultorio por excelencia y el unico
+ * con subespecialidad. Esas dos cosas no tienen que ver con el esquema de pago.
  */
-export const TIPOS_POR_PACIENTE = new Set(['oftalmologo', 'fonoaudiologa'])
+export const TIPOS_POR_PACIENTE = new Set(['oftalmologo', 'fonoaudiologa', 'otorrino'])
+
+/**
+ * TIPOS CON AGENDA PROPIA DE PACIENTES
+ * ====================================
+ *
+ * Son los que tienen agenda propia, y coinciden uno a uno con las
+ * especialidades que tienen costo de reprogramacion cargado.
+ *
+ * Auxiliares y asesores de servicios quedan FUERA: no tienen agenda propia,
+ * acompanan la consulta de otro.
+ *
+ * Oct-2026 · vivia en services/absenceService.js. Se mueve aqui porque dejo de
+ * ser un detalle del calculo de impacto: ahora tambien decide quien necesita
+ * intervalo por paciente. absenceService la re-exporta, asi que todo lo que la
+ * importaba de alli sigue funcionando. Aqui ademas se puede probar sin BD,
+ * porque este archivo no tiene dependencias.
+ */
+export const TIPOS_QUE_IMPACTAN_PACIENTES = new Set([
+  'oftalmologo',
+  'anestesiologo',
+  'otorrino',
+  'tecnico',
+  'fonoaudiologa',
+  'optometra',
+])
+
+/**
+ * MULTI-CONSULTORIO — quien puede cubrir varias salas en paralelo
+ * ===============================================================
+ *
+ * El medico rota entre 2-3 consultorios y en cada uno hay una auxiliar
+ * manejando la sala. Activarlo cambia DOS cosas en el programador, y las dos
+ * van juntas o el modelo no cierra:
+ *
+ *   1. Se salta la validacion RN-08 de "el recurso ya esta ocupado en esa
+ *      franja": puede quedar asignado a dos consultorios a la misma hora.
+ *   2. Las horas del dia se cuentan por UNION DE INTERVALOS, no por suma.
+ *      Estar en dos salas de 8 a 12 cuenta 4 horas, no 8. Sin esto el tope
+ *      diario se reventaria en el segundo consultorio.
+ *
+ * Oct-2026 · se agrega 'otorrino'. Hasta ahora la regla estaba escrita a mano
+ * como `type === 'oftalmologo'` en tres lugares de userController y dos del
+ * frontend, asi que no habia forma de activarla para un otorrino desde la
+ * aplicacion — ni siquiera marcando la casilla, porque no se renderizaba.
+ *
+ * El otorrino opera igual: tiene agenda propia, la auxiliar le es OBLIGATORIA
+ * en consultorio (ESPECIALIDADES_EXIGEN_APOYO en lib/timeSlots.js) y hay 7
+ * consultorios de otorrino en produccion. El motor de asignaciones ya era
+ * agnostico al tipo: lee la bandera del recurso.
+ *
+ * OJO al agregar un tipo aqui: solo vale si de verdad rota entre salas. Si
+ * atiende una sala a la vez, la union de intervalos le dejaria registrar horas
+ * que no trabajo.
+ */
+export const TIPOS_MULTI_CONSULTORIO = new Set(['oftalmologo', 'otorrino'])
+
+/** @param {string} type @returns {boolean} */
+export function puedeMultiConsultorio(type) {
+  return TIPOS_MULTI_CONSULTORIO.has(type)
+}
+
+/**
+ * INTERVALO POR PACIENTE — quien necesita minutos por cita
+ * ========================================================
+ *
+ * `intervalo_minutos` es lo que divide la franja para calcular la capacidad de
+ * pacientes de una asignacion. Lo necesita exactamente quien tiene agenda
+ * propia, asi que es el MISMO conjunto que TIPOS_QUE_IMPACTAN_PACIENTES y no
+ * una lista aparte.
+ *
+ * Oct-2026 · existian como dos listas separadas y se desincronizaron:
+ * 'otorrino' estaba en la de impacto pero faltaba en la del formulario. El
+ * campo no se renderizaba para otorrino, pero el formulario seguia enviando el
+ * valor por defecto, asi que cada otorrino quedaba con 10 minutos por paciente
+ * que nadie eligio, nadie veia y nadie podia cambiar — y ese numero calculaba
+ * la capacidad de su agenda.
+ */
+export function requiereIntervaloPorPaciente(type) {
+  return TIPOS_QUE_IMPACTAN_PACIENTES.has(type)
+}
+
+/**
+ * RN-24 · QUIEN LIBERA A SU AUXILIAR AL FALTAR
+ * ============================================
+ *
+ * Si el medico falta, la auxiliar que lo acompana queda sin nada que hacer en
+ * ese consultorio: el sistema la libera para que se le pueda asignar apoyo en
+ * otra sala o una tarea de backoffice.
+ *
+ * Oct-2026 · se agrega 'otorrino', y es el caso mas claro de los tres: a los
+ * consultorios de otorrino la auxiliar les es OBLIGATORIA, asi que si el
+ * otorrino falta, la auxiliar quedaba en una sala sin medico y el sistema no la
+ * liberaba. Vivia como constante local en services/absenceService.js.
+ */
+export const TIPOS_QUE_LIBERAN_AUXILIAR = new Set(['oftalmologo', 'anestesiologo', 'otorrino'])
+
+/**
+ * QUIEN ROTA ENTRE SEDES Y NO TIENE COORDINADOR LIDER FIJO
+ * ========================================================
+ *
+ * Al crear el recurso no se le asigna coordinador lider: no pertenece a una
+ * sede, pasa por varias. El resto (auxiliares, tecnicos, fonoaudiologas,
+ * asesores) si queda con lider porque trabaja estable en su sede.
+ *
+ * Oct-2026 · se agrega 'otorrino': hay 7 consultorios repartidos y rota igual
+ * que el oftalmologo.
+ */
+export const TIPOS_SIN_COORDINADOR_LIDER = new Set(['oftalmologo', 'anestesiologo', 'otorrino'])
+
+/**
+ * QUIEN TIENE SUBESPECIALIDAD
+ * ===========================
+ *
+ * `specialty` es TEXTO LIBRE (VarChar 100), no una lista cerrada: el
+ * oftalmologo pone Retina / Cornea / Glaucoma, el otorrino pondria Otologia /
+ * Rinologia / Laringologia. Lo unico que cambia por tipo es el ejemplo que
+ * sugiere el formulario.
+ *
+ * Oct-2026 · se agrega 'otorrino'.
+ */
+export const TIPOS_CON_SUBESPECIALIDAD = new Set(['oftalmologo', 'otorrino'])
+
+/**
+ * ETIQUETAS LEGIBLES — fuente unica
+ * =================================
+ *
+ * Oct-2026 · habia dos copias de este mapa: una completa en jobs/alerts.js y
+ * una incompleta en controllers/authController.js, a la que le faltaban
+ * 'otorrino' y 'fonoaudiologa' Y ADEMAS tenia la clave 'assistant' en vez de
+ * 'auxiliar' — otra fuga del renombrado a ingles. El correo al supervisor decia
+ * "auxiliar" y "otorrino" en crudo en vez del nombre legible.
+ */
+export const TIPO_RECURSO_LABEL = {
+  oftalmologo:      'Oftalmólogo',
+  optometra:        'Optómetra',
+  anestesiologo:    'Anestesiólogo',
+  asesor_servicios: 'Asesor de servicios',
+  auxiliar:         'Auxiliar de enfermería',
+  tecnico:          'Técnico de diagnóstico',
+  fonoaudiologa:    'Fonoaudióloga',
+  otorrino:         'Otorrino',
+}
+
+/** Etiqueta legible de un tipo; cae al codigo si el tipo es desconocido. */
+export const etiquetaTipoRecurso = (type) => TIPO_RECURSO_LABEL[type] ?? type
 
 /** Esquemas de pago validos. Debe coincidir con el enum EsquemaPago del schema. */
 export const ESQUEMAS_PAGO = ['por_paciente', 'fijo', 'mixto']

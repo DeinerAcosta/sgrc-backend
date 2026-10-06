@@ -10,7 +10,7 @@ import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { notificarSupervisores } from '../services/notificationService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
-import { TIPOS_RECURSO } from '../lib/resourceTypes.js'
+import { TIPOS_RECURSO, etiquetaTipoRecurso} from '../lib/resourceTypes.js'
 
 /**
  * POST /auth/login
@@ -273,8 +273,19 @@ export async function registro(req, res) {
 
   // Avisar al supervisor (app + email) para que la revise
   const FRONT = process.env.FRONTEND_ORIGIN?.split(',')[0] ?? 'https://gestionderecursos.ttncompany.com'
-  const ROLES_LABEL = { resource: 'Recurso (personal asistencial/administrativo)', coordinador: 'Coordinador de sede', directivo: 'Directivo', supervisor: 'Supervisor' }
-  const TIPOS_LABEL = { oftalmologo: 'Oftalmólogo', anestesiologo: 'Anestesiólogo', optometra: 'Optómetra', assistant: 'Auxiliar de enfermería', tecnico: 'Técnico de diagnóstico', asesor_servicios: 'Asesor de servicios' }
+  // Oct-2026 · Dos fugas del renombrado a inglés, de la misma familia que el
+  // bug del listado de médicos (PROYECTOS-3445): las claves eran 'resource' y
+  // 'assistant', pero los valores que llegan son 'recurso' y 'auxiliar'. El
+  // correo al supervisor mostraba el código en crudo en vez del nombre legible.
+  // Y al mapa de tipos le faltaban 'otorrino' y 'fonoaudiologa'.
+  const ROLES_LABEL = {
+    recurso: 'Recurso (personal asistencial/administrativo)',
+    coordinador: 'Coordinador de sede',
+    directivo: 'Directivo',
+    supervisor: 'Supervisor',
+    gerencia: 'Gerencia',
+    reprogramador: 'Asesor de reprogramación',
+  }
   await notificarSupervisores({
     type: 'solicitud_registro',
     title: `Nueva solicitud de registro: ${titleCase(data.name)}`,
@@ -288,7 +299,7 @@ export async function registro(req, res) {
       ['Correo electrónico', data.email],
       ['Celular',           data.phone || '(no informado)'],
       ['Rol solicitado',    ROLES_LABEL[data.role] ?? data.role],
-      ...(data.resourceType ? [['Tipo de recurso', TIPOS_LABEL[data.resourceType] ?? data.resourceType]] : []),
+      ...(data.resourceType ? [['Tipo de recurso', etiquetaTipoRecurso(data.resourceType)]] : []),
       ...(data.specialty ? [['Subespecialidad', data.specialty]] : []),
       ['Fecha de solicitud', new Date().toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Bogota' })],
       ['Estado',            'Pendiente de revisión'],
