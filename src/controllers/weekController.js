@@ -5,6 +5,7 @@ import { differenceInDays, addDays, startOfWeek } from 'date-fns'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../services/absenceService.js'
 
 const crearSemanaSchema = z.object({
   startDate: z.string(), // YYYY-MM-DD
@@ -442,5 +443,164 @@ export async function copiar(req, res) {
     copied: copia.copied,
     skipped: copia.skipped,
     errors: copia.errors,
+  })
+}
+
+// ============================================================================
+// Oct-2026 · PROYECTOS-3398 §7 · QUIÉN FALTÓ LA SEMANA PASADA
+//
+// El coordinador abre la semana nueva, le da a "Copiar semana anterior" y
+// arranca a programar. El problema es que la copia replica la semana anterior
+// TAL COMO QUEDÓ PROGRAMADA, no como ocurrió: si un oftalmólogo faltó el
+// miércoles, la copia le vuelve a poner ese miércoles como si nada, y la
+// agenda que se cayó no se recupera nunca — nadie se acuerda de agregarla.
+//
+// Este endpoint es lo que alimenta el aviso: devuelve a quién hay que meter en
+// la programación que se está armando, con lo que el coordinador necesita para
+// decidir (qué días faltó, cuántos pacientes quedaron sin atender, si dijo que
+// repondría y en qué fecha).
+//
+// Dos decisiones que vale la pena dejar escritas:
+//
+//  · Solo personal con agenda propia de pacientes. A una auxiliar que faltó no
+//    hay agenda que reponerle, así que meterla en este aviso sería ruido sobre
+//    la pantalla donde el coordinador tiene que decidir rápido.
+//
+//  · "Pendiente" se calcula contra la semana DESTINO, no contra la ausencia.
+//    Un médico deja de estar pendiente cuando ya tiene horas programadas en la
+//    semana que se está armando. Así el aviso se vacía solo a medida que el
+//    coordinador trabaja, en vez de necesitar que alguien lo marque como visto.
+// ============================================================================
+export async function ausentesSemanaAnterior(req, res) {
+  const { site_id: sedeId } = req.query
+
+  const semana = await prisma.week.findUnique({ where: { id: req.params.id } })
+  if (!semana) throw errors.notFound('Semana no encontrada')
+
+  // La semana anterior se calcula por fecha y no por "la fila de antes en la
+  // tabla": las semanas se crean a demanda, así que pueden faltar huecos y el
+  // registro previo podría ser de hace un mes.
+  const finAnterior = addDays(semana.startDate, -1)
+  const inicioAnterior = addDays(semana.startDate, -7)
+
+  // Alcance por sede. El coordinador solo ve las suyas; si pide una que no es,
+  // se corta aquí igual que en el resto del módulo.
+  let sedesAlcance = null
+  if (req.user?.role === 'coordinador') {
+    const mias = await prisma.userSite.findMany({
+      where: { userId: req.user.id },
+      select: { siteId: true },
+    })
+    const misSedes = mias.map((m) => m.siteId)
+    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tienes acceso a esta sede')
+    sedesAlcance = sedeId ? [sedeId] : misSedes
+    if (sedesAlcance.length === 0) { res.json({ semana_anterior: null, ausentes: [] }); return }
+  } else if (sedeId) {
+    sedesAlcance = [sedeId]
+  }
+
+  const ausencias = await prisma.absence.findMany({
+    where: {
+      status: 'confirmada',
+      startDate: { lte: finAnterior },
+      endDate: { gte: inicioAnterior },
+      resource: { is: { type: { in: [...TIPOS_QUE_IMPACTAN_PACIENTES] } } },
+    },
+    include: {
+      resource: { select: { id: true, name: true, type: true, specialty: true } },
+      reasonRef: { select: { name: true } },
+      makeups: { where: { status: { in: ['solicitada', 'aprobada'] } }, select: { id: true, makeupDate: true, status: true } },
+    },
+    orderBy: { startDate: 'asc' },
+  })
+
+  if (ausencias.length === 0) {
+    res.json({
+      semana_anterior: { desde: inicioAnterior, hasta: finAnterior },
+      semana_destino: { id: semana.id, desde: semana.startDate, hasta: semana.endDate },
+      ausentes: [],
+    })
+    return
+  }
+
+  // ¿Qué tiene ya programado cada uno en la semana DESTINO y en qué sede?
+  // Una sola consulta para todos: el bucle por recurso haría N consultas en una
+  // pantalla que el coordinador abre varias veces al día.
+  const idsRecursos = [...new Set(ausencias.map((a) => a.resourceId))]
+  const asignacionesDestino = await prisma.assignment.findMany({
+    where: {
+      weekId: semana.id,
+      status: { not: 'cancelada' },
+      resourceId: { in: idsRecursos },
+      ...(sedesAlcance ? { room: { siteId: { in: sedesAlcance } } } : {}),
+    },
+    select: { resourceId: true, weekday: true, startTime: true, endTime: true },
+  })
+  const programadoEnDestino = new Map()
+  for (const a of asignacionesDestino) {
+    if (!programadoEnDestino.has(a.resourceId)) programadoEnDestino.set(a.resourceId, [])
+    programadoEnDestino.get(a.resourceId).push(a)
+  }
+
+  // Filtro por sede de la AUSENCIA: una ausencia no guarda sede, así que la
+  // sede se deduce de dónde estaba programada esa persona la semana pasada.
+  // Sin esto, el coordinador de Galapa vería los ausentes de Malambo.
+  let recursosDeLaSede = null
+  if (sedesAlcance) {
+    const semanaAnterior = await prisma.week.findFirst({
+      where: { startDate: { lte: finAnterior }, endDate: { gte: inicioAnterior } },
+      select: { id: true },
+    })
+    if (semanaAnterior) {
+      const asigsAnteriores = await prisma.assignment.findMany({
+        where: {
+          weekId: semanaAnterior.id,
+          resourceId: { in: idsRecursos },
+          room: { siteId: { in: sedesAlcance } },
+        },
+        select: { resourceId: true },
+      })
+      recursosDeLaSede = new Set(asigsAnteriores.map((a) => a.resourceId))
+    } else {
+      recursosDeLaSede = new Set()
+    }
+  }
+
+  const ausentes = ausencias
+    .filter((a) => !recursosDeLaSede || recursosDeLaSede.has(a.resourceId))
+    .map((a) => {
+      const yaProgramado = programadoEnDestino.get(a.resourceId) ?? []
+      const reposicionAbierta = a.makeups[0] ?? null
+      return {
+        absence_id: a.id,
+        resource: a.resource,
+        desde: a.startDate,
+        hasta: a.endDate,
+        es_parcial: a.isPartial,
+        motivo: a.reasonRef?.name ?? a.type,
+        pacientes_impactados: a.patientsAffected ?? 0,
+        accion_agenda: a.agendaAction,
+        desea_reponer: a.wantsMakeup,
+        // §4 · La fecha que el profesional propuso al registrar la ausencia. Es
+        // el dato que el coordinador necesita para saber en qué día de ESTA
+        // semana ubicarlo, y hasta ahora vivía dentro de un texto libre.
+        fecha_reposicion_propuesta: a.makeupDate,
+        observaciones_reposicion: a.makeupNotes,
+        reposicion_registrada: reposicionAbierta
+          ? { id: reposicionAbierta.id, fecha: reposicionAbierta.makeupDate, estado: reposicionAbierta.status }
+          : null,
+        // Lo que decide si sale resaltado: ya tiene horas en la semana que se
+        // está armando, o todavía no.
+        pendiente: yaProgramado.length === 0,
+        programado_en_destino: yaProgramado,
+      }
+    })
+
+  res.json({
+    semana_anterior: { desde: inicioAnterior, hasta: finAnterior },
+    semana_destino: { id: semana.id, desde: semana.startDate, hasta: semana.endDate },
+    ausentes,
+    // Atajo para que la grilla tiña celdas sin recorrer la lista en cada casilla.
+    recursos_pendientes: ausentes.filter((x) => x.pendiente).map((x) => x.resource.id),
   })
 }

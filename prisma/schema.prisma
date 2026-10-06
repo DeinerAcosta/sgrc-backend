@@ -22,6 +22,19 @@ enum Rol {
   // dashboards ejecutivos + administración + auditoría. Reservado para gerencia
   // y dirección operativa (Wendy Ruiz, Jorge Martínez).
   gerencia
+  // Reprogramador = quien reprograma las agendas que se caen por una ausencia.
+  // Hoy es UNA sola persona (Maria Duarte Parejo), que venía usando el rol
+  // gerencia y por eso veía 26 módulos de los que usa dos.
+  //
+  // Alcance deliberadamente estrecho: solo ausencias de PROFESIONALES (los
+  // tipos con agenda propia de pacientes) y el módulo de reprogramaciones. No
+  // ve auxiliares, técnicos ni asesores: esas ausencias no dejan agenda que
+  // reprogramar.
+  //
+  // El recorte se aplica en el SERVIDOR (absenceController.list), no en la
+  // pantalla. Filtrar solo en el navegador no es un permiso — basta con
+  // cambiar la URL para saltárselo.
+  reprogramador
 }
 
 enum TipoRecurso {
@@ -499,10 +512,25 @@ model Absence {
   // modalidad). Se imprime en el PDF v04 y el modal de reposición lo usa
   // como sugerencia inicial.
   makeupNotes           String?        @map("observaciones_reposicion") @db.Text
+  // Oct-2026 · PROYECTOS-3398 §4 · Fecha en que el profesional repondra. Antes
+  // iba dentro del texto libre de , asi que no se podia filtrar ni
+  // cruzar con la agenda para ver si ese dia esta libre.
+  makeupDate            DateTime?      @map("fecha_reposicion_propuesta") @db.Date
   // Sep-23-2026: se retiraron `proceso_afecta` y `tipo_novedad` (F-AA-126 v05).
   // El diligenciamiento se simplifico y esos dos bloques ya no se capturan en el
   // modal. La migracion 20260923180000_quitar_proceso_novedad borra las columnas.
   actionTaken           String?        @map("accion_tomada") @db.Text
+  // Oct-2026 · PROYECTOS-3398 §6.1 · Qué pasó con la AGENDA del profesional,
+  // como código y no como texto libre:
+  //   reprogramada | cubierta | perdida | sin_agenda
+  //
+  // `actionTaken` ya existía pero guarda la nota del coordinador, en prosa: no
+  // se puede contar cuántas agendas se reprogramaron ni cuántas se perdieron, y
+  // el ticket pide precisamente un reporte de la gestión realizada.
+  //
+  // Solo aplica a quien tiene agenda propia de pacientes. A un auxiliar no se
+  // le reprograma nada, así que ahí queda null.
+  agendaAction          String?        @map("accion_agenda") @db.VarChar(20)
   dailyImpact           Json?          @map("impacto_por_dia")
   rejectionReason       String?        @map("motivo_rechazo") @db.Text
   recordedByCoordinator Boolean        @default(false) @map("registrado_por_coordinador")

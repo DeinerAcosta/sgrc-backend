@@ -45,10 +45,15 @@ describe('calcularCapacidad — RN-11', () => {
     expect(calcularCapacidad('07:00', '13:00', 15, 'auxiliar')).toBe(20)
   })
 
-  it('usa 15 min como intervalo por defecto si no llega uno válido', () => {
-    expect(calcularCapacidad('08:00', '12:00', 0, 'oftalmologo')).toBe(16)
-    expect(calcularCapacidad('08:00', '12:00', null, 'oftalmologo')).toBe(16)
-    expect(calcularCapacidad('08:00', '12:00', undefined, 'oftalmologo')).toBe(16)
+  // Sep-2026 · El defecto pasó de 15 a 10 min: decisión de negocio, "todas las
+  // consultas duran 10 minutos" (commit 104e9e5). La prueba se quedó en 15 y
+  // nadie lo notó porque este archivo importa Prisma, y en un equipo sin el
+  // cliente generado el archivo entero no llega a ejecutarse.
+  // 08:00-12:00 = 240 min sin descuento de almuerzo; 240 / 10 = 24.
+  it('usa 10 min como intervalo por defecto si no llega uno válido', () => {
+    expect(calcularCapacidad('08:00', '12:00', 0, 'oftalmologo')).toBe(24)
+    expect(calcularCapacidad('08:00', '12:00', null, 'oftalmologo')).toBe(24)
+    expect(calcularCapacidad('08:00', '12:00', undefined, 'oftalmologo')).toBe(24)
   })
 
   it('devuelve 0 en franjas nulas o invertidas', () => {

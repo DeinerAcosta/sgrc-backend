@@ -9,9 +9,11 @@
  *
  * Para resetear todo: `npm run db:reset` (borra y vuelve a sembrar).
  */
+import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../src/services/absenceService.js'
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcrypt'
 import { startOfWeek, addDays, subWeeks, format } from 'date-fns'
+import { normalizarEsquemaYTope } from '../src/lib/resourceTypes.js'
 
 const prisma = new PrismaClient()
 
@@ -149,8 +151,22 @@ async function main() {
     { name: 'Tec. Mendez',  type: 'tecnico', slotMinutes: 30, payScheme: 'fijo' },
     { name: 'Tec. Carlos Díaz', type: 'tecnico', slotMinutes: 30, payScheme: 'fijo' },
   ]
+  // Oct-2026 · El seed pasa por normalizarEsquemaYTope() como cualquier otra
+  // escritura de recursos.
+  //
+  // Arriba hay seis recursos declarados con payScheme 'por_paciente' Y
+  // maxHoursPerWeek: 60 a la vez, que es justo el estado imposible que el
+  // invariante existe para evitar: quien cobra por paciente NO tiene tope
+  // semanal, y por eso el tope va en null. Mientras el seed escribiera esos
+  // datos crudos, cada `npm run prisma:seed` volvía a crear a mano el problema
+  // que dejó a 94 oftalmólogos midiéndose contra un tope que no les aplica —
+  // y lo creaba en la base de pruebas, que es donde uno confía en que no está.
+  //
+  // No se corrigen los literales de arriba: se normalizan aquí. Así el seed no
+  // puede desalinearse del invariante aunque alguien agregue otro recurso mal.
   const recursos = []
-  for (const r of recursosData) {
+  for (const crudo of recursosData) {
+    const r = { ...crudo, ...normalizarEsquemaYTope(crudo) }
     const existente = await prisma.resource.findFirst({ where: { name: r.name } })
     const rec = existente
       ? await prisma.resource.update({ where: { id: existente.id }, data: r })
@@ -188,6 +204,18 @@ async function main() {
       // el usuario existente y pisa nombre, teléfono, contraseña y sedes. Este email
       // era 'desarrollo@cofca.com' y sobreescribió la cuenta real del usuario.
       email: 'supervisor@cofca.co', name: 'Diana Martínez', role: 'supervisor',
+    },
+    {
+      // Sep-2026 · Faltaba GERENCIA, que en producción son 6 personas y es el
+      // rol de mayor alcance: ve todas las sedes y además puede editar una
+      // semana ya cerrada (ROLES_EDITAN_CERRADA en services/assignmentService).
+      // Sin un usuario así no se podía probar ese camino en local, y varios de
+      // sus fallos aparecieron directamente en producción.
+      //
+      // SIN SEDES a propósito: gerencia tiene alcance global (ROLES_GLOBALES en
+      // lib/siteScope.js). Vincularle una sede es justo lo que dejaba a Wendy
+      // encerrada viendo una sola, como si fuera coordinadora.
+      email: 'gerencia@cofca.co', name: 'Gerencia Demo', role: 'gerencia',
     },
   ]
   const usuariosCreados = {}
@@ -533,12 +561,28 @@ async function main() {
         impactoPorDia.push({ date: fecha, day: dia, pacientes: pacDia, cost: costoDia })
       }
 
+      // Sep-2026 · SOLO IMPACTAN PACIENTES LOS QUE TIENEN AGENDA PROPIA.
+      //
+      // El bucle de arriba es una COPIA del cálculo real (services/absenceService
+      // → calcularImpacto) que se quedó atrás: cuenta las asignaciones donde el
+      // recurso figura como `assistantId`, o sea las del médico al que acompaña.
+      // Así una auxiliar terminaba con 414 pacientes y 62 millones de costo de
+      // oportunidad, que son los del doctor, no suyos.
+      //
+      // La regla de negocio (decisión de Hector, sep-2026) es que solo impactan
+      // pacientes los tipos con agenda propia: oftalmólogo, anestesiólogo,
+      // otorrino, técnico, fonoaudióloga y optómetra. Auxiliares y asesores NO.
+      // Vive en TIPOS_QUE_IMPACTAN_PACIENTES y el backend ya la aplica; producción
+      // está limpia (0 pacientes atribuidos en 60 ausencias de ese personal).
+      // Era el seed el que seguía inventando cifras que no podían pasar en real.
+      const impacta = TIPOS_QUE_IMPACTAN_PACIENTES.has(a.resource.type)
+
       await prisma.absence.update({
         where: { id: ausencia.id },
         data: {
-          patientsAffected: pacImpactados,
-          opportunityCost: costoOport,
-          dailyImpact: impactoPorDia,
+          patientsAffected: impacta ? pacImpactados : 0,
+          opportunityCost: impacta ? costoOport : 0,
+          dailyImpact: impacta ? impactoPorDia : [],
         },
       })
 
@@ -592,7 +636,12 @@ async function main() {
   console.log('   - maria.lopez@cofca.co       (coordinador BQ1+BQ2)')
   console.log('   - pedro.rodriguez@cofca.co   (coordinador SM+CTG)')
   console.log('   - carlos.reyes@cofca.co      (directivo)')
-  console.log('   - desarrollo@cofca.com       (supervisor)')
+  // Sep-2026: este renglón decía 'desarrollo@cofca.com', que es el correo REAL
+  // de una persona y además ya no es el que se crea. Se cambió el email del
+  // seed para dejar de pisar esa cuenta, pero el mensaje se quedó atrás: quien
+  // seguía la instrucción intentaba entrar con un usuario que no existe.
+  console.log('   - supervisor@cofca.co        (supervisor — ve todo el sistema)')
+  console.log('   - gerencia@cofca.co          (gerencia — ve todo + edita semana cerrada)')
 }
 
 main()

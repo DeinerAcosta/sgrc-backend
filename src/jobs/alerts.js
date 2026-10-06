@@ -4,6 +4,7 @@ import { getSemanaActual } from '../lib/week.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
 import { fechaSolo } from '../lib/fechas.js'
 import { huellaResumen } from '../lib/resumenHuella.js'
+import { etiquetaTipoRecurso } from '../lib/resourceTypes.js'
 
 /**
  * RESUMEN DIARIO PARA EL COORDINADOR (RN-25)
@@ -53,11 +54,8 @@ import { huellaResumen } from '../lib/resumenHuella.js'
 
 const UMBRAL_PCT_DEFECTO = 60
 
-const TIPOS_LABEL = {
-  oftalmologo: 'Oftalmólogo', anestesiologo: 'Anestesiólogo', optometra: 'Optómetra',
-  auxiliar: 'Auxiliar de enfermería', tecnico: 'Técnico de diagnóstico',
-  asesor_servicios: 'Asesor de servicios', fonoaudiologa: 'Fonoaudióloga', otorrino: 'Otorrino',
-}
+// Oct-2026 · El mapa se mudó a lib/resourceTypes.js. Esta copia estaba
+// completa, pero la de authController.js no — y por eso había que unificarlas.
 
 /** Umbral de utilizacion por debajo del cual se avisa. Editable en Metas del sistema. */
 async function umbralPct() {
@@ -152,7 +150,7 @@ export async function jobResumenCoordinador() {
     const fila = {
       id: r.id,
       nombre: r.name,
-      tipo: TIPOS_LABEL[r.type] ?? r.type,
+      tipo: etiquetaTipoRecurso(r.type),
       horas: Math.round(horas * 10) / 10,
       tope: r.maxHoursPerWeek,
       pct,

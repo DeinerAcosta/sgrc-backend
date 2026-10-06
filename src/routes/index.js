@@ -136,6 +136,10 @@ r.post('/weeks', requireRol('coordinador', 'supervisor'), wrap(semn.create))
 r.put('/weeks/:id/close', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(semn.cerrar))
 r.get('/weeks/:id/status-by-site', wrap(semn.estadoPorSede))
 r.post('/weeks/:id/copy', requireRol('coordinador', 'supervisor'), wrap(semn.copiar))
+// Oct-2026 · PROYECTOS-3398 §7 · Quien falto la semana anterior y todavia no
+// tiene horas en la semana que se esta armando. Alimenta el aviso del
+// Programador y el resaltado de las casillas.
+r.get('/weeks/:id/previous-absences', wrap(semn.ausentesSemanaAnterior))
 
 // ============ ASIGNACIONES ============
 r.get('/assignments', wrap(asig.list))
@@ -151,19 +155,24 @@ r.post('/assignments/:id/copy-to-days', requireRol('coordinador', 'supervisor', 
 // ============ AUSENCIAS ============
 r.get('/absences', wrap(aus.list))
 r.post('/absences', wrap(aus.create))
-r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.confirmar))
-r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.rechazar))
-r.get('/absences/:id/faa126-form.pdf', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.formatoFAA126Pdf))
+r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.confirmar))
+r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.rechazar))
+// Oct-2026 · PROYECTOS-3398 §1 · El formato F-AA-126 como pantalla de solo
+// lectura, en lugar del PDF que se eliminó. Sin `requireRol`: lo abre
+// cualquier rol autenticado y el controlador recorta lo que cada uno alcanza
+// (el propio recurso solo la suya, el coordinador las de sus sedes, Duarte
+// solo las de quien tiene agenda de pacientes).
+r.get('/absences/:id/form', wrap(aus.formato))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
 // Lectura abierta (scoping por rol dentro del handler).
 // POST: rol=recurso (dueño), coord/sup/gerencia (a nombre del recurso).
 // Aprobar/rechazar/realizar: coord/sup/gerencia.
 r.get('/makeups',                     wrap(reposicion.list))
-r.post('/makeups',                    requireRol('recurso', 'coordinador', 'supervisor', 'gerencia'), wrap(reposicion.crear))
-r.put('/makeups/:id/approve',         requireRol('coordinador', 'supervisor', 'gerencia'), wrap(reposicion.aprobar))
-r.put('/makeups/:id/reject',        requireRol('coordinador', 'supervisor', 'gerencia'), wrap(reposicion.rechazar))
-r.put('/makeups/:id/done',       requireRol('coordinador', 'supervisor', 'gerencia'), wrap(reposicion.marcarRealizada))
+r.post('/makeups',                    requireRol('recurso', 'coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(reposicion.crear))
+r.put('/makeups/:id/approve',         requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(reposicion.aprobar))
+r.put('/makeups/:id/reject',        requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(reposicion.rechazar))
+r.put('/makeups/:id/done',       requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(reposicion.marcarRealizada))
 
 // ============ EJECUCIÓN ============
 r.get('/execution', requireRol('coordinador', 'supervisor', 'gerencia', 'directivo'), wrap(ejec.get))
@@ -195,7 +204,7 @@ r.get('/reports/week-closures', requireRol('directivo', 'supervisor'), wrap(inf.
 r.get('/reports/dashboard', requireRol('directivo', 'supervisor'), wrap(inf.dashboard))
 // Fase 4 (ago-2026): dashboard gerencial de reprogramaciones — endpoint agregado
 // para el nuevo tablero /app/reprogramaciones (gerencia+directivo+supervisor).
-r.get('/reports/reschedules-dashboard', requireRol('directivo', 'supervisor', 'gerencia'), wrap(reprogDash.reprogramacionesDashboard))
+r.get('/reports/reschedules-dashboard', requireRol('directivo', 'supervisor', 'gerencia', 'reprogramador'), wrap(reprogDash.reprogramacionesDashboard))
 r.get('/reports/comparison', requireRol('directivo', 'supervisor'), wrap(inf.comparativo))
 r.get('/reports/:type/export', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.exportar))
 

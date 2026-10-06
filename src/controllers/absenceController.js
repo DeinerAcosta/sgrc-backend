@@ -4,16 +4,13 @@ import { errors } from '../lib/errors.js'
 import { differenceInDays, parseISO } from 'date-fns'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notificarDirectivos, notificarDireccionMedica } from '../services/notificationService.js'
-import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/absenceService.js'
-import { generarFormatoFAA126 } from '../services/faa126FormService.js'
+import { calcularImpacto, liberarAuxiliaresSiAplica, TIPOS_QUE_IMPACTAN_PACIENTES } from '../services/absenceService.js'
 import { fechaSolo } from '../lib/fechas.js'
 
-// Tipos de recurso "médicos" que califican para el formato F-AA-126 (formato
-// oficial de continuidad del servicio para prestadores oftalmología-optometría).
-// Al confirmar una ausencia de estos tipos, el coord puede descargar el PDF.
-const TIPOS_RECURSO_MEDICOS_FAA126 = new Set([
-  'oftalmologo', 'optometra', 'anestesiologo', 'otorrino', 'fonoaudiologa',
-])
+// Sep-2026 · Se eliminó TIPOS_RECURSO_MEDICOS_FAA126: solo servía para decidir
+// quién podía descargar el PDF del formato, y ese PDF ya no existe. La lista
+// equivalente de "tipos que atienden pacientes" vive en lib/resourceTypes.js,
+// que es donde debe consultarse.
 
 const TIPOS = ['enfermedad', 'calamidad', 'academico', 'familiar', 'vacaciones', 'no_presentacion', 'licencia_remunerada', 'licencia_no_remunerada', 'otra']
 
@@ -77,11 +74,19 @@ const crearSchema = z.object({
   ),
   // Observaciones de la reposición propuesta (texto libre, opcional).
   makeupNotes: z.preprocess(emptyToUndef, z.string().max(2000).optional()),
+  // §4 · Fecha propuesta de reposicion. Opcional: el profesional puede no
+  // tenerla todavia y acordarla despues con su coordinador.
+  makeupDate: z.preprocess(emptyToUndef, z.string().optional()),
   recordedByCoordinator: z.boolean().optional(),
 })
 
+const ACCIONES_AGENDA = ['reprogramada', 'cubierta', 'perdida', 'sin_agenda']
+
 const confirmarSchema = z.object({
   notaCoordinador: z.string().optional(),
+  // Oct-2026 S 6.1 — que paso con la agenda. Codigo, no prosa: es lo que
+  // permite contar cuantas se reprogramaron y cuantas se perdieron.
+  actionTaken: z.preprocess(emptyToUndef, z.enum(ACCIONES_AGENDA).optional().nullable()),
 })
 
 const rechazarSchema = z.object({
@@ -124,6 +129,17 @@ export async function list(req, res) {
       // Sin sede_id explícita → restringe a TODAS sus sedes.
       where.resource = { is: recursoAlcanceCoord(misSedes, req.user.id) }
     }
+  } else if (rol === 'reprogramador') {
+    // Sep-2026 · Reprograma agendas caídas, así que solo le competen las
+    // ausencias de quien TIENE agenda propia de pacientes. Las de auxiliares,
+    // técnicos y asesores no dejan nada que reprogramar.
+    //
+    // ESTE RECORTE VA EN EL SERVIDOR A PROPÓSITO. La pantalla ya agrupa por
+    // tipo de personal, pero eso es organización, no permiso: bastaría con
+    // cambiar `?grupo=profesionales` por `?grupo=auxiliares` en la barra de
+    // direcciones para ver lo que no le toca. Aquí no hay URL que valga.
+    where.resource = { is: { type: { in: [...TIPOS_QUE_IMPACTAN_PACIENTES] } } }
+    sedeIdFinal = null   // trabaja sobre todas las sedes
   }
   // supervisor / gerencia / directivo: pasan sin restricción extra.
 
@@ -165,7 +181,19 @@ export async function list(req, res) {
   const list = await prisma.absence.findMany({
     where,
     include: {
-      resource: true,
+      // Oct-2026 · Antes era `resource: true`, que arrastraba `firma_url`: un
+      // MEDIUMTEXT con la firma escaneada en base64, hasta ~6 MB por recurso.
+      // Pedir el listado completo de ausencias bajaba una firma por fila, y la
+      // pantalla no dibuja ninguna. La firma solo se necesita al abrir el
+      // formato, y para eso está GET /absences/:id/form.
+      resource: {
+        select: {
+          id: true, name: true, type: true, specialty: true,
+          slotMinutes: true, payScheme: true, maxHoursPerWeek: true,
+          maxHoursPerDay: true, multiRoom: true, supportTypes: true,
+          leadCoordinatorId: true, active: true,
+        },
+      },
       reasonRef: { select: { id: true, code: true, name: true, family: true } },
     },
     orderBy: { reportedAt: 'desc' },
@@ -183,7 +211,7 @@ export async function list(req, res) {
 // El caller es responsable de la notificación al recurso.
 // ============================================================================
 async function procesarConfirmacionAusencia(tx, ausencia, opts) {
-  const { confirmadorId, notaCoordinador, ipAddress, auditReason: motivoAudit } = opts
+  const { confirmadorId, notaCoordinador, accionAgenda, ipAddress, auditReason: motivoAudit } = opts
   const { fechas, pacImpactados, opportunityCost: costoOportunidad, dailyImpact: impactoPorDia, quejasEstimadas } = await calcularImpacto(tx, ausencia)
   await liberarAuxiliaresSiAplica(tx, ausencia, fechas)
 
@@ -239,6 +267,7 @@ async function procesarConfirmacionAusencia(tx, ausencia, opts) {
       dailyImpact: impactoPorDia,
       complaintsLogged: quejasEstimadas,
       actionTaken: notaCoordinador,
+      agendaAction: accionAgenda ?? null,
       confirmedBy: confirmadorId,
       confirmedAt: new Date(),
     },
@@ -403,6 +432,9 @@ export async function create(req, res) {
       affectedCompany: data.affectedCompany ?? null,
       wantsMakeup: data.wantsMakeup ?? null,
       makeupNotes: data.wantsMakeup ? (data.makeupNotes?.trim() || null) : null,
+      // §4 · Fecha propuesta de reposición, como fecha y no dentro del texto
+      // libre: así se puede filtrar y cruzar con la agenda de ese día.
+      makeupDate: data.wantsMakeup && data.makeupDate ? parseISO(data.makeupDate) : null,
       // Umbral operativo (RN ago-2026): ausencia con más de 15 días de
       // anticipación se considera "programada" (hay margen para reprogramar
       // pacientes con menor impacto); ≤ 15 días es "imprevista". Antes era >= 2.
@@ -648,7 +680,7 @@ export async function create(req, res) {
  * Toda la lógica de cálculo vive en `services/ausenciaService.js`.
  */
 export async function confirmar(req, res) {
-  const { notaCoordinador } = confirmarSchema.parse(req.body)
+  const { notaCoordinador, actionTaken: accionAgenda } = confirmarSchema.parse(req.body)
   const resultado = await prisma.$transaction(async (tx) => {
     const ausencia = await tx.absence.findUnique({
       where: { id: req.params.id },
@@ -660,6 +692,7 @@ export async function confirmar(req, res) {
     return procesarConfirmacionAusencia(tx, ausencia, {
       confirmadorId: req.user.id,
       notaCoordinador,
+      accionAgenda,
       ipAddress: getIp(req),
     })
   })
@@ -711,58 +744,144 @@ export async function rechazar(req, res) {
   res.json(actualizada)
 }
 
-/**
- * GET /ausencias/:id/formato-faa126.pdf
- * Genera el formato oficial F-AA-126 en PDF para una ausencia CONFIRMADA de
- * un recurso médico (oftalmólogo/optómetra/anestesiólogo/otorrino/fonoaudiologa).
- * Requiere rol coord/supervisor/gerencia.
- */
-export async function formatoFAA126Pdf(req, res) {
+// Sep-2026 · Se eliminó `formatoFAA126Pdf`, que generaba el formato oficial
+// en PDF. Decisión de negocio: el PDF sale del sistema por completo y el
+// formato pasa a verse como formulario de solo lectura dentro del detalle
+// de la ausencia (PROYECTOS-3398 §1). Con él se fue services/faa126FormService.js.
+
+// ============================================================================
+// Oct-2026 · PROYECTOS-3398 §1 · FORMATO DE SOLO LECTURA
+//
+// Lo que antes se bajaba en PDF ahora se consulta. El PDF imitaba una hoja que
+// alguien iba a imprimir, firmar y archivar: traía 12 filas de meses vacías
+// para rellenar a mano y repetía datos que el sistema ya tenía guardados. Al
+// salir del sistema, lo que queda es el formato como PANTALLA: los mismos
+// bloques del F-AA-126, con el dato real, sin casillas que llenar.
+//
+// Devuelve el formato armado desde el servidor y no desde la lista, por tres
+// razones concretas:
+//   1. La firma escaneada pesa hasta 6 MB en base64 (`firma_url` es MEDIUMTEXT).
+//      Ir en cada fila de la lista hacía que pedir 131 ausencias arrastrara
+//      todas las firmas. Aquí viaja una sola vez, al abrir el formato.
+//   2. El "Vo Bo" es el nombre de quien confirmó, que vive en `usuarios` y no
+//      en la ausencia: resolverlo en el cliente obligaba a una segunda consulta.
+//   3. El alcance por rol se revisa aquí. Con la lista alcanzaba el filtro del
+//      `where`; con un id en la URL hay que comprobar explícitamente que esa
+//      ausencia cae dentro de lo que el rol puede ver.
+// ============================================================================
+
+const EMPRESA_LABEL = { foca: 'FOCA', viu: 'VIU', ambas: 'AMBAS' }
+
+export async function formato(req, res) {
   const ausencia = await prisma.absence.findUnique({
     where: { id: req.params.id },
-    // Fase 5 · v04: incluimos motivoRef para pintar el checkbox del motivo y
-    // hacemos lookup del confirmador (Ausencia.confirmadoPor es solo String,
-    // sin relación FK — resolvemos el nombre manualmente).
-    include: { resource: true, reasonRef: true },
+    include: {
+      resource: {
+        select: {
+          id: true, name: true, type: true, specialty: true, signatureUrl: true,
+          leadCoordinatorId: true,
+          user: { select: { email: true, sites: { select: { siteId: true } } } },
+        },
+      },
+      reasonRef: { select: { code: true, name: true, family: true } },
+    },
   })
   if (!ausencia) throw errors.notFound('Ausencia no encontrada')
-  if (ausencia.status !== 'confirmada') {
-    throw errors.badRequest('El formato F-AA-126 solo se emite para ausencias CONFIRMADAS')
-  }
-  if (!TIPOS_RECURSO_MEDICOS_FAA126.has(ausencia.resource?.type)) {
-    throw errors.badRequest(
-      `El formato F-AA-126 solo aplica a médicos. Este recurso es "${ausencia.resource?.type}".`
-    )
-  }
-  // Fase 5 verify: IDOR — coord solo puede descargar PDFs de recursos que
-  // trabajan en alguna de SUS sedes. supervisor/gerencia pasan derecho (scope
-  // global). Datos sensibles del profesional (motivo/salud) → Ley 1581 Colombia.
-  if (req.user?.role === 'coordinador') {
-    const misSedes = req.user.sites ?? []
-    const asigs = await prisma.assignment.findMany({
-      where: {
-        OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
-        status: { not: 'cancelada' },
-      },
-      include: { room: { select: { siteId: true } } },
-    })
-    const sedesRecurso = [...new Set(asigs.map((a) => a.room.siteId))]
-    const overlap = sedesRecurso.some((s) => misSedes.includes(s))
-    if (!overlap) throw errors.forbidden('No tienes acceso a esta ausencia')
-  }
 
-  // Vo Bo: nombre del usuario que confirmó la ausencia.
-  let confirmador = null
-  if (ausencia.confirmedBy) {
-    confirmador = await prisma.user.findUnique({
-      where: { id: ausencia.confirmedBy },
-      select: { name: true, role: true },
+  // ---- Alcance por rol. Mismas reglas que list(), evaluadas sobre un registro.
+  const rol = req.user?.role
+  if (rol === 'recurso') {
+    if (ausencia.resourceId !== req.user.resourceId) throw errors.forbidden('No tienes acceso a esta ausencia')
+  } else if (rol === 'coordinador') {
+    const misSedes = req.user.sites ?? []
+    const sedesDelRecurso = (ausencia.resource.user?.sites ?? []).map((s) => s.siteId)
+    const esSuya = ausencia.resource.leadCoordinatorId === req.user.id
+      || sedesDelRecurso.some((s) => misSedes.includes(s))
+    // Fallback de list(): el recurso puede no tener User ni líder y aun así
+    // estar programado en una sede del coordinador.
+    const programadoEnSusSedes = esSuya ? false : await prisma.assignment.findFirst({
+      where: {
+        room: { siteId: { in: misSedes } },
+        OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
+      },
+      select: { id: true },
     })
+    if (!esSuya && !programadoEnSusSedes) throw errors.forbidden('No tienes acceso a esta ausencia')
+  } else if (rol === 'reprogramador') {
+    if (!TIPOS_QUE_IMPACTAN_PACIENTES.has(ausencia.resource.type)) {
+      throw errors.forbidden('No tienes acceso a esta ausencia')
+    }
   }
-  const pdf = await generarFormatoFAA126({ ...ausencia, confirmador })
-  const nombreSafe = (ausencia.resource?.name ?? 'profesional')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-  res.setHeader('Content-Type', 'application/pdf')
-  res.setHeader('Content-Disposition', `attachment; filename="F-AA-126_${nombreSafe}_${ausencia.id.slice(0,8)}.pdf"`)
-  res.send(pdf)
+  // supervisor / gerencia / directivo: ven todo.
+
+  // ---- Nombres de quien diligenció y quien dio el Vo Bo.
+  const idsUsuarios = [ausencia.reportedBy, ausencia.confirmedBy].filter(Boolean)
+  const usuarios = idsUsuarios.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: idsUsuarios } }, select: { id: true, name: true, role: true } })
+    : []
+  const porId = Object.fromEntries(usuarios.map((u) => [u.id, u]))
+
+  res.json({
+    codigo: 'F-AA-126',
+    version: '05',
+    // El encabezado del formato oficial cambia de razón social según la empresa
+    // a la que se cargue la ausencia. 'ambas' y los registros viejos sin
+    // empresa usan el de la clínica, igual que hacía el PDF.
+    empresa: ausencia.affectedCompany ?? null,
+    empresa_label: EMPRESA_LABEL[ausencia.affectedCompany] ?? null,
+    razon_social: ausencia.affectedCompany === 'foca'
+      ? 'FUNDACIÓN OFTALMOLÓGICA DEL CARIBE'
+      : 'CLÍNICA OFTALMOLÓGICA DEL CARIBE',
+    subtitulo: 'CONTINUIDAD DEL SERVICIO CON LOS PRESTADORES DE SERVICIO',
+    especialidades: 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA',
+
+    ausencia: {
+      id: ausencia.id,
+      estado: ausencia.status,
+      tipo: ausencia.type,
+      motivo_catalogo: ausencia.reasonRef?.name ?? null,
+      motivo_texto: ausencia.reason ?? null,
+      fecha_salida: fechaSolo(ausencia.startDate),
+      fecha_entrada: fechaSolo(ausencia.endDate),
+      es_parcial: ausencia.isPartial,
+      hora_inicio: ausencia.absenceStartTime,
+      hora_fin: ausencia.absenceEndTime,
+      ciudad_regional: ausencia.regionalCity,
+      es_programada: ausencia.isPlanned,
+      anticipacion_dias: ausencia.noticeDays,
+      desea_reponer: ausencia.wantsMakeup,
+      fecha_reposicion_propuesta: ausencia.makeupDate ? fechaSolo(ausencia.makeupDate) : null,
+      observaciones_reposicion: ausencia.makeupNotes,
+      accion_agenda: ausencia.agendaAction,
+      accion_tomada: ausencia.actionTaken,
+      motivo_rechazo: ausencia.rejectionReason,
+      // El PDF dejaba 12 filas de meses en blanco "para llenar a mano". Eso lo
+      // reemplaza el desglose que el sistema ya calcula al confirmar.
+      pacientes_impactados: ausencia.patientsAffected,
+      impacto_por_dia: ausencia.dailyImpact ?? null,
+    },
+
+    profesional: {
+      nombre: ausencia.resource.name,
+      tipo: ausencia.resource.type,
+      especialidad: ausencia.resource.specialty,
+      correo: ausencia.resource.user?.email ?? null,
+      firma_url: ausencia.resource.signatureUrl ?? null,
+    },
+
+    diligenciamiento: {
+      // `reportedAt` es un timestamp real, no una fecha suelta: va en hora de
+      // Bogotá y no en UTC (lib/fechas.js).
+      fecha: ausencia.reportedAt,
+      por: porId[ausencia.reportedBy]?.name ?? null,
+      rol: porId[ausencia.reportedBy]?.role ?? null,
+      registrado_por_coordinador: ausencia.recordedByCoordinator,
+    },
+
+    vo_bo: ausencia.confirmedBy
+      ? { nombre: porId[ausencia.confirmedBy]?.name ?? null, fecha: ausencia.confirmedAt }
+      : null,
+
+    nota: 'Las ausencias deben ser informadas con 20 días de anticipación.',
+  })
 }

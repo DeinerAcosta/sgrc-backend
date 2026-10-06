@@ -5,12 +5,13 @@
 //   { rango, kpis, por_mes, por_familia, top_motivos, por_recurso,
 //     reposiciones: { …, por_mes, top_medicos }, por_especialidad, cruce_familia_especialidad }
 //
-// Filtros: ?desde=YYYY-MM-DD & ?hasta=YYYY-MM-DD & ?sede_id=csv & ?familia=csv & ?tipo_recurso=csv
+// Filtros: ?desde=YYYY-MM-DD & ?hasta=YYYY-MM-DD & ?site_id=csv & ?family=csv & ?resource_type=csv
 // Rango default: últimos 3 meses. Se puede sobreescribir.
 
 import { prisma } from '../lib/prisma.js'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
+import { tiposConAgendaPermitidos } from '../lib/resourceTypes.js'
 
 const TTL_REPROG = 60_000  // 60s — dashboard ejecutivo, no necesita tiempo real
 
@@ -129,10 +130,18 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (familiasFiltro.includes('ausencia_profesional')) orFam.push({ reasonId: null })
     whereAus.OR = orFam
   }
-  // Filtro por tipo de recurso
-  if (tiposFiltro) {
-    whereAus.resource = { is: { type: { in: tiposFiltro } } }
-  }
+  // Oct-2026 · PROYECTOS-3398 §8 · SOLO PERSONAL CON AGENDA PROPIA.
+  //
+  // El tablero mezclaba a todo el mundo: las ausencias de auxiliares y asesores
+  // entraban en "Reprogramación de agendas médicas" aunque ahí no haya agenda
+  // que reprogramar. Una auxiliar que falta no deja pacientes sin atender —
+  // eso lo deja el médico al que acompaña, y contarlo en los dos infla el
+  // tablero con el mismo daño dos veces.
+  //
+  // El filtro `resource_type` de la consulta sigue sirviendo para afinar DENTRO
+  // de ese conjunto, pero no puede ampliarlo: se intersecta. Pedir
+  // `?resource_type=auxiliar` devuelve vacío en vez de saltarse la regla.
+  whereAus.resource = { is: { type: { in: tiposConAgendaPermitidos(tiposFiltro) } } }
 
   const ausencias = await prisma.absence.findMany({
     where: whereAus,

@@ -1,5 +1,6 @@
 import { format } from 'date-fns'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
+import { TIPOS_QUE_IMPACTAN_PACIENTES, TIPOS_QUE_LIBERAN_AUXILIAR} from '../lib/resourceTypes.js'
 
 /**
  * Lógica de cálculo de impacto de ausencias y liberación de auxiliares.
@@ -8,37 +9,17 @@ import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
  * Reglas implementadas:
  *  - RN-18: impacto día a día (pacientes y costo de oportunidad)
  *  - RN-19: factor parcial cuando la ausencia es de horas y no del día completo
- *  - RN-24: liberación automática de auxiliar cuando el ausente es oftalmólogo/anestesiólogo
+ *  - RN-24: liberación automática de auxiliar cuando falta quien la tiene asignada
+ *    (oftalmólogo, anestesiólogo, otorrino — ver TIPOS_QUE_LIBERAN_AUXILIAR)
  */
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
-const TIPOS_QUE_LIBERAN_AUXILIAR = ['oftalmologo', 'anestesiologo']
+// Oct-2026 · La lista se mudo a lib/resourceTypes.js y hoy incluye otorrino.
 
-/**
- * Tipos de recurso cuya ausencia AFECTA PACIENTES.
- *
- * Sep-2026 · decisión de dirección. Son los que tienen agenda propia, y
- * coinciden uno a uno con las especialidades que tienen costo de reprogramación
- * cargado: oftalmología, anestesiología, otorrinolaringología, métodos
- * diagnósticos (técnico), fonoaudiología y optometría.
- *
- * Auxiliares y asesores de servicios quedan FUERA: no tienen agenda propia,
- * acompañan la consulta de otro. Contarlos imputaba al auxiliar todos los
- * pacientes del médico al que asiste —como si se hubiera perdido la agenda
- * entera— y además los contaba dos veces cuando el médico también faltaba.
- * Eran el 75% del impacto reportado en producción.
- *
- * Su ausencia se sigue registrando y sigue saliendo en los informes; lo que
- * queda en cero es `pacientes_impactados` y `costo_oportunidad`.
- */
-export const TIPOS_QUE_IMPACTAN_PACIENTES = new Set([
-  'oftalmologo',
-  'anestesiologo',
-  'otorrino',
-  'tecnico',
-  'fonoaudiologa',
-  'optometra',
-])
+// Oct-2026 · La lista se mudo a lib/resourceTypes.js, donde ya vivian las otras
+// listas de tipos y donde no hay dependencias que impidan probarla. Se re-exporta
+// porque varios controladores la importan desde aqui.
+export { TIPOS_QUE_IMPACTAN_PACIENTES } from '../lib/resourceTypes.js'
 
 const hhmmAMin = (hhmm) => {
   const [h, m] = hhmm.split(':').map(Number)
@@ -220,7 +201,7 @@ export async function calcularImpacto(tx, ausencia) {
  * No-op para otros tipos de recurso.
  */
 export async function liberarAuxiliaresSiAplica(tx, ausencia, fechas) {
-  if (!TIPOS_QUE_LIBERAN_AUXILIAR.includes(ausencia.resource.type)) {
+  if (!TIPOS_QUE_LIBERAN_AUXILIAR.has(ausencia.resource.type)) {
     return { liberadas: 0 }
   }
 

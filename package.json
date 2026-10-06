@@ -23,7 +23,9 @@
     "corregir:esquema": "node scripts/corregir-esquema-tope.js",
     "reabrir:sede": "node scripts/reabrir-sede.js",
     "fusionar:recursos": "node scripts/fusionar-recursos.js",
-    "crear:usuario-recurso": "node scripts/crear-usuario-de-recurso.js"
+    "crear:usuario-recurso": "node scripts/crear-usuario-de-recurso.js",
+    "limpiar:pendientes": "node scripts/limpiar-ausencias-pendientes.js",
+    "otorrino:oftalmologo": "node scripts/otorrino-como-oftalmologo.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
