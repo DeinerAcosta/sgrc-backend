@@ -223,6 +223,45 @@ export function requiereIntervaloPorPaciente(type) {
  * @param {string[]|null} tiposPedidos Los tipos del query, o null si no vino.
  * @returns {string[]} Los tipos permitidos. Vacio = no devolver nada.
  */
+/**
+ * MEDICOS — mas estrecho que "tiene agenda propia de pacientes"
+ * ==============================================================
+ *
+ * Oct-2026 · Hector, sobre el tablero: "¿por que sale un tecnico en
+ * reprogramaciones?". Tenia razon, y el error era mio de concepto: yo habia
+ * usado TIPOS_QUE_IMPACTAN_PACIENTES para el tablero, y son DOS COSAS
+ * DISTINTAS que conviene no volver a mezclar.
+ *
+ *   TIPOS_QUE_IMPACTAN_PACIENTES — tiene agenda propia de pacientes.
+ *     Incluye tecnico, optometra y fonoaudiologa, y debe seguir incluyendolos:
+ *     un tecnico de diagnostico que falta SI deja pacientes sin atender, SI
+ *     necesita intervalo por paciente y SI hay que reprogramarlo en la semana
+ *     siguiente. Recortar esa lista subreportaria el impacto real.
+ *
+ *   TIPOS_MEDICOS — es medico.
+ *     Es lo que pide el tablero, que se llama "Reprogramacion de agendas
+ *     MEDICAS", tiene una pestana "Medicos" y un KPI "Medicos involucrados".
+ *     Un tecnico no es medico, asi que no va ahi aunque tenga agenda.
+ *
+ * Optometra y fonoaudiologa quedan FUERA por el mismo criterio que el tecnico:
+ * tienen agenda propia pero no son medicos. Si direccion los quiere adentro,
+ * se agregan aqui y las pruebas avisan del cambio.
+ */
+export const TIPOS_MEDICOS = new Set(['oftalmologo', 'anestesiologo', 'otorrino'])
+
+/**
+ * Misma regla de interseccion que tiposConAgendaPermitidos, pero sobre el
+ * conjunto de medicos: el parametro `?resource_type=` afina DENTRO y nunca
+ * amplia. Pedir `?resource_type=tecnico` devuelve vacio.
+ *
+ * @param {string[]|null} tiposPedidos
+ * @returns {string[]} vacio = no devolver nada
+ */
+export function tiposMedicosPermitidos(tiposPedidos) {
+  if (!tiposPedidos || tiposPedidos.length === 0) return [...TIPOS_MEDICOS]
+  return tiposPedidos.filter((t) => TIPOS_MEDICOS.has(t))
+}
+
 export function tiposConAgendaPermitidos(tiposPedidos) {
   if (!tiposPedidos || tiposPedidos.length === 0) return [...TIPOS_QUE_IMPACTAN_PACIENTES]
   return tiposPedidos.filter((t) => TIPOS_QUE_IMPACTAN_PACIENTES.has(t))

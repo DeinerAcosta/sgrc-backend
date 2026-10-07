@@ -15,6 +15,8 @@ import {
   TIPOS_CON_SUBESPECIALIDAD,
   TIPO_RECURSO_LABEL,
   etiquetaTipoRecurso,
+  TIPOS_MEDICOS,
+  tiposMedicosPermitidos,
 } from './resourceTypes.js'
 
 // El invariante que estas pruebas protegen:
@@ -329,5 +331,102 @@ describe('otorrino es igual al oftalmologo en TODAS las reglas por tipo', () => 
     for (const t of TIPOS_RECURSO) {
       expect(TIPO_RECURSO_LABEL[t], `falta la etiqueta de ${t}`).toBeTruthy()
     }
+  })
+})
+
+// ============================================================================
+// MEDICOS vs TIENE AGENDA PROPIA — dos conjuntos distintos a proposito
+//
+// Oct-2026 · Hector reporto un tecnico en el tablero de Reprogramaciones. El
+// error era de concepto: se habia usado TIPOS_QUE_IMPACTAN_PACIENTES para un
+// tablero que se llama "Reprogramacion de agendas MEDICAS".
+//
+// Estas pruebas fijan que los dos conjuntos NO se vuelvan a confundir, y sobre
+// todo que al recortar el tablero no se recorte por error la otra lista: un
+// tecnico que falta sigue dejando pacientes sin atender.
+// ============================================================================
+describe('TIPOS_MEDICOS', () => {
+  it('son los tres tipos medicos', () => {
+    expect([...TIPOS_MEDICOS].sort()).toEqual(['anestesiologo', 'oftalmologo', 'otorrino'])
+  })
+
+  it('tecnico, optometra y fonoaudiologa NO son medicos', () => {
+    // Tienen agenda propia, pero no son medicos. Es justo la distincion que
+    // faltaba y que puso a una tecnica en "TOP 3 MEDICOS".
+    for (const t of ['tecnico', 'optometra', 'fonoaudiologa']) {
+      expect(TIPOS_MEDICOS.has(t)).toBe(false)
+    }
+  })
+
+  it('auxiliares y asesores tampoco', () => {
+    for (const t of ['auxiliar', 'asesor_servicios']) {
+      expect(TIPOS_MEDICOS.has(t)).toBe(false)
+    }
+  })
+
+  it('todo medico tiene agenda propia de pacientes', () => {
+    // La relacion es de subconjunto y tiene que seguir siendolo: no puede
+    // haber un medico al que no se le calcule impacto.
+    for (const t of TIPOS_MEDICOS) {
+      expect(TIPOS_QUE_IMPACTAN_PACIENTES.has(t)).toBe(true)
+    }
+  })
+
+  it('pero NO al reves: hay quien tiene agenda y no es medico', () => {
+    // Si algun dia los dos conjuntos coinciden, alguien recorto la lista
+    // equivocada y el impacto de tecnicos y optometras dejo de contarse.
+    const conAgendaSinSerMedico = [...TIPOS_QUE_IMPACTAN_PACIENTES].filter((t) => !TIPOS_MEDICOS.has(t))
+    expect(conAgendaSinSerMedico.sort()).toEqual(['fonoaudiologa', 'optometra', 'tecnico'])
+  })
+
+  it('todos son tipos de recurso validos', () => {
+    for (const t of TIPOS_MEDICOS) expect(TIPOS_RECURSO).toContain(t)
+  })
+})
+
+describe('tiposMedicosPermitidos — intersecta, nunca amplia', () => {
+  it('sin filtro devuelve los tres medicos', () => {
+    expect(new Set(tiposMedicosPermitidos(null))).toEqual(TIPOS_MEDICOS)
+    expect(new Set(tiposMedicosPermitidos([]))).toEqual(TIPOS_MEDICOS)
+  })
+
+  it('un medico si afina', () => {
+    expect(tiposMedicosPermitidos(['oftalmologo'])).toEqual(['oftalmologo'])
+  })
+
+  it('pedir un tecnico devuelve vacio, no se cuela', () => {
+    expect(tiposMedicosPermitidos(['tecnico'])).toEqual([])
+    expect(tiposMedicosPermitidos(['optometra'])).toEqual([])
+    expect(tiposMedicosPermitidos(['auxiliar'])).toEqual([])
+  })
+
+  it('mezclar permitido y prohibido descarta solo el prohibido', () => {
+    expect(tiposMedicosPermitidos(['tecnico', 'otorrino'])).toEqual(['otorrino'])
+  })
+
+  it('recorre el enum completo', () => {
+    for (const tipo of TIPOS_RECURSO) {
+      expect(tiposMedicosPermitidos([tipo])).toEqual(TIPOS_MEDICOS.has(tipo) ? [tipo] : [])
+    }
+  })
+})
+
+describe('lo que NO se recorto, y no debe recortarse', () => {
+  it('un tecnico SIGUE teniendo agenda propia: su ausencia impacta pacientes', () => {
+    expect(TIPOS_QUE_IMPACTAN_PACIENTES.has('tecnico')).toBe(true)
+  })
+
+  it('un tecnico SIGUE necesitando intervalo por paciente', () => {
+    // El campo del formulario depende de tener agenda, no de ser medico.
+    expect(requiereIntervaloPorPaciente('tecnico')).toBe(true)
+    expect(requiereIntervaloPorPaciente('optometra')).toBe(true)
+    expect(requiereIntervaloPorPaciente('fonoaudiologa')).toBe(true)
+  })
+
+  it('tiposConAgendaPermitidos sigue siendo el conjunto ancho', () => {
+    // Lo usan el rol de reprogramacion, el aviso del Programador (§7) y el
+    // calculo de impacto. Recortarlo aqui habria sido el error gordo.
+    expect(new Set(tiposConAgendaPermitidos(null))).toEqual(TIPOS_QUE_IMPACTAN_PACIENTES)
+    expect(tiposConAgendaPermitidos(['tecnico'])).toEqual(['tecnico'])
   })
 })

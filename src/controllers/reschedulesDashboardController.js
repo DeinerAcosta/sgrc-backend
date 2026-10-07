@@ -11,7 +11,7 @@
 import { prisma } from '../lib/prisma.js'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
-import { tiposConAgendaPermitidos } from '../lib/resourceTypes.js'
+import { tiposMedicosPermitidos } from '../lib/resourceTypes.js'
 
 const TTL_REPROG = 60_000  // 60s — dashboard ejecutivo, no necesita tiempo real
 
@@ -130,18 +130,22 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (familiasFiltro.includes('ausencia_profesional')) orFam.push({ reasonId: null })
     whereAus.OR = orFam
   }
-  // Oct-2026 · PROYECTOS-3398 §8 · SOLO PERSONAL CON AGENDA PROPIA.
+  // Oct-2026 · PROYECTOS-3398 §8 · SOLO MEDICOS.
   //
-  // El tablero mezclaba a todo el mundo: las ausencias de auxiliares y asesores
-  // entraban en "Reprogramación de agendas médicas" aunque ahí no haya agenda
-  // que reprogramar. Una auxiliar que falta no deja pacientes sin atender —
-  // eso lo deja el médico al que acompaña, y contarlo en los dos infla el
-  // tablero con el mismo daño dos veces.
+  // El tablero mezclaba a todo el mundo. Primero se recortó a quien tiene
+  // agenda propia de pacientes, lo que sacó a auxiliares y asesores — pero
+  // dejó dentro a técnicos, optómetras y fonoaudiólogas, que tienen agenda
+  // pero NO son médicos. La pantalla se llama "Reprogramación de agendas
+  // MÉDICAS", tiene una pestaña "Médicos" y un KPI "Médicos involucrados",
+  // así que el criterio correcto es TIPOS_MEDICOS y no "tiene agenda".
+  //
+  // Ojo: esa otra lista NO se recorta. Un técnico que falta sí deja pacientes
+  // sin atender y sí hay que reprogramarlo; lo que no es, es un médico.
   //
   // El filtro `resource_type` de la consulta sigue sirviendo para afinar DENTRO
   // de ese conjunto, pero no puede ampliarlo: se intersecta. Pedir
   // `?resource_type=auxiliar` devuelve vacío en vez de saltarse la regla.
-  const tiposPermitidos = tiposConAgendaPermitidos(tiposFiltro)
+  const tiposPermitidos = tiposMedicosPermitidos(tiposFiltro)
   whereAus.resource = { is: { type: { in: tiposPermitidos } } }
 
   const ausencias = await prisma.absence.findMany({
