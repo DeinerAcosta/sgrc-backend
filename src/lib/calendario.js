@@ -99,6 +99,60 @@ export function esDomingoOFestivo(fecha, festivosSet = new Set()) {
 }
 
 /**
+ * PLAZO DE CIERRE DE UNA SEMANA — primer dia habil despues del domingo
+ * =====================================================================
+ *
+ * La semana operativa termina el DOMINGO. El coordinador tiene todo el dia
+ * habil siguiente —normalmente el lunes— hasta las 23:59 para cerrarla a mano.
+ * Si ese lunes es FESTIVO, nadie trabaja, asi que el plazo corre al martes.
+ *
+ * Oct-2026 · Esta regla estaba escrita en un comentario de jobs/autoCloseWeek.js
+ * ("o el siguiente dia habil si el lunes es festivo") pero NO estaba
+ * implementada: el job restaba 2 dias de calendario y punto. El lunes 12 de
+ * octubre de 2026 fue festivo y el sistema cerro la semana igual, el martes a
+ * medianoche, quitandole al coordinador su unico dia habil de plazo.
+ *
+ * El plazo se devuelve como instante UTC correspondiente a las 23:59:59 de
+ * BOGOTA, que es cuando de verdad termina el dia del coordinador. Colombia es
+ * UTC-5 fijo y sin horario de verano, asi que son las 04:59:59 UTC del dia
+ * siguiente. Antes el job hacia `setHours(23,59,59)` sobre un servidor en UTC,
+ * y eso registraba el cierre a las 18:59 de Bogota.
+ *
+ * @param {Date|string} endDate  domingo de fin de la semana (medianoche UTC)
+ * @param {Set<string>} festivosSet  fechas ISO de festivos
+ * @returns {Date} instante limite; pasado ese momento la semana se puede cerrar
+ */
+export function deadlineCierreSemana(endDate, festivosSet = new Set()) {
+  const dia = proximoDiaHabil(sumarDiasUTC(endDate, 1), festivosSet)
+  // 23:59:59 de Bogota = 04:59:59 UTC del dia siguiente (UTC-5 fijo).
+  const limite = sumarDiasUTC(dia, 1)
+  limite.setUTCHours(4, 59, 59, 0)
+  return limite
+}
+
+/**
+ * Primer dia que NO es domingo ni festivo, empezando por el que se le pasa.
+ * Si el dia ya es habil, lo devuelve tal cual.
+ *
+ * El tope de 15 vueltas es una salvaguarda: si alguien cargara por error un
+ * rango enorme de festivos, es preferible cerrar tarde que colgar el job.
+ */
+export function proximoDiaHabil(fecha, festivosSet = new Set()) {
+  let d = new Date(fecha)
+  for (let i = 0; i < 15 && esDomingoOFestivo(d, festivosSet); i++) {
+    d = sumarDiasUTC(d, 1)
+  }
+  return d
+}
+
+/** Suma dias en UTC sin tocar la hora. Las fechas de solo-dia viven a medianoche UTC. */
+function sumarDiasUTC(fecha, dias) {
+  const d = new Date(fecha)
+  d.setUTCDate(d.getUTCDate() + dias)
+  return d
+}
+
+/**
  * Cuenta festivos LABORABLES en la semana:
  *   lv  = festivos en dow 1..5 (descuentan 720 min c/u)
  *   sab = festivos en dow 6   (descuentan 240 min c/u)

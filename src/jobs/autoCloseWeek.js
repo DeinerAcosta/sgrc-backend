@@ -2,7 +2,8 @@ import { prisma } from '../lib/prisma.js'
 import { notificar, notificarSupervisores } from '../services/notificationService.js'
 import { registrarAuditoria } from '../middleware/audit.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
-import { fechaSolo } from '../lib/fechas.js'
+import { fechaSolo, fechaHora } from '../lib/fechas.js'
+import { cargarFestivosDelRango, deadlineCierreSemana } from '../lib/calendario.js'
 
 // Cache del ID del usuario "Sistema" — se resuelve/crea la primera vez que corre
 // el job (get-or-create idempotente por email). Se usa como usuarioId en las
@@ -32,9 +33,12 @@ async function getSistemaUserId() {
 /**
  * Cierre automático de semanas vencidas.
  *
- * Regla: si una semana lleva >= GRACE_DIAS días pasada su fecha_fin y sigue
- * abierta, el sistema la cierra automáticamente. El campo `cerrada_por` se
- * guarda como NULL (interpretado como "Sistema") y `cerrada_en` se llena.
+ * Regla: el coordinador tiene hasta las 23:59 del primer DÍA HÁBIL siguiente
+ * al domingo de fin para cerrar la semana a mano. Pasado ese plazo, el sistema
+ * la cierra solo. Si ese día habría sido festivo, el plazo corre al siguiente
+ * (ver deadlineCierreSemana en lib/calendario.js). El campo `cerrada_por` se
+ * guarda como NULL (interpretado como "Sistema") y `cerrada_en` se llena con
+ * el plazo, no con la hora a la que corrió el cron.
  *
  * Se notifica:
  *   - A los supervisores (alerta de gestión).
@@ -44,17 +48,18 @@ async function getSistemaUserId() {
  * Se ejecuta todos los días a las 02:00 America/Bogota (job programado).
  */
 
-// Cantidad de días de gracia tras el fin de la semana (sábado) antes de cerrar
-// automáticamente. El registro de ejecución cierra el lunes 23:59 siguiente
-// (o el siguiente día hábil si el lunes es festivo); esta gracia de 4 días deja
-// PROYECTOS-3255 #1.2 (fix sep-14-2026): GRACE_DIAS=2.
-// Cadencia: semana operativa termina el DOMINGO. El coord tiene todo el LUNES
-// hasta las 23:59 para cerrar manualmente. El cron corre 2 AM diario.
-// Con GRACE_DIAS=2 la ventana se abre asi:
-//   Lunes 2am: limiteFin = sabado - la semana (endDate=domingo) NO cumple, no cierra
-//   Martes 2am: limiteFin = domingo - la semana cumple, cierra
-// Es decir, respeta el deadline del lunes 23:59 y cierra la madrugada siguiente.
-const GRACE_DIAS = 2
+// Oct-2026 · Se elimina GRACE_DIAS.
+//
+// Era una gracia de 2 dias de CALENDARIO, y por eso el lunes 12 de octubre
+// —festivo— conto como si fuera el dia habil de plazo del coordinador: el job
+// cerro la semana el martes a medianoche y nadie tuvo oportunidad de cerrarla
+// a mano. El comentario que estaba aqui ya decia "o el siguiente dia habil si
+// el lunes es festivo", pero eso no estaba implementado en ninguna parte.
+//
+// Ahora el plazo lo calcula deadlineCierreSemana() en lib/calendario.js, que
+// SI mira los festivos, y el mismo valor se usa para dos cosas que antes se
+// calculaban por separado y podian discrepar: decidir si toca cerrar, y
+// registrar la fecha de cierre.
 
 export async function jobAutoCierreSemana(ahoraOverride = null) {
   // Con programación libre el job se salta por completo. Si no, cada noche a
@@ -69,13 +74,26 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
   }
 
   const ahora = ahoraOverride ?? new Date()
-  const limiteFin = new Date(ahora)
-  limiteFin.setDate(limiteFin.getDate() - GRACE_DIAS)
 
-  const candidatas = await prisma.week.findMany({
-    where: { status: 'abierta', endDate: { lte: limiteFin } },
+  // Filtro grueso en la BD (semanas ya terminadas) y filtro fino en memoria con
+  // el plazo real. El fino no se puede expresar en SQL porque depende de los
+  // festivos, y son pocas filas: solo semanas ABIERTAS ya vencidas.
+  const abiertasVencidas = await prisma.week.findMany({
+    where: { status: 'abierta', endDate: { lte: ahora } },
     orderBy: { startDate: 'asc' },
   })
+
+  let candidatas = []
+  const plazoPorSemana = new Map()
+  if (abiertasVencidas.length > 0) {
+    const masAntigua = abiertasVencidas[0].endDate
+    const festivos = await cargarFestivosDelRango(masAntigua, ahora, prisma)
+    for (const sem of abiertasVencidas) {
+      const plazo = deadlineCierreSemana(sem.endDate, festivos)
+      plazoPorSemana.set(sem.id, plazo)
+      if (ahora.getTime() > plazo.getTime()) candidatas.push(sem)
+    }
+  }
 
   // Resolver una sola vez el usuario "Sistema" para todas las auditorías
   // del run. Si falla, seguimos sin auditar (mejor cerrar sin log que no cerrar).
@@ -88,12 +106,12 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
   const errores = []
   for (const sem of candidatas) {
     try {
-      // Fecha registrada del cierre: el ultimo instante del lunes siguiente al
-      // domingo de fin (endDate + 1 dia a las 23:59:59). Asi el informe
-      // muestra "cerrada el lunes X a las 23:59" en vez de "martes 00:00",
-      // que es cuando fisicamente corrio el cron.
-      const closedAtDeadline = new Date(sem.endDate.getTime() + 24 * 60 * 60 * 1000)
-      closedAtDeadline.setHours(23, 59, 59, 0)
+      // Fecha registrada del cierre: el MISMO plazo que decidio el cierre, o sea
+      // las 23:59 del primer dia habil tras el domingo de fin. Asi el informe
+      // muestra "cerrada el lunes X a las 23:59" en vez de la hora a la que
+      // fisicamente corrio el cron — y si ese lunes fue festivo, muestra el
+      // martes, que es el dia que de verdad tuvo el coordinador.
+      const closedAtDeadline = plazoPorSemana.get(sem.id)
 
       // Cierre POR SEDE: para cada sede con asignaciones en esa semana, crear
       // su CierreSemanaSede con cerradaPor=null (Sistema) — solo si la sede
@@ -126,9 +144,12 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
               endWeek: sem.endDate,
               closedAt: closedAtDeadline,
               cronRanAt: ahora,
-              graceDias: GRACE_DIAS,
+              // El plazo real que se aplicó, ya con los festivos tenidos en
+              // cuenta. Antes se guardaba "graceDias: 2", que no decía cuándo
+              // vencía de verdad ni si hubo festivo de por medio.
+              plazoCierreManual: closedAtDeadline,
             },
-            reason: 'Cierre automático tras período de gracia',
+            reason: 'Cierre automático: venció el plazo de cierre manual',
           })
         }
       }
@@ -169,7 +190,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
           ['Estado anterior',        'Abierta'],
           ['Estado actual',          'Cerrada por el sistema'],
           ['Asignaciones incluidas', `${totalAsigs} asignaciones registradas`],
-          ['Días de gracia',         `${GRACE_DIAS} días después del fin de la semana`],
+          ['Plazo para cerrar a mano', fechaHora(closedAtDeadline)],
           ['Cerrada por',            'Sistema (cierre automático)'],
           ['Fecha y hora de cierre', new Date().toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Bogota' })],
         ],
@@ -194,7 +215,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
           userId: usuarioId,
           type: 'cierre_automatico_semana',
           title: `Tu semana operativa fue cerrada automáticamente: ${rangoBonito}`,
-          message: `<p>La semana operativa que tenías asignada fue <strong>cerrada automáticamente</strong> por el sistema, ya que no se realizó el cierre manual dentro del período de gracia establecido (${GRACE_DIAS} días después del fin de la semana).</p>
+          message: `<p>La semana operativa que tenías asignada fue <strong>cerrada automáticamente</strong> por el sistema, ya que no se realizó el cierre manual antes del plazo establecido: <strong>${fechaHora(closedAtDeadline)}</strong>.</p>
           <p>A partir de este momento, las asignaciones, ejecuciones y ausencias de esta semana quedan registradas como <strong>definitivas</strong>. Si requieres ajustar algún registro, debes solicitarlo formalmente al supervisor, quien tiene la facultad de reabrir la semana dejando constancia en el log de auditoría.</p>`,
           contexto: `Notificación del módulo de Cierre de Semana — Política RN-29`,
           criticidad: 'alta',
@@ -203,7 +224,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
             ['Semana cerrada',         rangoBonito],
             ['Sede(s) afectadas',      sedesNombres],
             ['Asignaciones de la semana', `${asigs.length}`],
-            ['Días de gracia transcurridos', `${GRACE_DIAS}`],
+            ['Plazo que venció',       fechaHora(closedAtDeadline)],
             ['Estado actual',          'Cerrada por el sistema'],
             ['Acción posible',         'Solicitar reapertura al supervisor si requiere ajustes'],
           ],

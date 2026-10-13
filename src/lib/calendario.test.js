@@ -9,6 +9,8 @@ import {
   MINUTOS_DIA_LV,
   MINUTOS_SABADO,
   DIAS_LABORABLES_SEMANA,
+  deadlineCierreSemana,
+  proximoDiaHabil,
 } from './calendario.js'
 
 // Semana referencia: dom 6-sep-2026 → sab 12-sep-2026 (RN-04: la semana arranca domingo).
@@ -141,5 +143,102 @@ describe('contarMesesEnRango', () => {
   it('null → 1 (evita division por cero)', () => {
     expect(contarMesesEnRango(null, null)).toBe(1)
     expect(contarMesesEnRango('2026-09-01', null)).toBe(1)
+  })
+})
+
+// ============================================================================
+// PLAZO DE CIERRE CON FESTIVOS
+//
+// Oct-2026 · Hector: "¿por que se cerro la semana si cuando hay un festivo
+// cierra al dia siguiente?". Tenia razon. La regla estaba escrita en un
+// comentario de jobs/autoCloseWeek.js pero el codigo restaba 2 dias de
+// CALENDARIO, asi que el lunes festivo contaba como dia habil de plazo.
+//
+// El caso real esta reproducido abajo tal cual paso en produccion.
+// ============================================================================
+const iso = (d) => new Date(d).toISOString()
+const domingo = (s) => new Date(s + 'T00:00:00.000Z')
+
+describe('proximoDiaHabil', () => {
+  it('un dia habil se devuelve igual', () => {
+    expect(iso(proximoDiaHabil(domingo('2026-10-13')))).toBe('2026-10-13T00:00:00.000Z')  // martes
+  })
+
+  it('salta el domingo', () => {
+    // 2026-10-11 es domingo -> lunes 12
+    expect(iso(proximoDiaHabil(domingo('2026-10-11')))).toBe('2026-10-12T00:00:00.000Z')
+  })
+
+  it('salta un festivo', () => {
+    const fest = new Set(['2026-10-12'])
+    expect(iso(proximoDiaHabil(domingo('2026-10-12'), fest))).toBe('2026-10-13T00:00:00.000Z')
+  })
+
+  it('salta varios festivos seguidos', () => {
+    const fest = new Set(['2026-10-12', '2026-10-13', '2026-10-14'])
+    expect(iso(proximoDiaHabil(domingo('2026-10-12'), fest))).toBe('2026-10-15T00:00:00.000Z')
+  })
+
+  it('el sabado SI es habil: la clinica atiende', () => {
+    // 2026-10-17 es sabado
+    expect(iso(proximoDiaHabil(domingo('2026-10-17')))).toBe('2026-10-17T00:00:00.000Z')
+  })
+
+  it('no se cuelga si alguien carga un rango absurdo de festivos', () => {
+    const fest = new Set()
+    for (let i = 0; i < 40; i++) {
+      const d = new Date('2026-10-12T00:00:00.000Z'); d.setUTCDate(d.getUTCDate() + i)
+      fest.add(d.toISOString().slice(0, 10))
+    }
+    expect(() => proximoDiaHabil(domingo('2026-10-12'), fest)).not.toThrow()
+  })
+})
+
+describe('deadlineCierreSemana', () => {
+  // 23:59:59 de Bogota = 04:59:59 UTC del dia siguiente (UTC-5 fijo).
+  it('semana normal: vence el lunes 23:59 de Bogota', () => {
+    // semana que termina domingo 2026-10-04 -> plazo lunes 5
+    expect(iso(deadlineCierreSemana(domingo('2026-10-04')))).toBe('2026-10-06T04:59:59.000Z')
+  })
+
+  it('EL CASO REAL: lunes 12-oct festivo -> el plazo corre al martes 13', () => {
+    const fest = new Set(['2026-10-12'])
+    const plazo = deadlineCierreSemana(domingo('2026-10-11'), fest)
+    // martes 13 a las 23:59 Bogota = miercoles 14 a las 04:59:59 UTC
+    expect(iso(plazo)).toBe('2026-10-14T04:59:59.000Z')
+  })
+
+  it('y sin el festivo cargado, la MISMA semana vencia el lunes', () => {
+    // Deja claro que lo unico que cambia el resultado es el festivo.
+    expect(iso(deadlineCierreSemana(domingo('2026-10-11')))).toBe('2026-10-13T04:59:59.000Z')
+  })
+
+  it('el job de hoy martes 13 a medianoche NO debia cerrar esa semana', () => {
+    // Reproduce exactamente lo que paso: el cron corre 00:00 Bogota del martes
+    // 13 = 05:00 UTC. Con el festivo cargado, el plazo aun no habia vencido.
+    const fest = new Set(['2026-10-12'])
+    const cronMartes = new Date('2026-10-13T05:00:00.000Z')
+    const plazo = deadlineCierreSemana(domingo('2026-10-11'), fest)
+    expect(cronMartes.getTime() > plazo.getTime()).toBe(false)
+  })
+
+  it('y el miercoles 14 a medianoche SI debe cerrarla', () => {
+    const fest = new Set(['2026-10-12'])
+    const cronMiercoles = new Date('2026-10-14T05:00:00.000Z')
+    const plazo = deadlineCierreSemana(domingo('2026-10-11'), fest)
+    expect(cronMiercoles.getTime() > plazo.getTime()).toBe(true)
+  })
+
+  it('dos festivos seguidos corren el plazo dos dias', () => {
+    const fest = new Set(['2026-10-12', '2026-10-13'])
+    expect(iso(deadlineCierreSemana(domingo('2026-10-11'), fest))).toBe('2026-10-15T04:59:59.000Z')
+  })
+
+  it('el plazo cae a las 23:59 de Bogota, no a las 18:59', () => {
+    // El servidor corre en UTC. Antes se hacia setHours(23,59,59) sobre UTC y
+    // el cierre quedaba registrado a las 18:59 hora de Colombia.
+    const plazo = deadlineCierreSemana(domingo('2026-10-04'))
+    const enBogota = plazo.toLocaleString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hour12: false })
+    expect(enBogota).toBe('23:59')
   })
 })
