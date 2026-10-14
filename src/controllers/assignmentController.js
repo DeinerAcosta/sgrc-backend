@@ -608,7 +608,10 @@ export async function sugerirReemplazos(req, res) {
       assistantId: true,
       startTime: true,
       endTime: true,
-      room: { select: { siteId: true } },
+      // Oct-2026 · Antes solo viajaba siteId, que alcanzaba para el booleano
+      // "misma sede". Pero decirle a alguien "tiene que desplazarse" sin decir
+      // DESDE DONDE no le sirve para decidir: la pantalla necesita el nombre.
+      room: { select: { id: true, name: true, siteId: true, site: { select: { name: true, city: true } } } },
     },
   })
 
@@ -642,6 +645,18 @@ export async function sugerirReemplazos(req, res) {
     .map((r) => ({
       ...r,
       misma_sede: sedeObjetivo ? sedesPorRecurso.get(r.id).has(sedeObjetivo) : true,
+      // Donde esta ese dia, franja por franja. Vacio = tiene el dia libre, que
+      // tambien es un dato: no hay que sacarlo de ningun lado.
+      ocupacion_ese_dia: franjasPorRecurso.get(r.id)
+        .slice()
+        .sort((x, y) => (x.startTime ?? '').localeCompare(y.startTime ?? ''))
+        .map((a) => ({
+          start_time: a.startTime,
+          end_time: a.endTime,
+          room: a.room?.name ?? null,
+          site: a.room?.site?.name ?? null,
+          city: a.room?.site?.city ?? null,
+        })),
     }))
 
   res.json(disponibles)
