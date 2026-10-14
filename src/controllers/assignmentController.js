@@ -98,6 +98,9 @@ const crearSchema = z.object({
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   isReplacement: z.boolean().optional(),
   coveredAbsenceId: z.preprocess(emptyToUndef, z.string().uuid().optional().nullable()),
+  // Oct-2026 · "Se hace cargo aunque ya tenga turno esa franja". Unica
+  // excepcion a RN-08 y solo vale junto a coveredAbsenceId.
+  assumeOverlap: z.boolean().optional(),
   supervisorReason: z.preprocess(emptyToUndef, z.string().optional()),
   // Override manual de pacientes programados — cuando el coord conoce el dato
   // real de la agenda externa (call center / eCitas) y este número difiere del
@@ -177,6 +180,46 @@ export async function create(req, res) {
       criticidad: 'baja',
       referenceId: a.id,
     })
+  }
+
+  // Oct-2026 · Si se uso la excepcion a RN-08, el aviso generico de arriba no
+  // alcanza: el profesional tiene que enterarse de QUE agenda esta asumiendo y
+  // de quien, y la excepcion tiene que quedar registrada aparte.
+  if (data.assumeOverlap && data.coveredAbsenceId) {
+    const ausencia = await prisma.absence.findUnique({
+      where: { id: data.coveredAbsenceId },
+      include: { resource: { select: { name: true } } },
+    })
+    const deQuien = ausencia?.resource?.name ?? 'otro profesional'
+
+    await registrarAuditoria({
+      userId: req.user.id,
+      action: 'asumir_agenda_sobre_turno_propio',
+      entity: 'asignaciones',
+      entityId: a.id,
+      newValue: {
+        profesional: a.resource?.name ?? a.resourceId,
+        asume_la_agenda_de: deQuien,
+        dia: a.weekday,
+        franja: `${a.startTime}-${a.endTime}`,
+        pacientes_del_ausente: ausencia?.patientsAffected ?? null,
+      },
+      reason: 'Excepción a RN-08: se hace cargo de la agenda de un ausente teniendo turno propio en esa franja',
+      ipAddress: getIp(req),
+    })
+
+    const quienAsume = await prisma.user.findFirst({ where: { resourceId: a.resourceId } })
+    if (quienAsume) {
+      await notificar({
+        userId: quienAsume.id,
+        type: 'agenda_asumida',
+        title: `Vas a atender además la agenda de ${deQuien}`,
+        message: `<p>Se te asignó un turno <strong>adicional</strong> el ${a.weekday} de ${a.startTime} a ${a.endTime}: son los pacientes que tenía programados <strong>${deQuien}</strong>, que se ausentó.</p><p>Tu turno propio de esa franja no cambia — este se suma.</p>`,
+        contexto: 'Reprogramación de agendas',
+        criticidad: 'alta',
+        referenceId: a.id,
+      })
+    }
   }
 
   res.status(201).json(result.assignment)

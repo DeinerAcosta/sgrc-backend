@@ -592,7 +592,15 @@ export async function crearAsignacion(data, userCtx) {
     // FIX sep-2026: se ignoran asignaciones en consultorios INACTIVOS.
     // No aplica ese día, por lo tanto no debe bloquear. Evita el caso de
     // consultorios viejos migrados que quedan con asignaciones huerfanas.
-    if (!recurso.multiRoom) {
+    // Oct-2026 · LA UNICA EXCEPCION A RN-08.
+    // Un profesional que se hace cargo de la agenda de alguien que falto puede
+    // quedar con un turno ADICIONAL en una franja donde ya tiene el suyo: el
+    // propio sigue siendo el propio y el nuevo dice de quien son los pacientes
+    // que asume. Pide las dos condiciones a la vez —que el turno cubra una
+    // ausencia Y que quien lo crea lo marque— asi que no se llega aqui sin
+    // querer. El controlador deja auditoria y avisa al profesional.
+    const asumeAgendaAjena = !!data.coveredAbsenceId && data.assumeOverlap === true
+    if (!recurso.multiRoom && !asumeAgendaAjena) {
       const conflictoRecurso = await tx.assignment.findFirst({
         where: {
           weekId: data.weekId,
