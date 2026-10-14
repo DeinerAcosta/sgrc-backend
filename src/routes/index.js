@@ -136,6 +136,10 @@ r.post('/weeks/:id/copy', requireRol('coordinador', 'supervisor'), wrap(semn.cop
 // tiene horas en la semana que se esta armando. Alimenta el aviso del
 // Programador y el resaltado de las casillas.
 r.get('/weeks/:id/previous-absences', wrap(semn.ausentesSemanaAnterior))
+// Oct-2026 · Las ausencias que caen DENTRO de la semana que se esta viendo, con
+// el dia exacto, para que el Programador pinte la casilla en rojo. Lectura
+// abierta: el controlador recorta por sede segun el rol.
+r.get('/weeks/:id/absences', wrap(semn.ausenciasDeLaSemana))
 
 // ============ ASIGNACIONES ============
 r.get('/assignments', wrap(asig.list))

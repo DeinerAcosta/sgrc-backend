@@ -604,3 +604,133 @@ export async function ausentesSemanaAnterior(req, res) {
     recursos_pendientes: ausentes.filter((x) => x.pendiente).map((x) => x.resource.id),
   })
 }
+
+
+// ============================================================================
+// Oct-2026 · GET /weeks/:id/absences · LA AUSENCIA, PINTADA EN EL PROGRAMADOR
+//
+// Gemelo de ausentesSemanaAnterior, pero mirando hacia adentro: aquel avisa de
+// quien falto la semana PASADA y hay que volver a programar; este dice quien
+// esta ausente en la semana que se esta viendo AHORA y en que dia exacto, para
+// que la casilla salga en rojo.
+//
+// Lo pidio Hector el 14-oct-2026 describiendo el flujo real: la lider entra al
+// Programador, ve en rojo donde el medico esta ausente, y desde ahi decide el
+// dia de la reprogramacion o el reemplazo. Sin el color hay que cruzar a mano
+// el listado de ausencias con la grilla, que es justo lo que nadie hace.
+//
+// Por que el dia y no solo el recurso: una ausencia de martes a jueves no debe
+// teñir el lunes. ausentesSemanaAnterior se podia permitir trabajar por recurso
+// porque pinta "revisa a esta persona"; aqui el dato ES el dia.
+//
+// Devuelve tambien los reemplazos ya cargados (Assignment.coveredAbsenceId, que
+// existe desde antes y nadie estaba mostrando). Con eso la grilla puede dibujar
+// la casilla del reemplazo encima de la del ausente, que es como Hector lo
+// describio: "una casilla sobre la otra con otro color".
+// ============================================================================
+
+const NOMBRES_DIA = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+
+/** Dias de la semana (por nombre) que una ausencia cubre dentro del rango dado. */
+function diasCubiertos(ausencia, desde, hasta) {
+  const ini = ausencia.startDate > desde ? ausencia.startDate : desde
+  const fin = ausencia.endDate < hasta ? ausencia.endDate : hasta
+  const dias = []
+  // Las fechas de solo-dia se guardan a medianoche UTC, asi que se recorren y
+  // se leen en UTC. Con getDay() local, en Colombia (UTC-5) cada dia caeria en
+  // el anterior — el mismo error que corrimos en las pantallas de backoffice.
+  for (let d = new Date(ini); d <= fin; d = addDays(d, 1)) {
+    dias.push(NOMBRES_DIA[d.getUTCDay()])
+  }
+  return dias
+}
+
+export async function ausenciasDeLaSemana(req, res) {
+  const { site_id: sedeId } = req.query
+
+  const semana = await prisma.week.findUnique({ where: { id: req.params.id } })
+  if (!semana) throw errors.notFound('Semana no encontrada')
+
+  // Mismo alcance por sede que el resto del modulo: el coordinador solo ve las
+  // suyas, y pedir una ajena se corta aqui.
+  let sedesAlcance = null
+  if (req.user?.role === 'coordinador') {
+    const mias = await prisma.userSite.findMany({
+      where: { userId: req.user.id },
+      select: { siteId: true },
+    })
+    const misSedes = mias.map((m) => m.siteId)
+    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tienes acceso a esta sede')
+    sedesAlcance = sedeId ? [sedeId] : misSedes
+    if (sedesAlcance.length === 0) { res.json({ ausencias: [] }); return }
+  } else if (sedeId) {
+    sedesAlcance = [sedeId]
+  }
+
+  // Pendientes incluidas a proposito. Una ausencia sin confirmar YA dejo al
+  // medico sin venir; esconderla hasta que alguien le de clic a confirmar es
+  // justo como se acumularon 6 pendientes de hasta 118 dias. Se devuelve el
+  // estado para que la grilla las distinga.
+  const ausencias = await prisma.absence.findMany({
+    where: {
+      status: { in: ['pendiente', 'confirmada'] },
+      startDate: { lte: semana.endDate },
+      endDate: { gte: semana.startDate },
+    },
+    include: {
+      resource: { select: { id: true, name: true, type: true, specialty: true } },
+      reasonRef: { select: { code: true, name: true, family: true } },
+    },
+    orderBy: { startDate: 'asc' },
+  })
+
+  if (ausencias.length === 0) { res.json({ ausencias: [] }); return }
+
+  // Los reemplazos que ya se cargaron para estas ausencias. Una sola consulta
+  // para todas: el bucle por ausencia haria N consultas en la pantalla que el
+  // coordinador abre varias veces al dia.
+  const reemplazos = await prisma.assignment.findMany({
+    where: {
+      weekId: semana.id,
+      status: { not: 'cancelada' },
+      coveredAbsenceId: { in: ausencias.map((a) => a.id) },
+      ...(sedesAlcance ? { room: { siteId: { in: sedesAlcance } } } : {}),
+    },
+    select: {
+      id: true, coveredAbsenceId: true, weekday: true, startTime: true, endTime: true,
+      resource: { select: { id: true, name: true, type: true } },
+      room: { select: { id: true, name: true, siteId: true } },
+    },
+  })
+  const reemplazoPorAusencia = new Map()
+  for (const r of reemplazos) {
+    if (!reemplazoPorAusencia.has(r.coveredAbsenceId)) reemplazoPorAusencia.set(r.coveredAbsenceId, [])
+    reemplazoPorAusencia.get(r.coveredAbsenceId).push(r)
+  }
+
+  res.json({
+    semana: { id: semana.id, desde: semana.startDate, hasta: semana.endDate },
+    ausencias: ausencias.map((a) => ({
+      id: a.id,
+      resource: a.resource,
+      status: a.status,
+      type: a.type,
+      // El motivo detallado: la lider decide con esto a la vista, no solo con
+      // el tipo. "Enfermedad" y "cita medica programada" se gestionan distinto.
+      motivo_catalogo: a.reasonRef?.name ?? null,
+      motivo_texto: a.reason ?? null,
+      familia: a.reasonRef?.family ?? null,
+      start_date: a.startDate,
+      end_date: a.endDate,
+      is_partial: a.isPartial,
+      absence_start_time: a.absenceStartTime,
+      absence_end_time: a.absenceEndTime,
+      is_planned: a.isPlanned,
+      notice_days: a.noticeDays,
+      patients_affected: a.patientsAffected,
+      agenda_action: a.agendaAction,
+      dias: diasCubiertos(a, semana.startDate, semana.endDate),
+      reemplazos: reemplazoPorAusencia.get(a.id) ?? [],
+    })),
+  })
+}
