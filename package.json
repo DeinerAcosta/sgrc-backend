@@ -26,7 +26,8 @@
     "crear:usuario-recurso": "node scripts/crear-usuario-de-recurso.js",
     "limpiar:pendientes": "node scripts/limpiar-ausencias-pendientes.js",
     "otorrino:oftalmologo": "node scripts/otorrino-como-oftalmologo.js",
-    "limpiar:firmas": "node scripts/eliminar-firmas.js"
+    "limpiar:firmas": "node scripts/eliminar-firmas.js",
+    "datos:prueba": "node scripts/datos-prueba.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
