@@ -139,9 +139,14 @@ r.post('/weeks/:id/copy', requireRol('coordinador', 'supervisor'), wrap(semn.cop
 // Programador y el resaltado de las casillas.
 r.get('/weeks/:id/previous-absences', wrap(semn.ausentesSemanaAnterior))
 // Oct-2026 · Las ausencias que caen DENTRO de la semana que se esta viendo, con
-// el dia exacto, para que el Programador pinte la casilla en rojo. Lectura
-// abierta: el controlador recorta por sede segun el rol.
-r.get('/weeks/:id/absences', wrap(semn.ausenciasDeLaSemana))
+// el dia exacto, para que el Programador pinte la casilla en rojo.
+//
+// CERRADO POR ROL. Nacio sin requireRol con un comentario que decia que el
+// controlador recortaba por rol — y no lo hacia. Un rol 'recurso' podia leer
+// las ausencias de toda la semana con su motivo, y los motivos incluyen salud
+// ('incapacidad por enfermedad', 'cita medica'). Lo consume solo el
+// Programador, que abren estos cuatro roles.
+r.get('/weeks/:id/absences', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(semn.ausenciasDeLaSemana))
 
 // ============ ASIGNACIONES ============
 r.get('/assignments', wrap(asig.list))
@@ -161,7 +166,11 @@ r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia
 r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.rechazar))
 // Oct-2026 · Todo lo que la pantalla de reemplazo necesita de un solo viaje:
 // las franjas que se cayeron con sede, consultorio, horario y coordinador.
-r.get('/absences/:id/replacement-context', wrap(aus.contextoReemplazo))
+//
+// CERRADO POR ROL, por lo mismo que el de arriba: cualquier autenticado podia
+// pedir el caso de cualquier profesional y ver su motivo de ausencia, cuantos
+// pacientes dejo y donde atendia.
+r.get('/absences/:id/replacement-context', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.contextoReemplazo))
 // Oct-2026 · La lider asigna la reprogramacion; el reprogramador la cierra.
 r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.asignarReprogramador))
 r.put('/absences/:id/rescheduler/done', requireRol('supervisor', 'gerencia', 'reprogramador'), wrap(aus.marcarReprogramacionResuelta))
