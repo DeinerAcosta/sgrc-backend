@@ -157,6 +157,9 @@ r.get('/absences', wrap(aus.list))
 r.post('/absences', wrap(aus.create))
 r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.confirmar))
 r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.rechazar))
+// Oct-2026 · Todo lo que la pantalla de reemplazo necesita de un solo viaje:
+// las franjas que se cayeron con sede, consultorio, horario y coordinador.
+r.get('/absences/:id/replacement-context', wrap(aus.contextoReemplazo))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
 // Lectura abierta (scoping por rol dentro del handler).

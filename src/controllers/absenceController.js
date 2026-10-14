@@ -737,3 +737,140 @@ export async function rechazar(req, res) {
   })
   res.json(actualizada)
 }
+
+
+// ============================================================================
+// Oct-2026 · GET /absences/:id/replacement-context
+//
+// LA PANTALLA DE REEMPLAZO, DE UN SOLO VIAJE
+//
+// Hector: "debe ser una pantalla completa para el remplazo que debe mostrar el
+// dia la hora, las sedes los coordinadores y todo eso para que pueda ser
+// directo al programador".
+//
+// Antes esto era un modal que solo sabia de UNA franja: el coordinador tenia
+// que abrirlo una vez por cada hueco y no veia el panorama. Una ausencia de
+// martes a jueves de alguien que rota por tres sedes son nueve huecos.
+//
+// Devuelve la ausencia y TODAS las franjas que se cayeron, cada una con su
+// sede, consultorio, horario, pacientes y coordinador. Quien decide necesita
+// ver el conjunto: con el mismo dia en otra sede no hay que mover pacientes,
+// que es justo el caso que Hector quiere poder resolver primero.
+// ============================================================================
+
+const NOMBRES_DIA_AUS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+
+export async function contextoReemplazo(req, res) {
+  const ausencia = await prisma.absence.findUnique({
+    where: { id: req.params.id },
+    include: {
+      resource: { select: { id: true, name: true, type: true, specialty: true, leadCoordinatorId: true } },
+      reasonRef: { select: { code: true, name: true, family: true } },
+    },
+  })
+  if (!ausencia) throw errors.notFound('Ausencia no encontrada')
+
+  // La semana que contiene la ausencia. Si no existe (ausencia de una semana
+  // que nadie programo), no hay franjas que reemplazar y se dice claro.
+  const semana = await prisma.week.findFirst({
+    where: { startDate: { lte: ausencia.endDate }, endDate: { gte: ausencia.startDate } },
+    orderBy: { startDate: 'asc' },
+  })
+  if (!semana) {
+    res.json({ ausencia: serializarAusencia(ausencia, []), semana: null, franjas: [] })
+    return
+  }
+
+  // Dias que la ausencia cubre dentro de esa semana. En UTC: las fechas de
+  // solo-dia se guardan a medianoche UTC y en Colombia la hora local las
+  // correria al dia anterior.
+  const ini = ausencia.startDate > semana.startDate ? ausencia.startDate : semana.startDate
+  const fin = ausencia.endDate < semana.endDate ? ausencia.endDate : semana.endDate
+  const dias = []
+  for (let d = new Date(ini); d <= fin; d = new Date(d.getTime() + 86400000)) {
+    dias.push(NOMBRES_DIA_AUS[d.getUTCDay()])
+  }
+
+  const asignaciones = await prisma.assignment.findMany({
+    where: {
+      weekId: semana.id,
+      resourceId: ausencia.resourceId,
+      weekday: { in: dias },
+      status: { not: 'cancelada' },
+    },
+    include: {
+      room: { include: { site: { select: { id: true, name: true, city: true } } } },
+      assistant: { select: { id: true, name: true } },
+    },
+    orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
+  })
+
+  // Los reemplazos ya cargados para esta ausencia, por consultorio+dia+hora:
+  // asi cada franja sabe si ya esta resuelta y la pantalla no vuelve a ofrecer
+  // candidatos para un hueco que ya se lleno.
+  const reemplazos = await prisma.assignment.findMany({
+    where: { weekId: semana.id, coveredAbsenceId: ausencia.id, status: { not: 'cancelada' } },
+    include: { resource: { select: { id: true, name: true, type: true } } },
+  })
+  const claveFranja = (a) => [a.roomId, a.weekday, a.startTime].join('|')
+  const reemplazoPorFranja = new Map(reemplazos.map((r) => [claveFranja(r), r]))
+
+  // Los coordinadores de cada sede involucrada, en una sola consulta. Hector
+  // los pidio en la pantalla: el reemplazo cae en la programacion de alguien,
+  // y hay que saber de quien.
+  const sedeIds = [...new Set(asignaciones.map((a) => a.room?.siteId).filter(Boolean))]
+  const coordinadores = sedeIds.length
+    ? await prisma.userSite.findMany({
+        where: { siteId: { in: sedeIds }, user: { is: { role: 'coordinador', active: true } } },
+        select: { siteId: true, user: { select: { id: true, name: true, email: true } } },
+      })
+    : []
+  const coordsPorSede = new Map()
+  for (const c of coordinadores) {
+    if (!coordsPorSede.has(c.siteId)) coordsPorSede.set(c.siteId, [])
+    coordsPorSede.get(c.siteId).push(c.user)
+  }
+
+  res.json({
+    ausencia: serializarAusencia(ausencia, dias),
+    semana: { id: semana.id, desde: semana.startDate, hasta: semana.endDate, estado: semana.status },
+    franjas: asignaciones.map((a) => {
+      const rp = reemplazoPorFranja.get(claveFranja(a))
+      return {
+        assignment_id: a.id,
+        week_id: semana.id,
+        weekday: a.weekday,
+        start_time: a.startTime,
+        end_time: a.endTime,
+        patient_capacity: a.patientCapacity,
+        assistant: a.assistant,
+        assistant_id: a.assistantId,
+        room: a.room ? { id: a.room.id, name: a.room.name } : null,
+        room_id: a.roomId,
+        site: a.room?.site ?? null,
+        coordinadores: coordsPorSede.get(a.room?.siteId) ?? [],
+        reemplazo: rp ? { id: rp.id, resource: rp.resource } : null,
+      }
+    }),
+  })
+}
+
+function serializarAusencia(a, dias) {
+  return {
+    id: a.id,
+    resource: a.resource,
+    status: a.status,
+    type: a.type,
+    motivo_catalogo: a.reasonRef?.name ?? null,
+    motivo_texto: a.reason ?? null,
+    start_date: a.startDate,
+    end_date: a.endDate,
+    is_partial: a.isPartial,
+    absence_start_time: a.absenceStartTime,
+    absence_end_time: a.absenceEndTime,
+    notice_days: a.noticeDays,
+    patients_affected: a.patientsAffected,
+    agenda_action: a.agendaAction,
+    dias,
+  }
+}
