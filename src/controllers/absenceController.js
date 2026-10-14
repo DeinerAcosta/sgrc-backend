@@ -777,7 +777,7 @@ export async function contextoReemplazo(req, res) {
     orderBy: { startDate: 'asc' },
   })
   if (!semana) {
-    res.json({ ausencia: serializarAusencia(ausencia, []), semana: null, franjas: [] })
+    res.json({ ausencia: serializarAusencia(ausencia, [], []), semana: null, franjas: [] })
     return
   }
 
@@ -787,8 +787,12 @@ export async function contextoReemplazo(req, res) {
   const ini = ausencia.startDate > semana.startDate ? ausencia.startDate : semana.startDate
   const fin = ausencia.endDate < semana.endDate ? ausencia.endDate : semana.endDate
   const dias = []
+  // Las fechas van aparte del nombre del día, no en su lugar: la grilla cruza
+  // por `weekday`, que es texto, y la pantalla necesita decir QUÉ miércoles.
+  const fechas = []
   for (let d = new Date(ini); d <= fin; d = new Date(d.getTime() + 86400000)) {
     dias.push(NOMBRES_DIA_AUS[d.getUTCDay()])
+    fechas.push(new Date(d))
   }
 
   const asignaciones = await prisma.assignment.findMany({
@@ -832,7 +836,7 @@ export async function contextoReemplazo(req, res) {
   }
 
   res.json({
-    ausencia: serializarAusencia(ausencia, dias),
+    ausencia: serializarAusencia(ausencia, dias, fechas),
     semana: { id: semana.id, desde: semana.startDate, hasta: semana.endDate, estado: semana.status },
     franjas: asignaciones.map((a) => {
       const rp = reemplazoPorFranja.get(claveFranja(a))
@@ -855,7 +859,7 @@ export async function contextoReemplazo(req, res) {
   })
 }
 
-function serializarAusencia(a, dias) {
+function serializarAusencia(a, dias, fechas = []) {
   return {
     id: a.id,
     resource: a.resource,
@@ -878,6 +882,7 @@ function serializarAusencia(a, dias) {
     reschedule_notes: a.rescheduleNotes,
     reschedule_done_at: a.rescheduleDoneAt,
     dias,
+    fechas,
   }
 }
 
