@@ -62,12 +62,6 @@ const recursoSchema = z.object({
   // apoyo (auxiliar/técnico). Ej. "auxiliar" o "auxiliar,tecnico". Solo valores
   // de TIPOS son válidos. Vacío/null = solo aparece en su tipo principal.
   supportTypes: z.preprocess(emptyToUndef, z.string().max(100).optional().nullable()),
-  // PROYECTOS-3255 #5.1 · firma escaneada del profesional (data URL base64).
-  // Sep-2026: limite subido a 2 MB (era 500 KB) porque el consolidado de firmas
-  // de septiembre incluye escaneos > 500 KB (Alejandra Villalobos 768 KB). La
-  // BD (MEDIUMTEXT, 16 MB) y el frontend (1 MB imagen ~ 1.35 MB en base64) los
-  // aceptan; el cap Zod queda un poco por encima del frontend para dejar margen.
-  signatureUrl: z.preprocess(emptyToUndef, z.string().max(2_000_000).optional().nullable()),
   // Sep-2026 · El alta se frena si ya existe alguien con ese nombre. Con este
   // campo en true se crea igual: dos personas pueden llamarse igual de verdad,
   // asi que es un aviso, no una prohibicion. No se guarda en la BD.
@@ -134,10 +128,6 @@ export async function list(req, res) {
     }
   }
 
-  // Sep-2026 · perf [5]: el listado NO trae signatureUrl (MEDIUMTEXT,
-  // rutinariamente 30-100 KB × 137 recursos = 3-4 MB por request cacheado por
-  // React Query). Se expone solo `hasSignature` (boolean); el detalle vuelve
-  // a traer la firma completa via GET /recursos/:id cuando el user abre el modal.
   const recursos = await prisma.resource.findMany({
     where,
     orderBy: { name: 'asc' },
@@ -146,17 +136,8 @@ export async function list(req, res) {
       payScheme: true, maxHoursPerWeek: true, maxHoursPerDay: true, multiRoom: true,
       leadCoordinatorId: true, active: true, deactivationReason: true,
       supportTypes: true, createdAt: true, updatedAt: true,
-      // signatureUrl EXCLUIDO — se lee bajo demanda en getById.
     },
   })
-
-  // Query auxiliar barata: ids de recursos que tienen firma cargada.
-  // Devuelve solo id (bytes minimos), no toca el MEDIUMTEXT en el pipe.
-  const conFirma = await prisma.resource.findMany({
-    where: { ...where, signatureUrl: { not: null } },
-    select: { id: true },
-  })
-  const idsConFirma = new Set(conFirma.map((r) => r.id))
 
   // Resolver nombre de cada coordinador-líder en una sola query (evita N+1).
   // Se calcula una sola vez y se usa en ambas ramas (con o sin semana actual).
@@ -179,9 +160,6 @@ export async function list(req, res) {
       currentWeekHours: 0,
       isOvertime: false,
       coordinadorLiderNombre: liderByIdTop.get(r.leadCoordinatorId) ?? null,
-      // Boolean liviano — el frontend usa esto para el badge "Firma cargada".
-      // La firma completa se descarga via GET /recursos/:id al abrir el modal.
-      hasSignature: idsConFirma.has(r.id),
     })))
   }
 
@@ -266,7 +244,6 @@ export async function list(req, res) {
       isOvertime: horasMaxEfectivas != null && horas > horasMaxEfectivas,
       statusBadge: liberadas.has(r.id) ? 'liberada' : null,
       coordinadorLiderNombre: liderByIdTop.get(r.leadCoordinatorId) ?? null,
-      hasSignature: idsConFirma.has(r.id),
     }
   })
 

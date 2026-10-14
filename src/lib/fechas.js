@@ -25,9 +25,8 @@
  * reposicion — es decir, todas. En cambio `closedAt` salia bien, porque ahi
  * America/Bogota si era lo correcto.
  *
- * Ojo al leer el codigo viejo: en faa126FormService se hizo el cambio en la
- * direccion CONTRARIA (de UTC a Bogota) y ahi estaba bien — ese dato es
- * `new Date()`, el instante en que se genera el PDF, no un dia guardado.
+ * Ojo: un `new Date()` del momento en que corre el codigo NO es un dia
+ * guardado, es un instante — ese va en Bogota, igual que closedAt.
  */
 
 const LOCALE = 'es-CO'

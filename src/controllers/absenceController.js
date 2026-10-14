@@ -7,9 +7,7 @@ import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notific
 import { calcularImpacto, liberarAuxiliaresSiAplica, TIPOS_QUE_IMPACTAN_PACIENTES } from '../services/absenceService.js'
 import { fechaSolo } from '../lib/fechas.js'
 
-// Sep-2026 · Se eliminó TIPOS_RECURSO_MEDICOS_FAA126: solo servía para decidir
-// quién podía descargar el PDF del formato, y ese PDF ya no existe. La lista
-// equivalente de "tipos que atienden pacientes" vive en lib/resourceTypes.js,
+// La lista de "tipos que atienden pacientes" vive en lib/resourceTypes.js,
 // que es donde debe consultarse.
 
 const TIPOS = ['enfermedad', 'calamidad', 'academico', 'familiar', 'vacaciones', 'no_presentacion', 'licencia_remunerada', 'licencia_no_remunerada', 'otra']
@@ -55,12 +53,12 @@ const crearSchema = z.object({
   // Se ignora si el motivo no es regional — el controller no reproduce esa lógica
   // al usuario; simplemente guarda null si el motivo elegido no lo requiere.
   regionalCity: z.preprocess(emptyToUndef, z.string().max(60).optional()),
-  // ==== Fase 5 · F-AA-126 v04 ====
-  // Empresa a la que aplica la ausencia. Refleja el checkbox del formato oficial.
+  // Empresa a la que aplica la ausencia. Decide la razón social con la que sale
+  // en los informes: FOCA y VIU son entidades distintas.
   affectedCompany: z.preprocess(emptyToUndef, z.enum(['foca', 'viu', 'ambas']).optional()),
-  // Bandera "¿DESEA REPONER?" del formato v04.
+  // ¿Desea reponer? Dispara el flujo de reposición.
   // Parseo explícito: z.coerce.boolean() convierte "false" (string) → true,
-  // corrompiendo la respuesta del formato oficial. Aceptamos solo boolean nativo
+  // corrompiendo la respuesta. Aceptamos solo boolean nativo
   // o los strings "true"/"false" / 0/1 que un cliente REST legítimo puede enviar.
   wantsMakeup: z.preprocess(
     (v) => {
@@ -181,11 +179,8 @@ export async function list(req, res) {
   const list = await prisma.absence.findMany({
     where,
     include: {
-      // Oct-2026 · Antes era `resource: true`, que arrastraba `firma_url`: un
-      // MEDIUMTEXT con la firma escaneada en base64, hasta ~6 MB por recurso.
-      // Pedir el listado completo de ausencias bajaba una firma por fila, y la
-      // pantalla no dibuja ninguna. La firma solo se necesita al abrir el
-      // formato, y para eso está GET /absences/:id/form.
+      // Oct-2026 · Antes era `resource: true`, que arrastraba hasta ~6 MB por
+      // recurso. Se selecciona campo por campo.
       resource: {
         select: {
           id: true, name: true, type: true, specialty: true,
@@ -428,7 +423,6 @@ export async function create(req, res) {
       reasonId: motivoId,
       reason: data.reason,
       regionalCity: ciudadRegionalFinal,
-      // Fase 5 · F-AA-126 v04 (ago-2026)
       affectedCompany: data.affectedCompany ?? null,
       wantsMakeup: data.wantsMakeup ?? null,
       makeupNotes: data.wantsMakeup ? (data.makeupNotes?.trim() || null) : null,
@@ -742,146 +736,4 @@ export async function rechazar(req, res) {
     include: { resource: true },
   })
   res.json(actualizada)
-}
-
-// Sep-2026 · Se eliminó `formatoFAA126Pdf`, que generaba el formato oficial
-// en PDF. Decisión de negocio: el PDF sale del sistema por completo y el
-// formato pasa a verse como formulario de solo lectura dentro del detalle
-// de la ausencia (PROYECTOS-3398 §1). Con él se fue services/faa126FormService.js.
-
-// ============================================================================
-// Oct-2026 · PROYECTOS-3398 §1 · FORMATO DE SOLO LECTURA
-//
-// Lo que antes se bajaba en PDF ahora se consulta. El PDF imitaba una hoja que
-// alguien iba a imprimir, firmar y archivar: traía 12 filas de meses vacías
-// para rellenar a mano y repetía datos que el sistema ya tenía guardados. Al
-// salir del sistema, lo que queda es el formato como PANTALLA: los mismos
-// bloques del F-AA-126, con el dato real, sin casillas que llenar.
-//
-// Devuelve el formato armado desde el servidor y no desde la lista, por tres
-// razones concretas:
-//   1. La firma escaneada pesa hasta 6 MB en base64 (`firma_url` es MEDIUMTEXT).
-//      Ir en cada fila de la lista hacía que pedir 131 ausencias arrastrara
-//      todas las firmas. Aquí viaja una sola vez, al abrir el formato.
-//   2. El "Vo Bo" es el nombre de quien confirmó, que vive en `usuarios` y no
-//      en la ausencia: resolverlo en el cliente obligaba a una segunda consulta.
-//   3. El alcance por rol se revisa aquí. Con la lista alcanzaba el filtro del
-//      `where`; con un id en la URL hay que comprobar explícitamente que esa
-//      ausencia cae dentro de lo que el rol puede ver.
-// ============================================================================
-
-const EMPRESA_LABEL = { foca: 'FOCA', viu: 'VIU', ambas: 'AMBAS' }
-
-export async function formato(req, res) {
-  const ausencia = await prisma.absence.findUnique({
-    where: { id: req.params.id },
-    include: {
-      resource: {
-        select: {
-          id: true, name: true, type: true, specialty: true, signatureUrl: true,
-          leadCoordinatorId: true,
-          user: { select: { email: true, sites: { select: { siteId: true } } } },
-        },
-      },
-      reasonRef: { select: { code: true, name: true, family: true } },
-    },
-  })
-  if (!ausencia) throw errors.notFound('Ausencia no encontrada')
-
-  // ---- Alcance por rol. Mismas reglas que list(), evaluadas sobre un registro.
-  const rol = req.user?.role
-  if (rol === 'recurso') {
-    if (ausencia.resourceId !== req.user.resourceId) throw errors.forbidden('No tienes acceso a esta ausencia')
-  } else if (rol === 'coordinador') {
-    const misSedes = req.user.sites ?? []
-    const sedesDelRecurso = (ausencia.resource.user?.sites ?? []).map((s) => s.siteId)
-    const esSuya = ausencia.resource.leadCoordinatorId === req.user.id
-      || sedesDelRecurso.some((s) => misSedes.includes(s))
-    // Fallback de list(): el recurso puede no tener User ni líder y aun así
-    // estar programado en una sede del coordinador.
-    const programadoEnSusSedes = esSuya ? false : await prisma.assignment.findFirst({
-      where: {
-        room: { siteId: { in: misSedes } },
-        OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
-      },
-      select: { id: true },
-    })
-    if (!esSuya && !programadoEnSusSedes) throw errors.forbidden('No tienes acceso a esta ausencia')
-  } else if (rol === 'reprogramador') {
-    if (!TIPOS_QUE_IMPACTAN_PACIENTES.has(ausencia.resource.type)) {
-      throw errors.forbidden('No tienes acceso a esta ausencia')
-    }
-  }
-  // supervisor / gerencia / directivo: ven todo.
-
-  // ---- Nombres de quien diligenció y quien dio el Vo Bo.
-  const idsUsuarios = [ausencia.reportedBy, ausencia.confirmedBy].filter(Boolean)
-  const usuarios = idsUsuarios.length > 0
-    ? await prisma.user.findMany({ where: { id: { in: idsUsuarios } }, select: { id: true, name: true, role: true } })
-    : []
-  const porId = Object.fromEntries(usuarios.map((u) => [u.id, u]))
-
-  res.json({
-    codigo: 'F-AA-126',
-    version: '05',
-    // El encabezado del formato oficial cambia de razón social según la empresa
-    // a la que se cargue la ausencia. 'ambas' y los registros viejos sin
-    // empresa usan el de la clínica, igual que hacía el PDF.
-    empresa: ausencia.affectedCompany ?? null,
-    empresa_label: EMPRESA_LABEL[ausencia.affectedCompany] ?? null,
-    razon_social: ausencia.affectedCompany === 'foca'
-      ? 'FUNDACIÓN OFTALMOLÓGICA DEL CARIBE'
-      : 'CLÍNICA OFTALMOLÓGICA DEL CARIBE',
-    subtitulo: 'CONTINUIDAD DEL SERVICIO CON LOS PRESTADORES DE SERVICIO',
-    especialidades: 'OFTALMOLOGÍA - OTORRINOLARINGOLOGÍA',
-
-    ausencia: {
-      id: ausencia.id,
-      estado: ausencia.status,
-      tipo: ausencia.type,
-      motivo_catalogo: ausencia.reasonRef?.name ?? null,
-      motivo_texto: ausencia.reason ?? null,
-      fecha_salida: fechaSolo(ausencia.startDate),
-      fecha_entrada: fechaSolo(ausencia.endDate),
-      es_parcial: ausencia.isPartial,
-      hora_inicio: ausencia.absenceStartTime,
-      hora_fin: ausencia.absenceEndTime,
-      ciudad_regional: ausencia.regionalCity,
-      es_programada: ausencia.isPlanned,
-      anticipacion_dias: ausencia.noticeDays,
-      desea_reponer: ausencia.wantsMakeup,
-      fecha_reposicion_propuesta: ausencia.makeupDate ? fechaSolo(ausencia.makeupDate) : null,
-      observaciones_reposicion: ausencia.makeupNotes,
-      accion_agenda: ausencia.agendaAction,
-      accion_tomada: ausencia.actionTaken,
-      motivo_rechazo: ausencia.rejectionReason,
-      // El PDF dejaba 12 filas de meses en blanco "para llenar a mano". Eso lo
-      // reemplaza el desglose que el sistema ya calcula al confirmar.
-      pacientes_impactados: ausencia.patientsAffected,
-      impacto_por_dia: ausencia.dailyImpact ?? null,
-    },
-
-    profesional: {
-      nombre: ausencia.resource.name,
-      tipo: ausencia.resource.type,
-      especialidad: ausencia.resource.specialty,
-      correo: ausencia.resource.user?.email ?? null,
-      firma_url: ausencia.resource.signatureUrl ?? null,
-    },
-
-    diligenciamiento: {
-      // `reportedAt` es un timestamp real, no una fecha suelta: va en hora de
-      // Bogotá y no en UTC (lib/fechas.js).
-      fecha: ausencia.reportedAt,
-      por: porId[ausencia.reportedBy]?.name ?? null,
-      rol: porId[ausencia.reportedBy]?.role ?? null,
-      registrado_por_coordinador: ausencia.recordedByCoordinator,
-    },
-
-    vo_bo: ausencia.confirmedBy
-      ? { nombre: porId[ausencia.confirmedBy]?.name ?? null, fecha: ausencia.confirmedAt }
-      : null,
-
-    nota: 'Las ausencias deben ser informadas con 20 días de anticipación.',
-  })
 }

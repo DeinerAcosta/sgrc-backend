@@ -43,10 +43,6 @@ r.post('/auth/change-password', wrap(auth.cambiarPassword))
 
 // Perfil propio
 r.get('/users/me', wrap(auth.me))
-// Sep-2026 · Self-service de firma: cada medico gestiona su firma escaneada
-// desde /perfil, sin depender del admin.
-r.get('/users/me/signature', requireRol('recurso'), wrap(usr.getMiFirma))
-r.put('/users/me/signature', requireRol('recurso'), wrap(usr.actualizarMiFirma))
 r.put('/users/me/heartbeat', wrap(usr.heartbeat))
 r.put('/users/me', wrap(usr.updateMe))
 
@@ -157,12 +153,6 @@ r.get('/absences', wrap(aus.list))
 r.post('/absences', wrap(aus.create))
 r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.confirmar))
 r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.rechazar))
-// Oct-2026 · PROYECTOS-3398 §1 · El formato F-AA-126 como pantalla de solo
-// lectura, en lugar del PDF que se eliminó. Sin `requireRol`: lo abre
-// cualquier rol autenticado y el controlador recorta lo que cada uno alcanza
-// (el propio recurso solo la suya, el coordinador las de sus sedes, Duarte
-// solo las de quien tiene agenda de pacientes).
-r.get('/absences/:id/form', wrap(aus.formato))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
 // Lectura abierta (scoping por rol dentro del handler).
