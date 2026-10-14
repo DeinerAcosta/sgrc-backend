@@ -835,8 +835,38 @@ export async function contextoReemplazo(req, res) {
     coordsPorSede.get(c.siteId).push(c.user)
   }
 
+  // LA CUENTA DEL CASO. Sin esto no habia forma de saber si quedaba algo por
+  // hacer: se asignaba un reemplazo y la pantalla se veia igual que antes.
+  //
+  // Los cubiertos salen de los turnos nuevos, no de las franjas que se cayeron:
+  // quien cubre puede atender mas o menos pacientes que el ausente (otro
+  // intervalo por paciente, otra franja horaria), y lo que importa es a cuanta
+  // gente se le resolvio de verdad.
+  const pacientesCubiertos = reemplazos.reduce((n, r) => n + (r.patientCapacity ?? 0), 0)
+  const pacientesImpactados = ausencia.patientsAffected ?? 0
+
   res.json({
     ausencia: serializarAusencia(ausencia, dias, fechas),
+    cuenta: {
+      pacientes_impactados: pacientesImpactados,
+      pacientes_cubiertos: pacientesCubiertos,
+      // Quedan los que faltan, nunca negativo: si quien cubre atiende de mas,
+      // el caso esta resuelto, no "sobre-resuelto".
+      pacientes_pendientes: Math.max(0, pacientesImpactados - pacientesCubiertos),
+      franjas_totales: asignaciones.length,
+      franjas_cubiertas: asignaciones.filter((a) => reemplazoPorFranja.has(claveFranja(a))).length,
+      // Resuelto = no queda ningun paciente sin reubicar Y hubo al menos un
+      // turno nuevo. Sin lo segundo, una ausencia sin pacientes impactados
+      // nacería "resuelta" sin que nadie la toque.
+      resuelto: pacientesImpactados > 0 && pacientesCubiertos >= pacientesImpactados,
+      quienes_cubren: reemplazos.map((r) => ({
+        nombre: r.resource?.name,
+        dia: r.weekday,
+        desde: r.startTime,
+        hasta: r.endTime,
+        pacientes: r.patientCapacity ?? 0,
+      })),
+    },
     semana: { id: semana.id, desde: semana.startDate, hasta: semana.endDate, estado: semana.status },
     franjas: asignaciones.map((a) => {
       const rp = reemplazoPorFranja.get(claveFranja(a))
@@ -853,7 +883,9 @@ export async function contextoReemplazo(req, res) {
         room_id: a.roomId,
         site: a.room?.site ?? null,
         coordinadores: coordsPorSede.get(a.room?.siteId) ?? [],
-        reemplazo: rp ? { id: rp.id, resource: rp.resource } : null,
+        reemplazo: rp
+          ? { id: rp.id, resource: rp.resource, patient_capacity: rp.patientCapacity, start_time: rp.startTime, end_time: rp.endTime }
+          : null,
       }
     }),
   })
