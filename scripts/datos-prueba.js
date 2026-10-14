@@ -14,7 +14,7 @@
  * inventados y no tienen nada que hacer en produccion.
  *
  * Todo lo que crea queda marcado para poder borrarlo sin tocar lo demas:
- *   · usuarios y recursos nuevos      -> el nombre empieza por "PRU ·"
+ *   · usuarios y recursos nuevos      -> los nombres de RECURSOS_PRUEBA / USUARIOS_PRUEBA
  *   · asignaciones y ausencias        -> viven en la semana en curso
  *
  * USO
@@ -29,7 +29,11 @@ const args = process.argv.slice(2)
 const APLICAR = args.includes('--aplicar')
 const LIMPIAR = args.includes('--limpiar')
 
-const MARCA = 'PRU ·'
+// Los nombres que crea este script. Se listan aqui para poder borrarlos sin
+// marcarlos con un prefijo visible: Hector pidio nombres reales porque el
+// 'PRU ·' se colaba en cada captura y en cada desplegable.
+const RECURSOS_PRUEBA = ['Dra. Marcela Suárez', 'Dr. Andrés Camargo', 'Dra. Paula Olivares']
+const USUARIOS_PRUEBA = ['Luisa Fernanda Movilla', 'Andrés Felipe Barraza']
 const DOMINIO = 'prueba.local'
 const PASS = 'Admin123'
 
@@ -71,11 +75,11 @@ async function limpiar() {
   const domingo = sumarDias(lunes, 6)
 
   const semana = await prisma.week.findFirst({ where: { startDate: lunes } })
-  const recursosPru = await prisma.resource.findMany({ where: { name: { startsWith: MARCA } }, select: { id: true } })
+  const recursosPru = await prisma.resource.findMany({ where: { name: { in: RECURSOS_PRUEBA } }, select: { id: true } })
   const idsPru = recursosPru.map((r) => r.id)
 
   log(`Semana en curso   : ${fecha(lunes)} → ${fecha(domingo)} ${semana ? '(existe)' : '(no existe)'}`)
-  log(`Recursos ${MARCA}    : ${idsPru.length}`)
+  log(`Recursos de prueba: ${idsPru.length}`)
 
   const ausencias = await prisma.absence.count({
     where: { OR: [{ resourceId: { in: idsPru } }, { startDate: { gte: lunes, lte: domingo } }] },
@@ -85,7 +89,7 @@ async function limpiar() {
 
   log(`Ausencias a borrar: ${ausencias}`)
   log(`Asignaciones      : ${asignaciones}  (todas las de la semana en curso)`)
-  log(`Usuarios ${MARCA}    : ${usuarios}`)
+  log(`Usuarios de prueba: ${usuarios}`)
 
   if (!APLICAR) { log('\nCORRIDA EN SECO. Para borrar: npm run datos:prueba -- --limpiar --aplicar'); return }
 
@@ -184,7 +188,7 @@ async function crear() {
   // ------------------------------------------------------------- usuarios
   const hash = await bcrypt.hash(PASS, 12)
   const repros = []
-  for (const [i, nombre] of [`${MARCA} Luisa Reprogramadora`, `${MARCA} Andrés Reprogramador`].entries()) {
+  for (const [i, nombre] of USUARIOS_PRUEBA.entries()) {
     const email = `repro${i + 1}@${DOMINIO}`
     const u = await prisma.user.upsert({
       where: { email },
@@ -200,9 +204,9 @@ async function crear() {
   // de reemplazo tiene que ofrecer. Sin ellos no hay nada que elegir.
   const libres = []
   for (const [nombre, tipo, esp] of [
-    [`${MARCA} Dra. Suárez`, 'oftalmologo', 'Retina'],
-    [`${MARCA} Dr. Camargo`, 'oftalmologo', 'Córnea'],
-    [`${MARCA} Dra. Olivares`, 'optometra', 'General'],
+    [RECURSOS_PRUEBA[0], 'oftalmologo', 'Retina'],
+    [RECURSOS_PRUEBA[1], 'oftalmologo', 'Córnea'],
+    [RECURSOS_PRUEBA[2], 'optometra', 'General'],
   ]) {
     const existente = await prisma.resource.findFirst({ where: { name: nombre } })
     const r = existente ?? await prisma.resource.create({
@@ -213,11 +217,11 @@ async function crear() {
 
   // ----------------------------------------------------------- ocupados
   const oftalmologos = await prisma.resource.findMany({
-    where: { type: 'oftalmologo', active: true, name: { not: { startsWith: MARCA } } },
+    where: { type: 'oftalmologo', active: true, name: { notIn: RECURSOS_PRUEBA } },
     orderBy: { name: 'asc' },
   })
   const optometras = await prisma.resource.findMany({
-    where: { type: 'optometra', active: true, name: { not: { startsWith: MARCA } } },
+    where: { type: 'optometra', active: true, name: { notIn: RECURSOS_PRUEBA } },
     orderBy: { name: 'asc' },
   })
   if (oftalmologos.length < 2 || optometras.length < 1) { log('Faltan profesionales base.'); return }
