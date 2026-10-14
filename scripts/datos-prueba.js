@@ -93,6 +93,18 @@ async function limpiar() {
   await prisma.absence.deleteMany({
     where: { OR: [{ resourceId: { in: idsPru } }, { startDate: { gte: lunes, lte: domingo } }] },
   })
+  // Las asignaciones de los recursos de prueba van en CUALQUIER semana, no
+  // solo en la de ahora: alcanza con que una prueba manual deje una suelta en
+  // otra semana para que la clave foranea impida borrar el recurso.
+  await prisma.assignment.deleteMany({
+    where: {
+      OR: [
+        { resourceId: { in: idsPru } },
+        { assistantId: { in: idsPru } },
+        { assistant2Id: { in: idsPru } },
+      ],
+    },
+  })
   if (semana) {
     await prisma.assignment.deleteMany({ where: { weekId: semana.id } })
     await prisma.weekSiteClosure.deleteMany({ where: { weekId: semana.id } })
