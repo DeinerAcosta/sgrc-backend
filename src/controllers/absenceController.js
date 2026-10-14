@@ -895,6 +895,9 @@ function serializarAusencia(a, dias) {
 // reprogramador marca su caso como resuelto.
 // ============================================================================
 
+// Nota de roles (oct-2026): `reprogramador` es la LÍDER del proceso, no
+// quien recibe el caso. Conduce la reprogramación de principio a fin y al
+// final se lo pasa a alguien para que haga las llamadas.
 const asignarReprogramadorSchema = z.object({
   reschedulerId: z.string().uuid('Hay que elegir un reprogramador'),
   notes: z.preprocess(emptyToUndef, z.string().max(2000).optional()),

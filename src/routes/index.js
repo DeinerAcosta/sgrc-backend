@@ -163,7 +163,7 @@ r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia'
 // las franjas que se cayeron con sede, consultorio, horario y coordinador.
 r.get('/absences/:id/replacement-context', wrap(aus.contextoReemplazo))
 // Oct-2026 · La lider asigna la reprogramacion; el reprogramador la cierra.
-r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.asignarReprogramador))
+r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.asignarReprogramador))
 r.put('/absences/:id/rescheduler/done', requireRol('supervisor', 'gerencia', 'reprogramador'), wrap(aus.marcarReprogramacionResuelta))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
