@@ -126,6 +126,32 @@ async function main() {
     return
   }
 
+  // PRIMERO la auditoria, DESPUES el borrado. Al reves, un fallo al auditar
+  // deja los datos destruidos y ningun registro de que existieron: paso el
+  // 14-oct-2026 con estas mismas 6 ausencias. registrarAuditoria se traga el
+  // error a proposito (dentro de una request no debe tumbar la operacion), asi
+  // que aqui hay que mirar lo que devuelve.
+  const auditoria = await registrarAuditoria({
+    userId: null,
+    action: ELIMINAR ? 'eliminar_ausencias_antiguas' : 'rechazar_ausencias_antiguas',
+    entity: 'ausencias',
+    entityId: ids[0],
+    oldValue: objetivo.map((a) => ({
+      id: a.id, recurso: a.resource.name, tipo: a.type,
+      inicio: a.startDate, observacion: a.reason,
+    })),
+    reason: MOTIVO,
+  })
+
+  if (!auditoria) {
+    console.error('\n' + '-'.repeat(78))
+    console.error('ABORTADO — no se pudo escribir la auditoria (el error va arriba).')
+    console.error('NO se toco ninguna ausencia. Sin registro no hay a que volver.')
+    console.error('-'.repeat(78))
+    process.exitCode = 1
+    return
+  }
+
   if (ELIMINAR) {
     await prisma.$transaction(async (tx) => {
       await tx.absence.deleteMany({ where: { id: { in: ids } } })
@@ -139,24 +165,12 @@ async function main() {
     })
   }
 
-  await registrarAuditoria({
-    userId: null,
-    action: ELIMINAR ? 'eliminar_ausencias_antiguas' : 'rechazar_ausencias_antiguas',
-    entity: 'ausencias',
-    entityId: ids[0],
-    oldValue: objetivo.map((a) => ({
-      id: a.id, recurso: a.resource.name, tipo: a.type,
-      inicio: a.startDate, observacion: a.reason,
-    })),
-    reason: MOTIVO,
-  })
-
   const quedan = await prisma.absence.count({ where: { status: 'pendiente', startDate: { lt: corte } } })
   console.log('\n' + '-'.repeat(78))
   console.log(`APLICADO — ${ids.length} ausencia(s) ${ELIMINAR ? 'eliminadas' : 'rechazadas'}.`)
   console.log(`Verificación: pendientes con más de ${DIAS} días que quedan = ${quedan}`)
   if (quedan !== 0) console.log('   (son las que tienen registros asociados, revísalas a mano)')
-  console.log('Queda en auditoría con el detalle de cada una.')
+  console.log(`Auditoría escrita antes de tocar nada: ${auditoria.id}`)
   console.log('-'.repeat(78))
 }
 

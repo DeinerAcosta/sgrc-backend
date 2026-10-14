@@ -759,7 +759,11 @@ model Notification {
 // ============ AUDITORÍA ============
 model AuditEntry {
   id        String   @id @default(uuid())
-  userId    String   @map("usuario_id")
+  // Oct-2026 · NULL = accion del sistema, no de una persona. Los scripts de
+  // datos (limpiar:pendientes, limpiar:firmas) no corren en nombre de nadie.
+  // Mientras esto fue obligatorio, Prisma rechazaba esas entradas y el helper
+  // se tragaba el error: 6 ausencias se borraron de produccion sin dejar rastro.
+  userId    String?  @map("usuario_id")
   action    String   @map("accion") @db.VarChar(100)
   entity    String   @map("entidad") @db.VarChar(50)
   entityId  String   @map("entidad_id")
@@ -769,7 +773,7 @@ model AuditEntry {
   ipAddress String?  @map("ip_address") @db.VarChar(45)
   createdAt DateTime @default(now()) @map("creada_en")
 
-  user User @relation(fields: [userId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([action])
