@@ -871,6 +871,119 @@ function serializarAusencia(a, dias) {
     notice_days: a.noticeDays,
     patients_affected: a.patientsAffected,
     agenda_action: a.agendaAction,
+    rescheduler_id: a.reschedulerId,
+    assigned_by: a.assignedBy,
+    assigned_at: a.assignedAt,
+    reschedule_status: a.rescheduleStatus,
+    reschedule_notes: a.rescheduleNotes,
+    reschedule_done_at: a.rescheduleDoneAt,
     dias,
   }
+}
+
+
+// ============================================================================
+// Oct-2026 · ASIGNAR LA REPROGRAMACION A UN REPROGRAMADOR
+//
+// El ultimo paso del flujo que describio Hector: la lider ve la agenda caida,
+// decide el reemplazo o el dia, y se lo pasa a un reprogramador para que llame
+// a los pacientes. "La idea es que quede la trazabilidad de que Duarte realizo
+// y asigno al reprogramador para que todo vaya correcto hasta ahi".
+//
+// Hasta ahi, literalmente: las llamadas no se modelan porque el SGRC no tiene
+// pacientes, solo cuantos quedaron impactados. La cadena se cierra cuando el
+// reprogramador marca su caso como resuelto.
+// ============================================================================
+
+const asignarReprogramadorSchema = z.object({
+  reschedulerId: z.string().uuid('Hay que elegir un reprogramador'),
+  notes: z.preprocess(emptyToUndef, z.string().max(2000).optional()),
+})
+
+export async function asignarReprogramador(req, res) {
+  const { reschedulerId, notes } = asignarReprogramadorSchema.parse(req.body)
+
+  const ausencia = await prisma.absence.findUnique({
+    where: { id: req.params.id },
+    include: { resource: { select: { id: true, name: true } } },
+  })
+  if (!ausencia) throw errors.notFound('Ausencia no encontrada')
+
+  // Se comprueba el rol de verdad, no se confia en lo que mande el cliente:
+  // asignarle esto a quien no puede entrar a la bandeja deja el caso en un
+  // limbo que nadie ve.
+  const destinatario = await prisma.user.findUnique({
+    where: { id: reschedulerId },
+    select: { id: true, name: true, email: true, role: true, active: true },
+  })
+  if (!destinatario || !destinatario.active) throw errors.badRequest('Ese usuario no existe o esta inactivo')
+  if (destinatario.role !== 'reprogramador') {
+    throw errors.badRequest(`${destinatario.name} no tiene el rol de reprogramador, asi que no veria el caso`)
+  }
+
+  const actualizada = await prisma.absence.update({
+    where: { id: ausencia.id },
+    data: {
+      reschedulerId,
+      assignedBy: req.user.id,
+      assignedAt: new Date(),
+      rescheduleStatus: 'asignada',
+      rescheduleNotes: notes ?? null,
+      // Reasignar reabre el caso: si ya estaba resuelto y se pasa a otra
+      // persona, darlo por cerrado seria mentir.
+      rescheduleDoneAt: null,
+    },
+  })
+
+  await registrarAuditoria({
+    userId: req.user.id,
+    action: 'asignar_reprogramador',
+    entity: 'ausencias',
+    entityId: ausencia.id,
+    newValue: { reprogramador: destinatario.name, recurso: ausencia.resource?.name, notas: notes ?? null },
+    reason: 'Asignacion de la reprogramacion de la agenda',
+    ipAddress: getIp(req),
+  })
+
+  await notificar({
+    userId: reschedulerId,
+    type: 'reprogramacion_asignada',
+    title: `Te asignaron la reprogramacion de ${ausencia.resource?.name}`,
+    message: `<p>Se te asigno la reprogramacion de la agenda de <strong>${ausencia.resource?.name}</strong>.</p>${notes ? `<p><em>Indicaciones:</em> ${notes}</p>` : ''}`,
+    contexto: 'Gestion de ausencias',
+  })
+
+  res.json(actualizada)
+}
+
+/** El reprogramador da su caso por terminado. */
+export async function marcarReprogramacionResuelta(req, res) {
+  const ausencia = await prisma.absence.findUnique({ where: { id: req.params.id } })
+  if (!ausencia) throw errors.notFound('Ausencia no encontrada')
+  if (!ausencia.reschedulerId) throw errors.badRequest('Esta ausencia no tiene reprogramador asignado')
+
+  // Lo cierra quien lo tiene asignado. Supervision y gerencia tambien, porque
+  // alguien tiene que poder destrabarlo si el reprogramador se va de vacaciones.
+  const esElAsignado = ausencia.reschedulerId === req.user.id
+  const puedeDestrabar = ['supervisor', 'gerencia'].includes(req.user.role)
+  if (!esElAsignado && !puedeDestrabar) {
+    throw errors.forbidden('Solo quien tiene asignada la reprogramacion puede darla por resuelta')
+  }
+
+  const actualizada = await prisma.absence.update({
+    where: { id: ausencia.id },
+    data: { rescheduleStatus: 'resuelta', rescheduleDoneAt: new Date() },
+  })
+
+  await registrarAuditoria({
+    userId: req.user.id,
+    action: 'resolver_reprogramacion',
+    entity: 'ausencias',
+    entityId: ausencia.id,
+    newValue: { cerrada_por: req.user.name, era_el_asignado: esElAsignado },
+    reason: esElAsignado ? 'El reprogramador dio el caso por terminado' : 'Cerrada por supervision',
+    ipAddress: getIp(req),
+  })
+
+  res.json(actualizada)
 }

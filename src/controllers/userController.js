@@ -303,6 +303,19 @@ export async function heartbeat(req, res) {
 }
 
 /**
+ * Oct-2026 · Los reprogramadores activos, para el select de "asignar a".
+ * Mismo criterio que listDirectivos: solo id, nombre y correo.
+ */
+export async function listReprogramadores(req, res) {
+  const usuarios = await prisma.user.findMany({
+    where: { role: 'reprogramador', active: true },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: 'asc' },
+  })
+  res.json(usuarios)
+}
+
+/**
  * Sep-2026 · Ley 2101 · Lista abreviada de directivos activos para poblar el
  * dropdown del modal de asignación cuando un aux va a trabajar sáb+dom.
  * Solo se expone id, nombre y rol — mínimo necesario. Endpoint abierto a

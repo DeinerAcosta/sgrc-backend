@@ -539,6 +539,21 @@ model Absence {
   confirmedBy           String?        @map("confirmado_por")
   confirmedAt           DateTime?      @map("confirmado_en")
 
+  // Oct-2026 · TRAZABILIDAD DE LA REPROGRAMACIÓN
+  // La líder decide qué pasa con la agenda caída y se la pasa a un
+  // reprogramador, que después llama a los pacientes. Las llamadas NO se
+  // modelan: el SGRC no tiene pacientes, solo el número de impactados. La
+  // cadena termina cuando el reprogramador marca su caso como resuelto.
+  // Sin clave foránea, igual que reportedBy/confirmedBy: el histórico no se
+  // acopla al borrado de usuarios.
+  reschedulerId         String?        @map("reprogramador_id")
+  assignedBy            String?        @map("asignado_por")
+  assignedAt            DateTime?      @map("asignado_en")
+  // NULL = sin asignar · 'asignada' · 'resuelta'
+  rescheduleStatus      String?        @map("estado_reprogramacion") @db.VarChar(20)
+  rescheduleNotes       String?        @map("notas_reprogramacion") @db.Text
+  rescheduleDoneAt      DateTime?      @map("reprogramacion_resuelta_en")
+
   resource                    Resource               @relation(fields: [resourceId], references: [id])
   reasonRef                   AbsenceReason?         @relation(fields: [reasonId], references: [id], onDelete: SetNull)
   replacementAssignments      Assignment[]           @relation("AsignacionesReemplazo")
@@ -549,6 +564,8 @@ model Absence {
   @@index([status])
   @@index([startDate])
   @@index([reasonId])
+  // La bandeja del reprogramador filtra por "lo mío sin resolver".
+  @@index([reschedulerId])
   @@map("ausencias")
 }
 

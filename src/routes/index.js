@@ -87,6 +87,8 @@ r.post('/users/:id/resend-credentials', requireRol('supervisor'), wrap(usr.reenv
 // Asignación cuando un aux va a trabajar sáb+dom (autorización obligatoria).
 // El coord tiene que poder consultarla desde el modal, por eso está abierta.
 r.get('/users/directivos', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(usr.listDirectivos))
+// Oct-2026 · Para el select de "asignar la reprogramacion a".
+r.get('/users/reschedulers', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(usr.listReprogramadores))
 // Solicitudes de registro (autorregistro pendiente de aprobación)
 r.get('/users/requests', requireRol('supervisor'), wrap(solReg.list))
 r.post('/users/requests/:id/approve', requireRol('supervisor'), wrap(solReg.aprobar))
@@ -160,6 +162,9 @@ r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia'
 // Oct-2026 · Todo lo que la pantalla de reemplazo necesita de un solo viaje:
 // las franjas que se cayeron con sede, consultorio, horario y coordinador.
 r.get('/absences/:id/replacement-context', wrap(aus.contextoReemplazo))
+// Oct-2026 · La lider asigna la reprogramacion; el reprogramador la cierra.
+r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.asignarReprogramador))
+r.put('/absences/:id/rescheduler/done', requireRol('supervisor', 'gerencia', 'reprogramador'), wrap(aus.marcarReprogramacionResuelta))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
 // Lectura abierta (scoping por rol dentro del handler).
