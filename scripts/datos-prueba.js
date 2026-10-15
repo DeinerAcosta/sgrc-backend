@@ -156,13 +156,14 @@ async function crear() {
   log('  2 usuarios con rol reprogramador     (repro1@/repro2@' + DOMINIO + ')')
   log('  3 profesionales libres               (para que "Cambiar de médico" encuentre candidatos)')
   log('  9 asignaciones en bloques de 6h      (dejan la tarde libre: así hay con quién reemplazar)')
-  log('  6 ausencias cubriendo cada caso:')
+  log('  7 ausencias cubriendo cada caso:')
   log('       · confirmada, remunerada, con candidatos libres')
   log('       · PENDIENTE (sale en rojo con "sin confirmar")')
   log('       · con REEMPLAZO ya cargado      (casilla índigo montada sobre la roja)')
   log('       · ya ASIGNADA a un reprogramador')
   log('       · ya RESUELTA')
   log('       · no remunerada                 (para ver el color en el cronograma)')
+  log('       · PARCIAL solo la mañana        (la tarde del mismo día NO se cae)')
   log('  1 celda con dos médicos              (para ver las casillas apiladas)')
   log('  + activa los motivos del catálogo que estaban apagados')
   linea()
@@ -262,6 +263,13 @@ async function crear() {
   await asignar(libres[1], oftalSm, 'miercoles', '14:00', '19:00')
   await asignar(libres[2], optoBq, 'martes', '14:00', '19:00')
 
+  // AUSENCIA PARCIAL: el mismo medico con turno de mañana Y de tarde el
+  // viernes. La ausencia solo cubre la mañana, asi que la casilla de la tarde
+  // tiene que seguir verde. Es el caso que Hector pregunto: 'si se ausenta
+  // para la mañana pero no para la tarde, ¿que se debe mostrar?'.
+  await asignar(oft1, oftalBq, 'viernes', '07:00', '11:00')
+  await asignar(oft1, oftalBq, 'viernes', '14:00', '19:00')
+
   // CASILLAS APILADAS: dos profesionales en el mismo consultorio y dia. La
   // segunda se monta sobre la primera, que es lo que Hector quiere ver.
   await asignar(oft2, oftalBq, 'lunes', '14:00', '16:00')
@@ -281,6 +289,9 @@ async function crear() {
         patientsAffected: opciones.patients ?? 33,
         agendaAction: opciones.agendaAction ?? null,
         reportedBy: alguienQueReporta?.id ?? null,
+        isPartial: !!opciones.parcial,
+        absenceStartTime: opciones.parcial?.desde ?? null,
+        absenceEndTime: opciones.parcial?.hasta ?? null,
         isPlanned: false,
         noticeDays: 0,
         reschedulerId: opciones.reschedulerId ?? null,
@@ -339,6 +350,14 @@ async function crear() {
     rescheduleNotes: 'Reubicados los 36 pacientes.',
     rescheduleDoneAt: new Date(),
     patients: 36,
+  })
+
+  // 7 · PARCIAL: solo la mañana. La tarde NO se cae.
+  await nueva(oft1, 4, {
+    type: 'enfermedad',
+    reason: 'Cita médica en la mañana. Por la tarde atiende normal.',
+    patients: 12,
+    parcial: { desde: '07:00', hasta: '11:00' },
   })
 
   // 6 · NO REMUNERADA: para ver el otro color en el cronograma.

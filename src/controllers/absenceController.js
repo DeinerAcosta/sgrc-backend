@@ -760,6 +760,26 @@ export async function rechazar(req, res) {
 
 const NOMBRES_DIA_AUS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
 
+/**
+ * ¿Esta asignación se cayó por culpa de esta ausencia?
+ *
+ * En una ausencia de día completo, todas. En una PARCIAL, solo las que pisan
+ * su horario: quien falta de 07:00 a 11:00 sigue atendiendo por la tarde, y
+ * contar ese turno como caído infla los pacientes impactados y manda a buscar
+ * un reemplazo que no hace falta.
+ *
+ * Las horas son "HH:mm" de ancho fijo, así que compararlas como texto equivale
+ * a compararlas como minutos — mismo criterio que "solapan" en lib/timeSlots.
+ */
+function laTumbaLaAusencia(asignacion, ausencia) {
+  if (!ausencia.isPartial) return true
+  const desde = ausencia.absenceStartTime
+  const hasta = ausencia.absenceEndTime
+  // Parcial sin horas cargadas: no hay con qué recortar, se asume el día.
+  if (!desde || !hasta) return true
+  return !(hasta <= asignacion.startTime || desde >= asignacion.endTime)
+}
+
 export async function contextoReemplazo(req, res) {
   const ausencia = await prisma.absence.findUnique({
     where: { id: req.params.id },
@@ -808,6 +828,7 @@ export async function contextoReemplazo(req, res) {
     },
     orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
   })
+    .then((lista) => lista.filter((a) => laTumbaLaAusencia(a, ausencia)))
 
   // Los reemplazos ya cargados para esta ausencia, por consultorio+dia+hora:
   // asi cada franja sabe si ya esta resuelta y la pantalla no vuelve a ofrecer
