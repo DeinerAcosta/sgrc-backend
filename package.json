@@ -40,7 +40,8 @@
     "qa:llamadas": "node scripts/qa/llamadas-reprogramador.mjs",
     "qa:datos": "node scripts/qa/integridad-semana.mjs",
     "qa:casos": "node scripts/qa/asignar-todos-los-casos.mjs",
-    "reparar:dias": "node scripts/reparar-dias-corridos.js"
+    "reparar:dias": "node scripts/reparar-dias-corridos.js",
+    "verificar:tablero": "node scripts/qa/verificar-tablero-reprogramaciones.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
