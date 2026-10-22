@@ -119,13 +119,25 @@ export async function list(req, res) {
   if (activo !== undefined) where.active = activo === 'true'
   if (coordinador_lider_id) where.leadCoordinatorId = coordinador_lider_id
 
-  // Filtrar por sede a través del usuario vinculado al recurso
+  // Filtrar por sede. 22-oct · QA (F2): antes solo por el USUARIO vinculado
+  // al recurso, y casi ningún recurso tiene usuario: al elegir una sede, la
+  // lista de "Registrar ausencia" quedaba en 0 auxiliares y 0 optómetras. Un
+  // recurso es de la sede si tiene usuario en ella, si su coordinador líder es
+  // de ella o si tiene turnos ahí (como principal o como auxiliar). Va en AND
+  // para no pisar el OR del filtro por especialidad.
   if (sede_id) {
-    where.user = {
-      is: {
-        sites: { some: { siteId: sede_id } },
-      },
-    }
+    const coordsDeLaSede = (await prisma.userSite.findMany({ where: { siteId: sede_id }, select: { userId: true } }))
+      .map((u) => u.userId)
+    const turnoEnLaSede = { some: { room: { siteId: sede_id }, status: { not: 'cancelada' } } }
+    where.AND = [...(where.AND ?? []), {
+      OR: [
+        { user: { is: { sites: { some: { siteId: sede_id } } } } },
+        { leadCoordinatorId: { in: coordsDeLaSede } },
+        { assignmentsAsLead: turnoEnLaSede },
+        { assignmentsAsAssistant: turnoEnLaSede },
+        { assignmentsAsAssistant2: turnoEnLaSede },
+      ],
+    }]
   }
 
   const recursos = await prisma.resource.findMany({

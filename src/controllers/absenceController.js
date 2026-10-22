@@ -436,6 +436,16 @@ export async function create(req, res) {
   // La autorización de datos se exige en el servidor: la casilla del
   // formulario se salta con una llamada directa a la API. Y tiene que ser la
   // versión vigente del texto, no cualquier valor.
+  // 22-oct · QA (F3): un profesional solo registra SU propia ausencia. Antes
+  // `create` no lo comprobaba: por la API se podía registrar a nombre de otra
+  // persona, y quedaba guardada una autorización de datos que esa persona no dio.
+  if (req.user.role === 'recurso') {
+    const yo = await prisma.user.findUnique({ where: { id: req.user.id }, select: { resourceId: true } })
+    if (!yo?.resourceId || yo.resourceId !== data.resourceId) {
+      throw errors.forbidden('Solo puedes registrar tus propias ausencias.')
+    }
+  }
+
   const pideDatos = pideAutorizacionDatos(req.user.role)
   if (pideDatos && data.dataConsentVersion !== AUTORIZACION_DATOS.version) {
     throw errors.badRequest('Para registrar la ausencia hay que autorizar el tratamiento de datos personales.')
