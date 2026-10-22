@@ -12,6 +12,13 @@ import { prisma } from '../lib/prisma.js'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
 import { tiposMedicosPermitidos } from '../lib/resourceTypes.js'
+import { resumirGestion } from '../lib/gestionReprogramadores.js'
+import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
+import { esProgramada } from '../lib/anticipacion.js'
+import { fechaDeTurno } from '../lib/bloqueosSede.js'
+import {
+  coberturaDeAusencia, bucketAntelacion, BUCKETS_ANTELACION, bucketSla, BUCKETS_SLA, diasEntreFechas, mesDeFecha,
+} from '../lib/coberturaTablero.js'
 
 const TTL_REPROG = 60_000  // 60s — dashboard ejecutivo, no necesita tiempo real
 
@@ -119,10 +126,13 @@ async function dataReprogramacionesDashboard(query = {}) {
   const desdeD = v.d
   const hastaD = new Date(v.h)
   hastaD.setHours(23, 59, 59, 999)
+  // Oct-2026 · Las fechas de la ausencia son @db.Date (medianoche UTC). Con
+  // los límites en hora local, una ausencia que terminaba el mismo día
+  // "desde" quedaba fuera del rango.
   const whereAus = {
     status: { not: 'rechazada' },
-    startDate: { lte: hastaD },
-    endDate:    { gte: desdeD },
+    startDate: { lte: new Date(`${rango.hasta}T00:00:00Z`) },
+    endDate:    { gte: new Date(`${rango.desde}T00:00:00Z`) },
   }
   // Filtro por familia: incluye null como 'ausencia_profesional' (fallback)
   if (familiasFiltro) {
@@ -175,6 +185,25 @@ async function dataReprogramacionesDashboard(query = {}) {
   // Se cargan una sola vez para todo el rango.
   const festivos = await cargarFestivosDelRango(desdeD, hastaD)
 
+  // Oct-2026 · COBERTURA REAL. Los turnos que cubren cada ausencia (los que
+  // pone la líder desde el caso o al mover la agenda) y los pacientes del caso
+  // (los reales si la líder los puso). Antes solo contaba la reposición que
+  // propone el médico y el tablero daba 0% con casos cubiertos.
+  const idsAus = ausF.map((a) => a.id)
+  const cubren = idsAus.length ? await prisma.assignment.findMany({
+    where: { coveredAbsenceId: { in: idsAus }, status: { not: 'cancelada' } },
+    select: { coveredAbsenceId: true, patientCapacity: true, weekday: true, week: { select: { startDate: true } } },
+  }) : []
+  const cubiertosDe = new Map()
+  for (const c of cubren) cubiertosDe.set(c.coveredAbsenceId, (cubiertosDe.get(c.coveredAbsenceId) ?? 0) + (c.patientCapacity ?? 0))
+  const conReposicion = (a) => a.makeups?.some((r) => r.status === 'aprobada' || r.status === 'realizada') ?? false
+  const coberturaDe = new Map(ausF.map((a) => [a.id, {
+    total: pacientesDelCaso(a),
+    ...coberturaDeAusencia({ total: pacientesDelCaso(a), cubiertos: cubiertosDe.get(a.id) ?? 0, reposicion: conReposicion(a) }),
+  }]))
+  const pacDe = (a) => coberturaDe.get(a.id)?.total ?? 0
+  const repuesta = (a) => coberturaDe.get(a.id)?.repuesta ?? false
+
   // ==== 3. KPIs generales ====
   let diasPerdidos = 0
   let pacientesImpactados = 0
@@ -186,13 +215,14 @@ async function dataReprogramacionesDashboard(query = {}) {
   for (const a of ausF) {
     const dias = diasEntreInclusive(a.startDate, a.endDate, festivos)
     diasPerdidos += dias
-    pacientesImpactados += a.patientsAffected ?? 0
+    pacientesImpactados += pacDe(a)
     costoOportunidad += Number(a.opportunityCost ?? 0)
-    if (a.isPlanned) programadas++
+    // Oct-2026 · Programada = 20 días o más (lib/anticipacion). Lo guardado en
+    // is_planned puede venir de la regla vieja (>15) y no cuadraba con la
+    // gráfica de antelación del mismo tablero.
+    if (esProgramada(a.noticeDays)) programadas++
     else imprevistas++
-    if (a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)) {
-      conReposicionAprobada++
-    }
+    if (repuesta(a)) conReposicionAprobada++
   }
   const total = ausF.length
   const tasaReposicion = total > 0 ? Math.round((conReposicionAprobada / total) * 100) : 0
@@ -203,12 +233,12 @@ async function dataReprogramacionesDashboard(query = {}) {
   for (const a of ausF) {
     // Distribución: contamos la ausencia en el mes de su fechaInicio (más simple y
     // consistente con cómo la coord la reporta). Días y pacientes también.
-    const mes = mesLocal(a.startDate)  // YYYY-MM local Bogotá
+    const mes = mesDeFecha(a.startDate)  // @db.Date: en UTC, el día 1 es de su mes
     if (!seriePorMesMap.has(mes)) continue
     const b = seriePorMesMap.get(mes)
     b.count++
     b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
-    b.pacientes += a.patientsAffected ?? 0
+    b.pacientes += pacDe(a)
   }
   const porMes = [...seriePorMesMap.values()]
 
@@ -220,7 +250,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     const b = famAgg.get(fam)
     b.count++
     b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
-    b.pacientes += a.patientsAffected ?? 0
+    b.pacientes += pacDe(a)
   }
   const porFamilia = [...famAgg.values()]
     .map((f) => ({ ...f, pct: total > 0 ? Math.round((f.count / total) * 1000) / 10 : 0 }))
@@ -260,10 +290,9 @@ async function dataReprogramacionesDashboard(query = {}) {
     const b = recAgg.get(rid)
     b.count++
     b.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
-    b.pacientes += a.patientsAffected ?? 0
-    if (a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)) {
-      b.approved_makeups++
-    }
+    b.pacientes += pacDe(a)
+    // "Repuestos" = ausencias con todos sus pacientes con turno nuevo.
+    if (repuesta(a)) b.approved_makeups++
   }
   const porRecurso = [...recAgg.values()].sort((a, b) => b.dias - a.dias).slice(0, 30)
 
@@ -283,7 +312,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     const eb = espAgg.get(tipo)
     eb.count++
     eb.dias += diasEntreInclusive(a.startDate, a.endDate, festivos)
-    eb.pacientes += a.patientsAffected ?? 0
+    eb.pacientes += pacDe(a)
 
     const ck = `${fam}|${tipo}`
     if (!cruceAgg.has(ck)) cruceAgg.set(ck, { family: fam, type: tipo, count: 0 })
@@ -297,7 +326,8 @@ async function dataReprogramacionesDashboard(query = {}) {
   const nuevos = await calcularDatosFOCA({
     ausencias: ausF,
     reposiciones: reposicionesData._raw ?? [],
-    mapaSedes: mapaSedes ?? await mapaSedesPorRecurso(),
+    coberturaDe,
+    cubren,
   })
 
   return {
@@ -310,6 +340,8 @@ async function dataReprogramacionesDashboard(query = {}) {
       programadas,
       imprevistas,
       tasa_reposicion_pct: tasaReposicion,
+      // Oct-2026 · Ausencias con todos sus pacientes con turno nuevo.
+      repuestas: conReposicionAprobada,
     },
     por_mes: porMes,
     por_familia: porFamilia,
@@ -334,78 +366,80 @@ async function dataReprogramacionesDashboard(query = {}) {
 //   pct_antelacion_ok   → % de ausencias reportadas con antelacion >= 1 dia
 //   sin_cobertura       → pacientes de ausencias que NO se repusieron
 // ============================================================================
-async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
+async function calcularDatosFOCA({ ausencias, reposiciones, coberturaDe, cubren }) {
   // ---- Cobertura por paciente ----
-  // Aproximacion: para cada ausencia con al menos 1 reposicion aprobada,
-  // consideramos "cubiertos" a los patients_affected de esa ausencia.
+  // Oct-2026 · Con la cobertura REAL de cada caso (turnos que la cubren, o
+  // reposición aprobada) y sus pacientes reales. Una cubierta en parte suma
+  // sus pacientes cubiertos y los que faltan.
   let pacientesCubiertos = 0
   let pacientesSinCobertura = 0
   for (const a of ausencias) {
-    const pac = a.patientsAffected ?? 0
-    const cubierta = a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)
-    if (cubierta) pacientesCubiertos += pac
-    else          pacientesSinCobertura += pac
+    const c = coberturaDe.get(a.id)
+    pacientesCubiertos += c?.pacientesCubiertos ?? 0
+    pacientesSinCobertura += c?.pacientesSinCobertura ?? 0
   }
 
   // ---- Tasa de reposicion por sede ----
-  // Usa mapaSedes (recursoId -> sedeNombres). Si un recurso pertenece a >1 sede
-  // la ausencia se cuenta a cada sede (mejor sobre-representar que perder dato).
-  const porSedeMap = new Map()  // sedeNombre → { total, aprobadas }
+  // Oct-2026 · La sede es la de los turnos que SE CAYERON (donde atendía el
+  // ausente esos días). Antes era cualquier sede donde el médico hubiera
+  // trabajado alguna vez: un rotativo contaba su ausencia en las 7 sedes.
+  const recursos = [...new Set(ausencias.map((a) => a.resourceId))]
+  const turnosDelAusente = recursos.length ? await prisma.assignment.findMany({
+    where: { resourceId: { in: recursos }, coveredAbsenceId: null, status: { not: 'cancelada' } },
+    select: { resourceId: true, weekday: true, week: { select: { startDate: true } }, room: { select: { site: { select: { name: true } } } } },
+  }) : []
+  const porSedeMap = new Map()
   for (const a of ausencias) {
-    const info = mapaSedes.get(a.resourceId)
-    if (!info) continue
-    const cubierta = a.makeups?.some((r) => r.status === 'aprobada' || r.completedAt)
-    for (const nombre of info.sedeNombres) {
+    const ini = a.startDate.toISOString().slice(0, 10)
+    const fin = (a.endDate ?? a.startDate).toISOString().slice(0, 10)
+    const sedes = new Set(turnosDelAusente
+      .filter((t) => t.resourceId === a.resourceId)
+      .filter((t) => { const f = fechaDeTurno(t.week.startDate, t.weekday); return f && f >= ini && f <= fin })
+      .map((t) => t.room.site.name))
+    for (const nombre of sedes) {
       if (!porSedeMap.has(nombre)) porSedeMap.set(nombre, { name: nombre, total: 0, aprobadas: 0 })
       const b = porSedeMap.get(nombre)
       b.total++
-      if (cubierta) b.aprobadas++
+      if (coberturaDe.get(a.id)?.repuesta) b.aprobadas++
     }
   }
   const porSede = [...porSedeMap.values()]
     .map((s) => ({ ...s, pct: s.total > 0 ? Math.round((s.aprobadas / s.total) * 100) : 0 }))
     .sort((a, b) => b.pct - a.pct)
 
-  // ---- SLA de reposicion (dias entre fechaAusencia inicio y fecha_reposicion) ----
-  // requestedAt = solicitada, targetDate = fecha propuesta para reponer.
-  // Signo:
-  //   negativo = reposicion ANTES de la ausencia (adelantada)
-  //   0        = mismo dia
-  //   positivo = dias despues
-  const sla = { adelantada: 0, mismo_dia: 0, uno_a_siete: 0, ocho_a_treinta: 0, mas_30: 0 }
+  // ---- SLA de reposicion ----
+  // Días entre el inicio de la ausencia y el turno que la cubre (o la fecha
+  // propuesta en una reposición). Negativo = adelantada.
+  const sla = Object.fromEntries(BUCKETS_SLA.map((k) => [k, 0]))
+  const inicioDe = new Map(ausencias.map((a) => [a.id, a.startDate]))
+  for (const c of cubren) {
+    const fecha = fechaDeTurno(c.week.startDate, c.weekday)
+    const inicio = inicioDe.get(c.coveredAbsenceId)
+    if (fecha && inicio) sla[bucketSla(diasEntreFechas(inicio, fecha))]++
+  }
   for (const r of reposiciones) {
     if (!r.absence?.startDate || !r.targetDate) continue
-    const dias = Math.round(
-      (new Date(r.targetDate).setHours(0,0,0,0) - new Date(r.absence.startDate).setHours(0,0,0,0))
-      / (24 * 3600 * 1000)
-    )
-    if (dias < 0)       sla.adelantada++
-    else if (dias === 0) sla.mismo_dia++
-    else if (dias <= 7)  sla.uno_a_siete++
-    else if (dias <= 30) sla.ocho_a_treinta++
-    else                 sla.mas_30++
+    sla[bucketSla(diasEntreFechas(r.absence.startDate, r.targetDate))]++
   }
 
-  // ---- Antelacion del reporte (dias entre createdAt de ausencia y su startDate) ----
-  // Positivo = reportada CON antelacion (correcto).
-  // 0 o negativo = retroactiva (se reporta el mismo dia o despues del hecho).
-  const ant = { retroactivo: 0, uno: 0, dos_a_siete: 0, ocho_a_treinta: 0, mas_30: 0 }
+  // ---- Antelacion del aviso ----
+  // Oct-2026 · Antes leía `createdAt`, que la ausencia no tiene: todas caían
+  // en "más de 30 días" y el KPI daba 0%. Ahora son los días de anticipación
+  // guardados (días de calendario, la misma cuenta de la regla de 20 días), y
+  // "con antelación" es avisar con 20 días o más: programada.
+  const ant = Object.fromEntries(BUCKETS_ANTELACION.map((k) => [k, 0]))
   let conAntelacion = 0
+  let sumaDias = 0
   for (const a of ausencias) {
-    const dias = Math.round(
-      (new Date(a.startDate).setHours(0,0,0,0) - new Date(a.createdAt).setHours(0,0,0,0))
-      / (24 * 3600 * 1000)
-    )
-    if (dias <= 0)      ant.retroactivo++
-    else if (dias === 1) ant.uno++
-    else if (dias <= 7)  ant.dos_a_siete++
-    else if (dias <= 30) ant.ocho_a_treinta++
-    else                 ant.mas_30++
-    if (dias >= 1) conAntelacion++
+    const dias = a.noticeDays ?? diasEntreFechas(a.reportedAt, a.startDate)
+    ant[bucketAntelacion(dias)]++
+    if (bucketAntelacion(dias) === 'veinte_o_mas') conAntelacion++
+    sumaDias += Math.max(0, dias)
   }
   const pctAntelacionOk = ausencias.length > 0
     ? Math.round((conAntelacion / ausencias.length) * 1000) / 10
     : 0
+  const antelacionPromedio = ausencias.length > 0 ? Math.round(sumaDias / ausencias.length) : 0
 
   // ---- Patron por dia de la semana (Lun-Dom → 1..0 en JS getUTCDay) ----
   const dowMap = new Map()
@@ -414,7 +448,7 @@ async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
     const dow = new Date(a.startDate).getUTCDay()
     const b = dowMap.get(dow)
     b.count++
-    b.pacientes += a.patientsAffected ?? 0
+    b.pacientes += coberturaDe.get(a.id)?.total ?? 0
   }
   // Reorden L-D (JS: 0=Dom, 1=Lun ... 6=Sab) → salida Lun...Dom
   const porDiaSemana = [1, 2, 3, 4, 5, 6, 0].map((d) => dowMap.get(d))
@@ -440,7 +474,7 @@ async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
     })
     const b = subAgg.get(key)
     b.count++
-    b.pacientes += a.patientsAffected ?? 0
+    b.pacientes += coberturaDe.get(a.id)?.total ?? 0
   }
   const porSubespecialidad = [...subAgg.values()].sort((a, b) => b.pacientes - a.pacientes).slice(0, 15)
 
@@ -452,6 +486,7 @@ async function calcularDatosFOCA({ ausencias, reposiciones, mapaSedes }) {
     sla_reposicion: sla,
     antelacion_reporte: ant,
     pct_antelacion_ok: pctAntelacionOk,
+    antelacion_promedio: antelacionPromedio,
     por_dia_semana: porDiaSemana,
     por_subespecialidad: porSubespecialidad,
     pacientes_cubiertos: pacientesCubiertos,
@@ -612,6 +647,51 @@ function mesLocal(d) {
 // ============================================================================
 // Handler HTTP
 // ============================================================================
+// ============================================================================
+// Oct-2026 · GET /reports/reschedulers · LA GESTIÓN DE CADA REPROGRAMADOR
+// (PROYECTOS-3398 §6.1 · 3660). Para la líder: casos que repartió en el
+// período, cuántos pacientes quedaron con turno nuevo y cuántos por llamada, y
+// cómo van las llamadas de cada quien. El período cuenta por la fecha en que se
+// le asignó el caso, que es cuando empieza su trabajo.
+// ============================================================================
+export async function gestionReprogramadores(req, res) {
+  const def = rangoDefault()
+  const desde = req.query.desde || def.desde
+  const hasta = req.query.hasta || def.hasta
+  const v = validarRango(desde, hasta)
+  if (!v.ok) return res.status(400).json({ message: v.error })
+  const hastaD = new Date(v.h)
+  hastaD.setHours(23, 59, 59, 999)
+
+  const casos = await prisma.absence.findMany({
+    where: { reschedulerId: { not: null }, assignedAt: { gte: v.d, lte: hastaD }, status: { not: 'rechazada' } },
+    select: {
+      id: true, reschedulerId: true, rescheduleStatus: true,
+      patientsAffected: true, patientsConfirmed: true, patientsReached: true, patientsNoAnswer: true,
+    },
+  })
+  const ids = casos.map((c) => c.id)
+  const cubiertos = ids.length
+    ? await prisma.assignment.groupBy({
+        by: ['coveredAbsenceId'],
+        where: { coveredAbsenceId: { in: ids }, status: { not: 'cancelada' } },
+        _sum: { patientCapacity: true },
+      })
+    : []
+  const usuarios = await prisma.user.findMany({
+    where: { id: { in: [...new Set(casos.map((c) => c.reschedulerId))] } },
+    select: { id: true, name: true },
+  })
+  res.json({
+    rango: { desde, hasta },
+    ...resumirGestion(
+      casos,
+      new Map(cubiertos.map((c) => [c.coveredAbsenceId, c._sum.patientCapacity ?? 0])),
+      new Map(usuarios.map((u) => [u.id, u.name])),
+    ),
+  })
+}
+
 export async function reprogramacionesDashboard(req, res) {
   try {
     const data = await withCache(

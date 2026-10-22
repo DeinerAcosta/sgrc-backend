@@ -4,6 +4,10 @@ const prismaMock = {
   resource: { findMany: vi.fn() },
   assignment: { findMany: vi.fn() },
   room: { findUnique: vi.fn() },
+  // Oct-2026 · Para los filtros de ciudad (RN-09) y de ausentes.
+  site: { findUnique: vi.fn() },
+  week: { findUnique: vi.fn() },
+  absence: { findMany: vi.fn() },
 }
 vi.mock('../lib/prisma.js', () => ({ prisma: prismaMock }))
 
@@ -27,6 +31,11 @@ beforeEach(() => {
   prismaMock.resource.findMany.mockReset()
   prismaMock.assignment.findMany.mockReset()
   prismaMock.room.findUnique.mockReset()
+  // Por defecto, sin semana ni sede resolubles: los filtros nuevos no actúan
+  // y los tests de disponibilidad de abajo miden lo mismo que antes.
+  prismaMock.site.findUnique.mockReset().mockResolvedValue(null)
+  prismaMock.week.findUnique.mockReset().mockResolvedValue(null)
+  prismaMock.absence.findMany.mockReset().mockResolvedValue([])
 })
 
 describe('sugerirReemplazos — disponibilidad real', () => {
@@ -100,6 +109,63 @@ describe('sugerirReemplazos — coste en consultas', () => {
     prismaMock.resource.findMany.mockResolvedValue([])
     expect(await ejecutar(FRANJA)).toEqual([])
     expect(prismaMock.assignment.findMany).not.toHaveBeenCalled()
+  })
+})
+
+// Oct-2026 · "Intentaba asignar a alguno y no me dejaba en nada": la lista
+// ofrecía gente que el servidor rechaza al crear. Estos dos filtros hacen que
+// solo salga quien de verdad se puede asignar.
+describe('sugerirReemplazos — solo ofrece a quien se puede asignar', () => {
+  const enCiudad = (recursoId, ini, fin, ciudad) => ({
+    resourceId: recursoId, assistantId: null, startTime: ini, endTime: fin,
+    room: { siteId: 'x', site: { name: 'Sede ' + ciudad, city: ciudad } },
+  })
+
+  it('NO sugiere a quien ese día ya trabaja en otra ciudad (RN-09)', async () => {
+    prismaMock.resource.findMany.mockResolvedValue([recurso('r1', 'Dr. Benítez'), recurso('r2', 'Dr. Rangel')])
+    prismaMock.assignment.findMany.mockResolvedValue([
+      enCiudad('r1', '07:00', '11:00', 'Sabanalarga'),   // no solapa, pero OTRA ciudad
+      enCiudad('r2', '07:00', '11:00', 'Barranquilla'),  // no solapa, misma ciudad
+    ])
+    const r = await ejecutar({ ...FRANJA, city: 'Barranquilla' })
+    expect(r.map((x) => x.id)).toEqual(['r2'])
+  })
+
+  it('NO sugiere a quien está ausente ese día, aunque no tenga turnos', async () => {
+    // Un médico de vacaciones no tiene turnos: antes salía "tiene el día libre".
+    prismaMock.resource.findMany.mockResolvedValue([recurso('r1', 'Dra. de vacaciones'), recurso('r2', 'Dr. Libre')])
+    prismaMock.assignment.findMany.mockResolvedValue([])
+    prismaMock.week.findUnique.mockResolvedValue({ startDate: new Date('2026-10-18T00:00:00Z') })  // domingo
+    prismaMock.absence.findMany.mockResolvedValue([{ resourceId: 'r1', isPartial: false }])
+    const r = await ejecutar(FRANJA)   // lunes 19
+    expect(r.map((x) => x.id)).toEqual(['r2'])
+    // Y busca las ausencias del LUNES de esa semana, no de otro día.
+    const filtro = prismaMock.absence.findMany.mock.calls[0][0].where
+    expect(filtro.startDate.lte.toISOString().slice(0, 10)).toBe('2026-10-19')
+  })
+
+  it('una ausencia parcial que no pisa la franja NO lo saca de la lista', async () => {
+    prismaMock.resource.findMany.mockResolvedValue([recurso('r1', 'Dr. Solo mañana')])
+    prismaMock.assignment.findMany.mockResolvedValue([])
+    prismaMock.week.findUnique.mockResolvedValue({ startDate: new Date('2026-10-18T00:00:00Z') })
+    prismaMock.absence.findMany.mockResolvedValue([
+      { resourceId: 'r1', isPartial: true, absenceStartTime: '07:00', absenceEndTime: '11:00' },
+    ])
+    const r = await ejecutar(FRANJA)   // 14:00-18:00: la tarde la tiene libre
+    expect(r.map((x) => x.id)).toEqual(['r1'])
+  })
+
+  // Oct-2026 · Lo encontró el barrido que pulsa Asignar en todos los casos:
+  // una técnica con 6 h ese día salía para 6 h más y el servidor la rechazaba.
+  it('NO sugiere a quien pasaría su tope diario de horas (RN-13)', async () => {
+    const tecnico = (id, nombre) => ({ id, name: nombre, type: 'tecnico', active: true, maxHoursPerDay: 10 })
+    prismaMock.resource.findMany.mockResolvedValue([tecnico('r1', 'Tec. con la mañana llena'), tecnico('r2', 'Tec. con 2 h')])
+    prismaMock.assignment.findMany.mockResolvedValue([
+      enCiudad('r1', '06:00', '12:00', 'Barranquilla'),
+      enCiudad('r2', '08:00', '10:00', 'Barranquilla'),
+    ])
+    const r = await ejecutar({ ...FRANJA, type: 'tecnico', start_time: '13:00', end_time: '19:00' })
+    expect(r.map((x) => x.id)).toEqual(['r2'])
   })
 })
 

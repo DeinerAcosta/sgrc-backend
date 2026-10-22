@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
-import { differenceInDays, addDays, startOfWeek } from 'date-fns'
+import { differenceInDays, addDays } from 'date-fns'
+import { lunesDeLaSemana, domingoDeLaSemana } from '../lib/semana.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../services/absenceService.js'
+import { parteAfectada } from '../lib/tramos.js'
 
 const crearSemanaSchema = z.object({
   startDate: z.string(), // YYYY-MM-DD
@@ -26,27 +28,28 @@ export async function list(req, res) {
 /** RN-01 relajada: puede crearse la semana actual o cualquier futura. */
 export async function create(req, res) {
   const { startDate: fechaInicio } = crearSemanaSchema.parse(req.body)
-  const inicio = new Date(fechaInicio)
-  if (Number.isNaN(inicio.getTime())) throw errors.badRequest('Fecha inválida')
-  // Semana operativa: LUNES → DOMINGO (fix jul-2026). weekStartsOn: 1 = lunes.
+  // Semana operativa: LUNES → DOMINGO (fix jul-2026).
   // Antes era 0 (dom→sáb) pero el frontend siempre visualizó lun→dom,
   // generando desfase: las asignaciones con dia_semana='domingo' apuntaban
   // al domingo de INICIO de la semana en BD pero el coord esperaba el domingo
   // de FIN de semana en su UI. Con este cambio, dom queda como último día.
-  const domingo = startOfWeek(inicio, { weekStartsOn: 1 })
+  // Oct-2026 · En UTC (lib/semana.js): con el proceso en America/Bogota,
+  // startOfWeek devolvía el lunes ANTERIOR al pedido.
+  const lunes = lunesDeLaSemana(fechaInicio)
+  if (!lunes) throw errors.badRequest('Fecha inválida')
   // Con programación libre se permiten semanas ya vencidas: es justo lo que
   // hace falta para cargar el mes pasado de forma retroactiva.
-  const diff = differenceInDays(domingo, new Date())
+  const diff = differenceInDays(lunes, new Date())
   if (diff < ANTICIPACION_MINIMA_DIAS && !programacionLibre()) {
     const msg = ANTICIPACION_MINIMA_DIAS > 0
       ? `La programación debe crearse con al menos ${ANTICIPACION_MINIMA_DIAS} día(s) de anticipación`
       : 'No se pueden crear semanas ya vencidas'
     throw errors.badRequest(msg)
   }
-  const fin = addDays(domingo, 6)
+  const fin = domingoDeLaSemana(lunes)
   const sem = await prisma.week.create({
     data: {
-      startDate: domingo,
+      startDate: lunes,
       endDate: fin,
       status: 'abierta',
     },
@@ -289,8 +292,9 @@ export async function copiar(req, res) {
   }
 
   // Semana operativa: LUNES → DOMINGO (fix jul-2026). Ver comentario en create().
-  const inicio = startOfWeek(new Date(fechaInicio), { weekStartsOn: 1 })
-  const fin = addDays(inicio, 6)
+  const inicio = lunesDeLaSemana(fechaInicio)
+  if (!inicio) throw errors.badRequest('Fecha inválida')
+  const fin = domingoDeLaSemana(inicio)
 
   const existente = await prisma.week.findUnique({
     where: { startDate: inicio },
@@ -471,6 +475,77 @@ export async function copiar(req, res) {
 //    semana que se está armando. Así el aviso se vacía solo a medida que el
 //    coordinador trabaja, en vez de necesitar que alguien lo marque como visto.
 // ============================================================================
+// ============================================================================
+// Oct-2026 · GET /weeks/:id/changes · VISTA RÁPIDA DE CAMBIOS (PROYECTOS-3583 §3)
+//
+// "Qué cambió, quién lo cambió y cuándo" en la programación de la semana. No
+// hace falta guardar nada nuevo: cada alta, edición, borrado y copia de turnos
+// ya deja su entrada de auditoría con la semana, el consultorio y la persona.
+// Con ?site_id= se queda con los de esa sede; el coordinador solo ve las suyas.
+// ============================================================================
+const ACCIONES_CAMBIO = {
+  asignacion_crear: 'Agregó',
+  asignacion_editar: 'Cambió',
+  asignacion_borrar: 'Quitó',
+  asignacion_cancelar: 'Canceló',
+  modificar_semana_cerrada: 'Cambió con la semana cerrada',
+  asumir_agenda_sobre_turno_propio: 'Asumió una agenda sobre su turno',
+  asignacion_copiar_a_dias: 'Copió a otros días',
+  asignacion_copiar_consultorio: 'Copió un consultorio',
+  asignacion_copiar_dia: 'Copió un día',
+  copiar_semana_reemplazo: 'Copió la semana anterior',
+  asignacion_pacientes: 'Cambió los pacientes',
+  contingencia_marcar: 'Marcó en contingencia',
+  contingencia_aprobar: 'Aprobó la contingencia',
+}
+
+export async function cambiosDeLaSemana(req, res) {
+  const semanaId = req.params.id
+  let sedes = req.query.site_id ? [req.query.site_id] : null
+  if (req.user?.role === 'coordinador') {
+    const mias = (await prisma.userSite.findMany({ where: { userId: req.user.id }, select: { siteId: true } })).map((m) => m.siteId)
+    if (sedes && !sedes.every((s) => mias.includes(s))) throw errors.forbidden('No tienes acceso a esta sede')
+    sedes = sedes ?? mias
+  }
+  const entradas = await prisma.auditEntry.findMany({
+    where: {
+      entity: { in: ['asignaciones', 'semanas'] },
+      action: { in: Object.keys(ACCIONES_CAMBIO) },
+      OR: [
+        { entityId: semanaId },
+        { newValue: { path: '$.weekId', equals: semanaId } },
+        { oldValue: { path: '$.weekId', equals: semanaId } },
+        { newValue: { path: '$.targetWeekId', equals: semanaId } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 300,
+    include: { user: { select: { name: true } } },
+  })
+  const salasDeSedes = sedes
+    ? new Set((await prisma.room.findMany({ where: { siteId: { in: sedes } }, select: { id: true } })).map((r) => r.id))
+    : null
+  const deLaSede = (e) => {
+    if (!salasDeSedes) return true
+    const v = e.newValue ?? e.oldValue ?? {}
+    if (v.roomId) return salasDeSedes.has(v.roomId)
+    if (v.siteId) return sedes.includes(v.siteId)
+    return true   // una copia de semana entera toca a todas
+  }
+  const describir = (v) => v && [
+    v.resource, v.weekday && `${v.weekday} ${v.startTime ?? ''}–${v.endTime ?? ''}`, v.room && `${v.room}${v.site ? ` (${v.site})` : ''}`,
+  ].filter(Boolean).join(' · ')
+  res.json(entradas.filter(deLaSede).slice(0, 100).map((e) => ({
+    id: e.id,
+    cuando: e.createdAt,
+    quien: e.user?.name ?? 'Sistema',
+    accion: ACCIONES_CAMBIO[e.action] ?? e.action,
+    detalle: describir(e.newValue ?? e.oldValue) || null,
+    antes: e.action === 'asignacion_editar' || e.action === 'modificar_semana_cerrada' ? describir(e.oldValue) || null : null,
+    motivo: e.reason ?? null,
+  })))
+}
+
 export async function ausentesSemanaAnterior(req, res) {
   const { site_id: sedeId } = req.query
 
@@ -566,12 +641,54 @@ export async function ausentesSemanaAnterior(req, res) {
     }
   }
 
+  // 3664 · Las jornadas que se le cayeron la semana pasada, con su consultorio
+  // y su horario. Son las que el aviso propone para programar la reposición:
+  // "lo más razonable es el mismo consultorio y horario que tenía el día que
+  // faltó, porque es lo que ya estaba acordado". En una parcial, solo el tramo
+  // que faltó (la misma regla de todo el flujo, parteAfectada).
+  const semanaPrevia = await prisma.week.findFirst({
+    where: { startDate: { lte: finAnterior }, endDate: { gte: inicioAnterior } },
+    select: { id: true },
+  })
+  const turnosPrevios = semanaPrevia
+    ? await prisma.assignment.findMany({
+        where: {
+          weekId: semanaPrevia.id,
+          status: { not: 'cancelada' },
+          coveredAbsenceId: null,
+          resourceId: { in: idsRecursos },
+          ...(sedesAlcance ? { room: { siteId: { in: sedesAlcance } } } : {}),
+        },
+        select: {
+          resourceId: true, weekday: true, startTime: true, endTime: true, patientCapacity: true,
+          roomId: true, room: { select: { name: true, siteId: true } },
+        },
+      })
+    : []
+  const turnosCaidos = (a) => {
+    const dias = diasCubiertos(a, inicioAnterior, finAnterior)
+    return turnosPrevios
+      .filter((t) => t.resourceId === a.resourceId && dias.includes(t.weekday))
+      .map((t) => ({ t, parte: parteAfectada(t, a) }))
+      .filter(({ parte }) => parte)
+      .map(({ t, parte }) => ({
+        room_id: t.roomId,
+        room_name: t.room?.name ?? null,
+        site_id: t.room?.siteId ?? null,
+        weekday: t.weekday,
+        start_time: parte.desde,
+        end_time: parte.hasta,
+        patient_capacity: parte.pacientes,
+      }))
+  }
+
   const ausentes = ausencias
     .filter((a) => !recursosDeLaSede || recursosDeLaSede.has(a.resourceId))
     .map((a) => {
       const yaProgramado = programadoEnDestino.get(a.resourceId) ?? []
       const reposicionAbierta = a.makeups[0] ?? null
       return {
+        turnos_caidos: turnosCaidos(a),
         absence_id: a.id,
         resource: a.resource,
         desde: a.startDate,
@@ -585,6 +702,7 @@ export async function ausentesSemanaAnterior(req, res) {
         // el dato que el coordinador necesita para saber en qué día de ESTA
         // semana ubicarlo, y hasta ahora vivía dentro de un texto libre.
         fecha_reposicion_propuesta: a.makeupDate,
+        fechas_reposicion: a.makeupDates ?? (a.makeupDate ? [a.makeupDate.toISOString().slice(0, 10)] : []),
         observaciones_reposicion: a.makeupNotes,
         reposicion_registrada: reposicionAbierta
           ? { id: reposicionAbierta.id, fecha: reposicionAbierta.makeupDate, estado: reposicionAbierta.status }
@@ -667,6 +785,12 @@ export async function ausenciasDeLaSemana(req, res) {
     sedesAlcance = [sedeId]
   }
 
+  // Oct-2026 · Quien solo RECIBE encargos ve en el Programador unicamente sus
+  // casos. Este endpoint devuelve el motivo de cada ausencia —dato de salud—,
+  // y quitarle la entrada del menu no lo cerraba: escribiendo la direccion le
+  // entregaba las ausencias de todos los profesionales con su motivo.
+  const soloMias = req.user?.role === 'reprogramador' ? { reschedulerId: req.user.id } : {}
+
   // Pendientes incluidas a proposito. Una ausencia sin confirmar YA dejo al
   // medico sin venir; esconderla hasta que alguien le de clic a confirmar es
   // justo como se acumularon 6 pendientes de hasta 118 dias. Se devuelve el
@@ -676,6 +800,7 @@ export async function ausenciasDeLaSemana(req, res) {
       status: { in: ['pendiente', 'confirmada'] },
       startDate: { lte: semana.endDate },
       endDate: { gte: semana.startDate },
+      ...soloMias,
     },
     include: {
       resource: { select: { id: true, name: true, type: true, specialty: true } },
@@ -728,6 +853,9 @@ export async function ausenciasDeLaSemana(req, res) {
       is_planned: a.isPlanned,
       notice_days: a.noticeDays,
       patients_affected: a.patientsAffected,
+      // El real que puso la líder, si lo puso. La casilla del ausente dice
+      // cuántos pacientes se cayeron, y ese número es el que manda.
+      patients_confirmed: a.patientsConfirmed,
       agenda_action: a.agendaAction,
       dias: diasCubiertos(a, semana.startDate, semana.endDate),
       reemplazos: reemplazoPorAusencia.get(a.id) ?? [],

@@ -28,8 +28,19 @@
     "otorrino:oftalmologo": "node scripts/otorrino-como-oftalmologo.js",
     "limpiar:firmas": "node scripts/eliminar-firmas.js",
     "datos:prueba": "node scripts/datos-prueba.js",
+    "datos:asesores": "node scripts/datos-asesores.js",
+    "recalcular:programadas": "node scripts/recalcular-programadas.js",
+    "reparar:turnos-auxiliar": "node scripts/reparar-turnos-auxiliar.js",
+    "datos:masivos": "node scripts/datos-masivos.js",
+    "datos:todo": "node scripts/datos-prueba.js --aplicar && node scripts/datos-masivos.js --aplicar && node scripts/qa/integridad-semana.mjs",
     "qa:flujo": "node scripts/qa/flujo-ausencias.mjs",
-    "qa:menu": "node scripts/qa/menu-vs-rutas.mjs"
+    "qa:menu": "node scripts/qa/menu-vs-rutas.mjs",
+    "qa:reparto": "node scripts/qa/reparto-reprogramacion.mjs",
+    "qa:puertas": "node scripts/qa/puertas-reprogramador.mjs",
+    "qa:llamadas": "node scripts/qa/llamadas-reprogramador.mjs",
+    "qa:datos": "node scripts/qa/integridad-semana.mjs",
+    "qa:casos": "node scripts/qa/asignar-todos-los-casos.mjs",
+    "reparar:dias": "node scripts/reparar-dias-corridos.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

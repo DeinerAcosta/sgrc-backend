@@ -275,10 +275,33 @@ model Site {
   backofficeAssignments BackofficeAssignment[]
   weekClosures          WeekSiteClosure[]
   resourceRequests      ResourceRequest[]
+  blocks                SiteBlock[]
 
   @@index([city])
   @@index([active])
   @@map("sedes")
+}
+
+// ============ BLOQUEOS DE SEDE ============
+// Oct-2026 · PROYECTOS-3583 §5 · Supervisor y gerencia bloquean una sede por
+// unas fechas cuando no hay disponibilidad (lib/bloqueosSede.js). Mientras
+// dure no se programa en ella y no cuenta en los informes de ocupación. Se
+// levanta (liftedAt) en vez de borrarse. Sin FK a usuarios, como reportedBy.
+model SiteBlock {
+  id        String    @id @default(uuid())
+  siteId    String    @map("sede_id")
+  startDate DateTime  @map("desde") @db.Date
+  endDate   DateTime  @map("hasta") @db.Date
+  reason    String    @map("motivo") @db.Text
+  createdBy String    @map("creado_por")
+  createdAt DateTime  @default(now()) @map("creado_en")
+  liftedBy  String?   @map("levantado_por")
+  liftedAt  DateTime? @map("levantado_en")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, startDate, endDate])
+  @@map("bloqueos_sede")
 }
 
 // ============ CONSULTORIOS ============
@@ -421,6 +444,13 @@ model Assignment {
   isOvertime          Boolean          @default(false) @map("es_horas_extras")
   hasNightHours       Boolean          @default(false) @map("tiene_horas_nocturnas")
   isReplacement       Boolean          @default(false) @map("es_reemplazo")
+  // Oct-2026 · 3739 · Turno en contingencia (naranja): lo marca el
+  // coordinador; la líder pone los pacientes y lo aprueba.
+  contingency         Boolean          @default(false) @map("es_contingencia")
+  // Oct-2026 · Llamadas del reprogramador a los pacientes de ESTE turno que
+  // cubre una ausencia. La ausencia guarda la suma.
+  callsReached        Int?             @map("llamadas_contestaron")
+  callsNoAnswer       Int?             @map("llamadas_no_contestaron")
   coveredAbsenceId    String?          @map("ausencia_cubierta_id")
   status              EstadoAsignacion @default(activa) @map("estado")
   // Autorización de fin de semana para auxiliares (Sep-2026 · Ley 2101).
@@ -516,6 +546,8 @@ model Absence {
   // iba dentro del texto libre de , asi que no se podia filtrar ni
   // cruzar con la agenda para ver si ese dia esta libre.
   makeupDate            DateTime?      @map("fecha_reposicion_propuesta") @db.Date
+  // Oct-2026 · Las fechas en que repondrá (varias, elegidas en un calendario).
+  makeupDates           Json?          @map("fechas_reposicion")
   // Sep-23-2026: se retiraron `proceso_afecta` y `tipo_novedad` (F-AA-126 v05).
   // El diligenciamiento se simplifico y esos dos bloques ya no se capturan en el
   // modal. La migracion 20260923180000_quitar_proceso_novedad borra las columnas.
@@ -553,6 +585,38 @@ model Absence {
   rescheduleStatus      String?        @map("estado_reprogramacion") @db.VarChar(20)
   rescheduleNotes       String?        @map("notas_reprogramacion") @db.Text
   rescheduleDoneAt      DateTime?      @map("reprogramacion_resuelta_en")
+
+  // Oct-2026 · Lo que de verdad hace quien recibe el encargo: llamar. Hector:
+  // "el reprogramador solamente mira a que profesional le asignaron y que el
+  // mismo ponga cuantos pacientes fueron los que llamo, cuales contestaron y
+  // cuales no, para asi ver en el indicador de su personal".
+  //
+  // El total de llamados NO se guarda: es la suma de los dos. Guardarlo
+  // aparte permitiria que los tres numeros dejaran de cuadrar.
+  patientsReached       Int?           @map("pacientes_contestaron")
+  patientsNoAnswer      Int?           @map("pacientes_no_contestaron")
+  callLogAt             DateTime?      @map("llamadas_registradas_en")
+
+  // Oct-2026 · El numero REAL de pacientes de esa agenda, puesto por quien
+  // llama. Hector: "como siempre muestra un promedio de pacientes, en el cual
+  // a veces son mas o menos, que el perfil de repro edite los pacientes
+  // oficiales y asi ir todo correctamente".
+  //
+  // No pisa patientsAffected a proposito: ese es el estimado que calcula el
+  // sistema desde la capacidad de la agenda, y es el que alimenta informes y
+  // costos. Guardar los dos deja ver cuanto se desvia la estimacion de la
+  // realidad, que es un dato util por si solo. NULL = nadie lo ha corregido.
+  patientsConfirmed     Int?           @map("pacientes_confirmados")
+
+  // Oct-2026 · Autorización de datos personales (lib/datosPersonales.js). La
+  // da el profesional al registrar su propia ausencia. NULL = no se pidió.
+  dataConsentAt         DateTime?      @map("datos_autorizados_en")
+  dataConsentVersion    String?        @map("datos_autorizacion_version") @db.VarChar(40)
+  dataConsentIp         String?        @map("datos_autorizacion_ip") @db.VarChar(45)
+
+  // Oct-2026 · 3739 · Remunerada o no, lo asigna Agendas (lib/remuneracion.js).
+  // NULL = se deduce del tipo. La licencia remunerada lo es siempre.
+  isPaid                Boolean?       @map("es_remunerada")
 
   resource                    Resource               @relation(fields: [resourceId], references: [id])
   reasonRef                   AbsenceReason?         @relation(fields: [reasonId], references: [id], onDelete: SetNull)

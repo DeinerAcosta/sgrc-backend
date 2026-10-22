@@ -3,7 +3,11 @@ import { errors } from '../lib/errors.js'
 import { horasEfectivasFranja as horasEfectivasFranjaLib, minutosAlmuerzo, minutosUnion, hhmmAMinutos } from '../lib/workHours.js'
 import { SIN_TOPE_DIARIO, ESPECIALIDADES_PERMITEN_APOYO, minutosAhhmm, solapan, solapaConAux, horarioEfectivoAuxEnAsig } from '../lib/timeSlots.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { pacientesDelTramo } from '../lib/tramos.js'
+import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
+import { fechaDeTurno, bloqueoQueCubre, cargarBloqueos, mensajeBloqueo } from '../lib/bloqueosSede.js'
+import { TIPOS_QUE_LIBERAN_AUXILIAR, coordSoloVe, MSG_SOLO_VE } from '../lib/resourceTypes.js'
 
 // Roles que pueden tocar una sede ya cerrada (con motivo). Gerencia es
 // super-usuario y tiene "Editar semana cerrada" en su menú: antes solo
@@ -210,6 +214,15 @@ export function calcularCapacidad(horaInicio, horaFin, intervaloMinutos, tipoRec
  * @param {object} data - nuevos valores (mismo shape que crear)
  * @param {object} userCtx - { id, rol, sedes }
  */
+/** 3583 · Rechaza programar en una sede bloqueada ese día (lib/bloqueosSede.js). */
+async function exigirSedeSinBloqueo(tx, consultorio, inicioSemana, weekday) {
+  const fecha = fechaDeTurno(inicioSemana, weekday)
+  if (!fecha) return
+  const bloqueos = await cargarBloqueos(tx, fecha, fecha, [consultorio.siteId])
+  const b = bloqueoQueCubre(bloqueos, consultorio.siteId, fecha)
+  if (b) throw errors.badRequest(mensajeBloqueo(b, consultorio.site?.name ?? 'elegida'))
+}
+
 export async function editarAsignacion(id, data, userCtx) {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.assignment.findUnique({
@@ -256,6 +269,11 @@ export async function editarAsignacion(id, data, userCtx) {
       }
     }
 
+    // ---- 3583 · La sede no puede estar BLOQUEADA ese día ----
+    // Un bloqueo lo pone supervisor o gerencia cuando no hay disponibilidad;
+    // mientras dure no se programa ahí, sin excepción por rol.
+    await exigirSedeSinBloqueo(tx, consultorio, existing.week.startDate, data.weekday ?? existing.weekday)
+
     // RN-17: si tiene ejecución registrada, no se puede modificar (sólo cancelar)
     if (existing.execution) {
       throw errors.badRequest('La asignación ya tiene ejecución registrada — no se puede editar')
@@ -276,7 +294,10 @@ export async function editarAsignacion(id, data, userCtx) {
     // FIX sep-2026: ignorar asignaciones en consultorios INACTIVOS (misma
     // razon que en crear — el consultorio viejo migrado no debe bloquear).
     if (!recurso.multiRoom) {
-      const conflictoRecurso = await tx.assignment.findFirst({
+      // FIX oct-2026 · Mismo fallo que en crear: era findFirst, que trae UNA
+      // asignacion cualquiera del dia. Con dos turnos ya cargados, si la que
+      // devolvia no pisaba la franja nueva, el doble turno pasaba.
+      const delDia = await tx.assignment.findMany({
         where: {
           ...excludeSelf,
           weekId: existing.weekId,
@@ -287,7 +308,8 @@ export async function editarAsignacion(id, data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoRecurso && solapan(conflictoRecurso, data.startTime, data.endTime)) {
+      const conflictoRecurso = delDia.find((a) => solapan(a, data.startTime, data.endTime))
+      if (conflictoRecurso) {
         throw errors.conflict(
           `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesitas usarlo en tu sede, coordina con esa sede o crea una Solicitud de recurso.`
         )
@@ -315,10 +337,21 @@ export async function editarAsignacion(id, data, userCtx) {
     // Normalizar sub-horarios opcionales de aux1 y aux2 (validan que estén dentro del doc).
     const subsEd = normalizarSubHorariosAux(data)
 
+    // Igual que al crear: si este turno cubre una ausencia, los turnos que esa
+    // ausencia tumbó no ocupan a la auxiliar. Sin esto, editar un reemplazo
+    // —cambiarle la hora, por ejemplo— volvía a chocar contra el ausente.
+    const vacantesEd = await turnosQueLiberaElReemplazo(tx, {
+      weekId: existing.weekId,
+      weekday: data.weekday,
+      coveredAbsenceId: data.coveredAbsenceId ?? existing.coveredAbsenceId,
+    })
+    const caidosEd = await turnosCaidosPorAusenciaDelMedico(tx, existing.weekId, data.weekday, existing.week.startDate)
+
     // VAL 4 (RN-08 aux): auxiliar libre — usa el sub-horario real
     // FIX sep-2026: ignorar consultorios inactivos (mismo criterio que VAL 2).
     if (data.assistantId && consultorio.requiresAssistant) {
-      const conflictoAux = await tx.assignment.findFirst({
+      // FIX oct-2026 · Era findFirst, igual que en crear.
+      const auxDelDia = await tx.assignment.findMany({
         where: {
           ...excludeSelf,
           weekId: existing.weekId,
@@ -329,16 +362,33 @@ export async function editarAsignacion(id, data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoAux && solapaConAux(conflictoAux, data.assistantId, subsEd.auxIni, subsEd.auxFin)) {
-        // EXCEPCIÓN multi-cons: si la otra asignación es del mismo doctor multi-consultorio, permitir.
-        const mismoDoctorMulti = conflictoAux.resourceId === data.resourceId && recurso.multiRoom
-        if (!mismoDoctorMulti) {
-          const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
-          const ef = horarioEfectivoAuxEnAsig(conflictoAux, data.assistantId)
-          throw errors.conflict(
-            `Conflicto de auxiliar: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux.room.name} (Sede ${conflictoAux.room.site.name} · ${conflictoAux.room.site.city}) de ${ef.ini} a ${ef.fin}.`
-          )
-        }
+      // EXCEPCIÓN multi-cons: asistir al MISMO doctor multi-consultorio no es
+      // conflicto. Va dentro del filtro para no descartar otra que sí lo sea.
+      const conflictoAux = auxDelDia.find((a) =>
+        !vacantesEd.has(a.id) && !caidosEd.has(a.id) &&
+        solapaConAux(a, data.assistantId, subsEd.auxIni, subsEd.auxFin) &&
+        !(a.resourceId === data.resourceId && recurso.multiRoom)
+      )
+      if (conflictoAux) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
+        const ef = horarioEfectivoAuxEnAsig(conflictoAux, data.assistantId)
+        throw errors.conflict(
+          `Conflicto de auxiliar: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux.room.name} (Sede ${conflictoAux.room.site.name} · ${conflictoAux.room.site.city}) de ${ef.ini} a ${ef.fin}.`
+        )
+      }
+      // 21-oct · RN-09 también para la auxiliar: no puede estar en dos
+      // ciudades el mismo día. Solo se validaba al profesional, y una auxiliar
+      // liberada por la ausencia de su médico en la mañana quedaba asignada en
+      // otra ciudad aunque en la tarde siguiera con otro médico en la suya.
+      const otraCiudad = auxDelDia.find((a) =>
+        !vacantesEd.has(a.id) && !caidosEd.has(a.id) && a.room.site.city !== consultorio.site.city
+      )
+      if (otraCiudad) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
+        const o = otraCiudad
+        throw errors.conflict(
+          `${aux?.name} no puede estar en dos ciudades el mismo día: ya está el ${data.weekday} en ${o.room.name} (${o.room.site.name} · ${o.room.site.city}) de ${o.startTime} a ${o.endTime}, y este turno es en ${consultorio.site.city}.`
+        )
       }
     }
 
@@ -350,7 +400,8 @@ export async function editarAsignacion(id, data, userCtx) {
       if (!ESPECIALIDADES_PERMITEN_APOYO.has(consultorio.specialty)) {
         throw errors.badRequest('Este consultorio no acepta apoyo de auxiliar/técnico')
       }
-      const conflictoAux2 = await tx.assignment.findFirst({
+      // FIX oct-2026 · Era findFirst, el ultimo de los cuatro.
+      const aux2DelDia = await tx.assignment.findMany({
         where: {
           ...excludeSelf,
           weekId: existing.weekId,
@@ -361,15 +412,31 @@ export async function editarAsignacion(id, data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoAux2 && solapaConAux(conflictoAux2, data.assistant2Id, subsEd.aux2Ini, subsEd.aux2Fin)) {
-        const mismoDoctorMulti2 = conflictoAux2.resourceId === data.resourceId && recurso.multiRoom
-        if (!mismoDoctorMulti2) {
-          const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
-          const ef = horarioEfectivoAuxEnAsig(conflictoAux2, data.assistant2Id)
-          throw errors.conflict(
-            `Conflicto de auxiliar #2: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux2.room.name} (Sede ${conflictoAux2.room.site.name} · ${conflictoAux2.room.site.city}) de ${ef.ini} a ${ef.fin}.`
-          )
-        }
+      const conflictoAux2 = aux2DelDia.find((a) =>
+        !vacantesEd.has(a.id) && !caidosEd.has(a.id) &&
+        solapaConAux(a, data.assistant2Id, subsEd.aux2Ini, subsEd.aux2Fin) &&
+        !(a.resourceId === data.resourceId && recurso.multiRoom)
+      )
+      if (conflictoAux2) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
+        const ef = horarioEfectivoAuxEnAsig(conflictoAux2, data.assistant2Id)
+        throw errors.conflict(
+          `Conflicto de auxiliar #2: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux2.room.name} (Sede ${conflictoAux2.room.site.name} · ${conflictoAux2.room.site.city}) de ${ef.ini} a ${ef.fin}.`
+        )
+      }
+      // 21-oct · RN-09 también para la auxiliar: no puede estar en dos
+      // ciudades el mismo día. Solo se validaba al profesional, y una auxiliar
+      // liberada por la ausencia de su médico en la mañana quedaba asignada en
+      // otra ciudad aunque en la tarde siguiera con otro médico en la suya.
+      const otraCiudad2 = aux2DelDia.find((a) =>
+        !vacantesEd.has(a.id) && !caidosEd.has(a.id) && a.room.site.city !== consultorio.site.city
+      )
+      if (otraCiudad2) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
+        const o = otraCiudad2
+        throw errors.conflict(
+          `${aux?.name} no puede estar en dos ciudades el mismo día: ya está el ${data.weekday} en ${o.room.name} (${o.room.site.name} · ${o.room.site.city}) de ${o.startTime} a ${o.endTime}, y este turno es en ${consultorio.site.city}.`
+        )
       }
     }
 
@@ -479,7 +546,7 @@ export async function editarAsignacion(id, data, userCtx) {
 
     // Override manual del coordinador: si conoce los pacientes REALES que se le
     // programaron desde la agenda externa, los usa; si no, cae al cálculo nominal.
-    const pacientesCapacidad = data.expectedPatients != null
+    let pacientesCapacidad = data.expectedPatients != null
       ? data.expectedPatients
       : calcularCapacidad(
           data.startTime,
@@ -487,6 +554,18 @@ export async function editarAsignacion(id, data, userCtx) {
           recurso.slotMinutes ?? 15,
           recurso.type,
         )
+
+    // El mismo tope que al crear: editar un reemplazo no puede subirle los
+    // pacientes por encima de los que faltaban por reprogramar.
+    const pendientesEd = await pacientesPorReprogramar(tx, existing.coveredAbsenceId, id)
+    if (pendientesEd != null) {
+      if (data.expectedPatients != null && data.expectedPatients > pendientesEd) {
+        throw errors.badRequest(
+          `Son ${pendientesEd} pacientes por reprogramar: no se pueden poner ${data.expectedPatients}.`
+        )
+      }
+      pacientesCapacidad = Math.min(pacientesCapacidad, pendientesEd)
+    }
 
     const actualizada = await tx.assignment.update({
       where: { id },
@@ -533,6 +612,170 @@ export async function editarAsignacion(id, data, userCtx) {
   }, { isolationLevel: 'ReadCommitted' })
 }
 
+/**
+ * Los turnos que un reemplazo deja LIBRES: los del ausente que su ausencia
+ * tumbó ese día.
+ *
+ * Oct-2026 · Sin esto no se podía asignar a nadie en el caso más normal. El
+ * colega entra a cubrir la misma franja, en el mismo consultorio, con la misma
+ * auxiliar —Lina Torres asistía al Dr. Córnea y ahora asiste al Dr. Rangel—,
+ * y la validación de auxiliar comparaba contra el turno del Dr. Córnea, que es
+ * justo el que se cayó. Lo daba como "Lina está en dos sitios a la vez" y el
+ * botón Asignar rebotaba con todos los candidatos.
+ *
+ * Solo se liberan los turnos que la ausencia DE VERDAD tumba. En una parcial,
+ * los de fuera de su horario siguen en pie: si el Dr. Córnea falta en la
+ * mañana y Lina lo asiste también por la tarde, ponerla con otro médico por la
+ * tarde SÍ es un conflicto, y tiene que seguir saltando.
+ *
+ * @returns {Promise<Set<string>>} ids de asignaciones a ignorar como conflicto
+ */
+/**
+ * 3583 · Los turnos de ese día cuyo MÉDICO está ausente (ausencia confirmada,
+ * y en una parcial solo los que pisan sus horas). Ese turno no se atiende, así
+ * que no ocupa a su auxiliar: queda libre para cubrir otro. Es la prioridad 1
+ * de la lista de candidatas, y el servidor tiene que pensar igual que la lista
+ * — antes la ofrecía primero y al asignarla la rechazaba por "conflicto".
+ * Solo se usa en las validaciones de la auxiliar, nunca en la del médico.
+ */
+async function turnosCaidosPorAusenciaDelMedico(tx, weekId, weekday, inicioSemana) {
+  const fecha = fechaDeTurno(inicioSemana, weekday)
+  if (!fecha) return new Set()
+  // Solo los tipos que liberan a su auxiliar al faltar (RN-24): oftalmólogo,
+  // anestesiólogo y otorrino. Es la misma regla de liberarAuxiliaresSiAplica.
+  const ausencias = await tx.absence.findMany({
+    where: {
+      status: 'confirmada', startDate: { lte: new Date(fecha) }, endDate: { gte: new Date(fecha) },
+      resource: { is: { type: { in: [...TIPOS_QUE_LIBERAN_AUXILIAR] } } },
+    },
+    select: { resourceId: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+  })
+  if (!ausencias.length) return new Set()
+  const turnos = await tx.assignment.findMany({
+    where: { weekId, weekday, status: { not: 'cancelada' }, resourceId: { in: ausencias.map((a) => a.resourceId) } },
+    select: { id: true, resourceId: true, startTime: true, endTime: true },
+  })
+  return new Set(turnos.filter((t) => ausencias.some((a) => a.resourceId === t.resourceId &&
+    (!a.isPartial || !a.absenceStartTime || !a.absenceEndTime || solapan(t, a.absenceStartTime, a.absenceEndTime))))
+    .map((t) => t.id))
+}
+
+async function turnosQueLiberaElReemplazo(tx, data) {
+  if (!data.coveredAbsenceId) return new Set()
+  const cubierta = await tx.absence.findUnique({
+    where: { id: data.coveredAbsenceId },
+    select: { resourceId: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+  })
+  if (!cubierta) return new Set()
+
+  const delAusente = await tx.assignment.findMany({
+    where: {
+      weekId: data.weekId,
+      weekday: data.weekday,
+      resourceId: cubierta.resourceId,
+      status: { not: 'cancelada' },
+    },
+    select: { id: true, startTime: true, endTime: true },
+  })
+  const parcialConHoras = cubierta.isPartial && cubierta.absenceStartTime && cubierta.absenceEndTime
+  const caidos = parcialConHoras
+    ? delAusente.filter((a) => solapan(a, cubierta.absenceStartTime, cubierta.absenceEndTime))
+    : delAusente
+  return new Set(caidos.map((a) => a.id))
+}
+
+/**
+ * El turno caído que este reemplazo cubre en el MISMO consultorio y día: el
+ * del ausente que pisa su horario. null si el reemplazo va a otro sitio (otro
+ * consultorio, otro día) — entonces no es un tramo de esa franja.
+ */
+async function turnoCaidoDelMismoConsultorio(tx, data) {
+  if (!data.coveredAbsenceId) return null
+  const cubierta = await tx.absence.findUnique({
+    where: { id: data.coveredAbsenceId },
+    select: { resourceId: true },
+  })
+  if (!cubierta) return null
+  const caidos = await tx.assignment.findMany({
+    where: {
+      weekId: data.weekId, weekday: data.weekday, roomId: data.roomId,
+      resourceId: cubierta.resourceId, status: { not: 'cancelada' },
+    },
+    select: { startTime: true, endTime: true, patientCapacity: true },
+  })
+  return caidos.find((a) => solapan(a, data.startTime, data.endTime)) ?? null
+}
+
+/**
+ * Los pacientes de la agenda caída que caen en el tramo que se va a cubrir,
+ * o null si no es un tramo de una franja caída. Mismo reparto proporcional que
+ * la pantalla del caso (lib/tramos), así los tramos suman exacto la franja.
+ */
+async function pacientesDelTramoQueCubre(tx, data) {
+  const caido = await turnoCaidoDelMismoConsultorio(tx, data)
+  if (!caido) return null
+  return pacientesDelTramo(
+    caido.patientCapacity ?? 0,
+    { desde: caido.startTime, hasta: caido.endTime },
+    { desde: data.startTime, hasta: data.endTime },
+  )
+}
+
+/**
+ * Cuántos pacientes de una ausencia faltan por reprogramar: los afectados
+ * menos los que ya tienen médico o día nuevo. null si no es una
+ * reprogramación o la ausencia no tiene pacientes contados (datos viejos): en
+ * ese caso no hay contra qué poner tope.
+ */
+export async function pacientesPorReprogramar(tx, coveredAbsenceId, excluirId = null) {
+  if (!coveredAbsenceId) return null
+  const ausencia = await tx.absence.findUnique({
+    where: { id: coveredAbsenceId },
+    select: { patientsAffected: true, patientsConfirmed: true },
+  })
+  // El real que puso la líder, si lo puso; si no, el estimado.
+  const total = pacientesDelCaso(ausencia)
+  if (total <= 0) return null
+  const ya = await tx.assignment.aggregate({
+    // Al editar, el turno que se edita no cuenta: sus pacientes son los que
+    // se están volviendo a poner.
+    where: { coveredAbsenceId, status: { not: 'cancelada' }, ...(excluirId ? { id: { not: excluirId } } : {}) },
+    _sum: { patientCapacity: true },
+  })
+  return Math.max(0, total - (ya._sum.patientCapacity ?? 0))
+}
+
+/** Rechaza cubrir una ausencia que no está confirmada (pendiente o rechazada). */
+async function exigirAusenciaConfirmada(tx, coveredAbsenceId, userCtx = null) {
+  if (!coveredAbsenceId) return
+  const ausencia = await tx.absence.findUnique({
+    where: { id: coveredAbsenceId },
+    select: { status: true, resource: { select: { type: true } } },
+  })
+  if (!ausencia) throw errors.notFound('La ausencia que se quiere cubrir no existe')
+  // 21-oct · El coordinador no cubre la agenda de un profesional: es de la líder.
+  if (coordSoloVe(userCtx, ausencia.resource?.type)) throw errors.forbidden(MSG_SOLO_VE)
+  if (ausencia.status === 'pendiente') {
+    throw errors.badRequest('Primero confirma la ausencia: no se cubre una agenda que no se sabe si se cayó.')
+  }
+  if (ausencia.status !== 'confirmada') {
+    throw errors.badRequest('Esa ausencia fue rechazada: no hay agenda que cubrir.')
+  }
+}
+
+/** Otro tramo de reemplazo de la MISMA ausencia, en el mismo consultorio y día, que pisa este. */
+async function tramoQueSePisa(tx, data) {
+  if (!data.coveredAbsenceId) return null
+  const otros = await tx.assignment.findMany({
+    where: {
+      weekId: data.weekId, weekday: data.weekday, roomId: data.roomId,
+      coveredAbsenceId: data.coveredAbsenceId, status: { not: 'cancelada' },
+    },
+    select: { startTime: true, endTime: true, resource: { select: { name: true } } },
+  })
+  return otros.find((a) => solapan(a, data.startTime, data.endTime)) ?? null
+}
+
 export async function crearAsignacion(data, userCtx) {
   return prisma.$transaction(async (tx) => {
     // ---- Cargar entidades base ----
@@ -548,6 +791,12 @@ export async function crearAsignacion(data, userCtx) {
     const recurso = await tx.resource.findUnique({ where: { id: data.resourceId } })
     if (!recurso) throw errors.notFound('Recurso no encontrado')
     if (!recurso.active) throw errors.badRequest('El recurso está inactivo')
+
+    // ---- Solo se cubre una ausencia CONFIRMADA ----
+    // Oct-2026 · El orden que fijó Hector: por confirmar → por cubrir. Antes la
+    // pantalla del caso dejaba cubrir una ausencia "Sin confirmar" y el caso se
+    // quedaba arriba en "por confirmar" para siempre, cubierto o no.
+    await exigirAusenciaConfirmada(tx, data.coveredAbsenceId, userCtx)
 
     // ---- AISLAMIENTO POR SEDE (S-1) ----
     // Un coordinador solo programa en las sedes a las que está vinculado.
@@ -569,6 +818,11 @@ export async function crearAsignacion(data, userCtx) {
         throw errors.badRequest('Modificar una sede cerrada requiere un motivo (mín 5 caracteres)')
       }
     }
+
+    // ---- 3583 · La sede no puede estar BLOQUEADA ese día ----
+    // Un bloqueo lo pone supervisor o gerencia cuando no hay disponibilidad;
+    // mientras dure no se programa ahí, sin excepción por rol.
+    await exigirSedeSinBloqueo(tx, consultorio, semana.startDate, data.weekday)
 
     // ---- RN-16: condición de carrera (MySQL — lock de fila FOR UPDATE) ----
     // Bloqueamos la fila del recurso (y del auxiliar si aplica) con FOR UPDATE.
@@ -601,7 +855,20 @@ export async function crearAsignacion(data, userCtx) {
     // querer. El controlador deja auditoria y avisa al profesional.
     const asumeAgendaAjena = !!data.coveredAbsenceId && data.assumeOverlap === true
     if (!recurso.multiRoom && !asumeAgendaAjena) {
-      const conflictoRecurso = await tx.assignment.findFirst({
+      // FIX oct-2026 · Esto era findFirst, y por ahi se colaba el doble turno.
+      //
+      // findFirst traia UNA asignacion cualquiera de ese dia, y solo esa se
+      // comparaba. Si el profesional ya tenia dos turnos —muy normal: la
+      // manana en una sala y la tarde en otra— y la que devolvia la consulta
+      // no pisaba la franja nueva, RN-08 daba via libre aunque la OTRA si la
+      // pisara.
+      //
+      // Resultado: bastaba con tener ya dos turnos ese dia para poder quedar
+      // en dos sitios a la vez. Lo encontro qa:flujo en cuanto los datos de
+      // prueba empezaron a dar mas de un turno por dia.
+      //
+      // Hay que mirarlas TODAS y quedarse con la que de verdad solapa.
+      const delDia = await tx.assignment.findMany({
         where: {
           weekId: data.weekId,
           weekday: data.weekday,
@@ -614,7 +881,8 @@ export async function crearAsignacion(data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoRecurso && solapan(conflictoRecurso, data.startTime, data.endTime)) {
+      const conflictoRecurso = delDia.find((a) => solapan(a, data.startTime, data.endTime))
+      if (conflictoRecurso) {
         throw errors.conflict(
           `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesitas usarlo en tu sede, coordina con esa sede o crea una Solicitud de recurso.`
         )
@@ -642,12 +910,35 @@ export async function crearAsignacion(data, userCtx) {
     // ---- Normalizar sub-horarios de auxiliares (si vienen, validan que estén dentro) ----
     const subs = normalizarSubHorariosAux(data)
 
+    // ---- Turnos que este reemplazo deja LIBRES ----
+    const vacantes = await turnosQueLiberaElReemplazo(tx, data)
+    const caidos = await turnosCaidosPorAusenciaDelMedico(tx, data.weekId, data.weekday, semana.startDate)
+
+    // ---- Un tramo de reemplazo no pisa a otro ----
+    // Oct-2026 · Una franja se puede cubrir por TRAMOS: cada médico toma una
+    // parte del horario en el mismo consultorio. Dos tramos que se pisan son
+    // dos médicos en el mismo consultorio a la misma hora, y los pacientes de
+    // ese rato quedarían contados dos veces.
+    //
+    // Va ANTES de la validación de auxiliar a propósito: los dos tramos suelen
+    // compartir auxiliar, así que esa también saltaría, pero con un motivo que
+    // no ayuda ("conflicto de auxiliar"). Este dice qué está pasando.
+    const tramoPrevio = await tramoQueSePisa(tx, data)
+    if (tramoPrevio) {
+      throw errors.conflict(
+        `Ese horario ya lo cubre ${tramoPrevio.resource?.name ?? 'otro profesional'} de ${tramoPrevio.startTime} a ${tramoPrevio.endTime}. Elige el tramo que falta.`
+      )
+    }
+
     // ---- VALIDACIÓN 4: auxiliar libre si aplica (RN-08 para aux) ----
     // Usa el sub-horario de la auxiliar (si fue parcial) para detectar conflicto real.
     // EXCEPCIÓN: si la otra asignación es del MISMO doctor multi-consultorio,
     // la aux puede estar simultáneamente — está asistiendo al mismo doc rotando entre salas.
     if (data.assistantId && consultorio.requiresAssistant) {
-      const conflictoAux = await tx.assignment.findFirst({
+      // FIX oct-2026 · Era findFirst: mismo fallo que en RN-08. Una auxiliar
+      // con dos turnos ese dia podia quedar en dos sitios a la vez si la
+      // asignacion que devolvia la consulta no era la que solapaba.
+      const delDia = await tx.assignment.findMany({
         where: {
           weekId: data.weekId,
           weekday: data.weekday,
@@ -661,15 +952,35 @@ export async function crearAsignacion(data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoAux && solapaConAux(conflictoAux, data.assistantId, subs.auxIni, subs.auxFin)) {
-        const mismoDoctorMulti = conflictoAux.resourceId === data.resourceId && recurso.multiRoom
-        if (!mismoDoctorMulti) {
-          const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
-          const ef = horarioEfectivoAuxEnAsig(conflictoAux, data.assistantId)
-          throw errors.conflict(
-            `Conflicto de auxiliar: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux.room.name} (Sede ${conflictoAux.room.site.name} · ${conflictoAux.room.site.city}) de ${ef.ini} a ${ef.fin}.`
-          )
-        }
+      // La excepcion entra en el filtro: asistir al MISMO doctor
+      // multi-consultorio no es conflicto, es su trabajo. Tampoco lo es el
+      // turno del ausente que este reemplazo viene a cubrir: ver
+      // turnosQueLiberaElReemplazo.
+      const conflictoAux = delDia.find((a) =>
+        !vacantes.has(a.id) && !caidos.has(a.id) &&
+        solapaConAux(a, data.assistantId, subs.auxIni, subs.auxFin) &&
+        !(a.resourceId === data.resourceId && recurso.multiRoom)
+      )
+      if (conflictoAux) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
+        const ef = horarioEfectivoAuxEnAsig(conflictoAux, data.assistantId)
+        throw errors.conflict(
+          `Conflicto de auxiliar: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux.room.name} (Sede ${conflictoAux.room.site.name} · ${conflictoAux.room.site.city}) de ${ef.ini} a ${ef.fin}.`
+        )
+      }
+      // 21-oct · RN-09 también para la auxiliar: no puede estar en dos
+      // ciudades el mismo día. Solo se validaba al profesional, y una auxiliar
+      // liberada por la ausencia de su médico en la mañana quedaba asignada en
+      // otra ciudad aunque en la tarde siguiera con otro médico en la suya.
+      const otraCiudad = delDia.find((a) =>
+        !vacantes.has(a.id) && !caidos.has(a.id) && a.room.site.city !== consultorio.site.city
+      )
+      if (otraCiudad) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistantId } })
+        const o = otraCiudad
+        throw errors.conflict(
+          `${aux?.name} no puede estar en dos ciudades el mismo día: ya está el ${data.weekday} en ${o.room.name} (${o.room.site.name} · ${o.room.site.city}) de ${o.startTime} a ${o.endTime}, y este turno es en ${consultorio.site.city}.`
+        )
       }
     }
 
@@ -681,7 +992,8 @@ export async function crearAsignacion(data, userCtx) {
       if (!ESPECIALIDADES_PERMITEN_APOYO.has(consultorio.specialty)) {
         throw errors.badRequest('Este consultorio no acepta apoyo de auxiliar/técnico')
       }
-      const conflictoAux2 = await tx.assignment.findFirst({
+      // FIX oct-2026 · Era findFirst, igual que los otros tres.
+      const delDia2 = await tx.assignment.findMany({
         where: {
           weekId: data.weekId,
           weekday: data.weekday,
@@ -695,15 +1007,31 @@ export async function crearAsignacion(data, userCtx) {
         },
         include: { room: { include: { site: true } } },
       })
-      if (conflictoAux2 && solapaConAux(conflictoAux2, data.assistant2Id, subs.aux2Ini, subs.aux2Fin)) {
-        const mismoDoctorMulti2 = conflictoAux2.resourceId === data.resourceId && recurso.multiRoom
-        if (!mismoDoctorMulti2) {
-          const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
-          const ef = horarioEfectivoAuxEnAsig(conflictoAux2, data.assistant2Id)
-          throw errors.conflict(
-            `Conflicto de auxiliar #2: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux2.room.name} (Sede ${conflictoAux2.room.site.name} · ${conflictoAux2.room.site.city}) de ${ef.ini} a ${ef.fin}.`
-          )
-        }
+      const conflictoAux2 = delDia2.find((a) =>
+        !vacantes.has(a.id) && !caidos.has(a.id) &&
+        solapaConAux(a, data.assistant2Id, subs.aux2Ini, subs.aux2Fin) &&
+        !(a.resourceId === data.resourceId && recurso.multiRoom)
+      )
+      if (conflictoAux2) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
+        const ef = horarioEfectivoAuxEnAsig(conflictoAux2, data.assistant2Id)
+        throw errors.conflict(
+          `Conflicto de auxiliar #2: ${aux?.name} ya está asignada el ${data.weekday} en ${conflictoAux2.room.name} (Sede ${conflictoAux2.room.site.name} · ${conflictoAux2.room.site.city}) de ${ef.ini} a ${ef.fin}.`
+        )
+      }
+      // 21-oct · RN-09 también para la auxiliar: no puede estar en dos
+      // ciudades el mismo día. Solo se validaba al profesional, y una auxiliar
+      // liberada por la ausencia de su médico en la mañana quedaba asignada en
+      // otra ciudad aunque en la tarde siguiera con otro médico en la suya.
+      const otraCiudad2 = delDia2.find((a) =>
+        !vacantes.has(a.id) && !caidos.has(a.id) && a.room.site.city !== consultorio.site.city
+      )
+      if (otraCiudad2) {
+        const aux = await tx.resource.findUnique({ where: { id: data.assistant2Id } })
+        const o = otraCiudad2
+        throw errors.conflict(
+          `${aux?.name} no puede estar en dos ciudades el mismo día: ya está el ${data.weekday} en ${o.room.name} (${o.room.site.name} · ${o.room.site.city}) de ${o.startTime} a ${o.endTime}, y este turno es en ${consultorio.site.city}.`
+        )
       }
     }
 
@@ -817,14 +1145,38 @@ export async function crearAsignacion(data, userCtx) {
 
     // ---- INSERT con todas las validaciones pasadas ----
     // Override manual: si el coord conoce los pacientes REALES, los usa.
-    const pacientesCapacidad = data.expectedPatients != null
+    // Si es un tramo de reemplazo, los pacientes son los de la AGENDA QUE SE
+    // CAYÓ en ese rato —el paciente conserva su hora—, no la capacidad del
+    // médico que cubre calculada por su propio intervalo.
+    const pacientesDelTramoCaido = data.expectedPatients == null ? await pacientesDelTramoQueCubre(tx, data) : null
+    let pacientesCapacidad = data.expectedPatients != null
       ? data.expectedPatients
-      : calcularCapacidad(
+      : pacientesDelTramoCaido != null
+        ? pacientesDelTramoCaido
+        : calcularCapacidad(
           data.startTime,
           data.endTime,
           recurso.slotMinutes ?? 15,
           recurso.type,
         )
+
+    // ---- Una reprogramación no toma más pacientes de los que faltan ----
+    // Oct-2026 · Hector: "en pacientes reales no aceptar una cantidad mayor a
+    // la que debe ser repro: si son 20, bloquear 21 en adelante". La pantalla
+    // ya lo bloquea; aquí se cierra para quien escriba la petición a mano.
+    //
+    // Y si el campo se deja vacío, tampoco: antes se guardaba la capacidad del
+    // médico que cubre (24) aunque solo faltaran 10, y el caso contaba 24
+    // pacientes reprogramados de una agenda de 10.
+    const pendientes = await pacientesPorReprogramar(tx, data.coveredAbsenceId)
+    if (pendientes != null) {
+      if (data.expectedPatients != null && data.expectedPatients > pendientes) {
+        throw errors.badRequest(
+          `Son ${pendientes} pacientes por reprogramar: no se pueden poner ${data.expectedPatients}.`
+        )
+      }
+      pacientesCapacidad = Math.min(pacientesCapacidad, pendientes)
+    }
 
     const nueva = await tx.assignment.create({
       data: {

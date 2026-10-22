@@ -5,6 +5,8 @@ const prismaMock = {
   resource: { findMany: vi.fn() },
   room: { findMany: vi.fn() },
   weekSiteClosure: { findMany: vi.fn() },
+  week: { findMany: vi.fn() },
+  siteBlock: { findMany: vi.fn() },
 }
 vi.mock('../lib/prisma.js', () => ({ prisma: prismaMock }))
 
@@ -35,11 +37,16 @@ const candidata = (over = {}) => ({
 })
 
 /** Configura el mock: `existentes` son las asignaciones ya presentes en la semana. */
-function montar({ existentes = [], closures: cierres = [] } = {}) {
+function montar({ existentes = [], closures: cierres = [], bloqueos = [] } = {}) {
   prismaMock.assignment.findMany.mockResolvedValue(existentes)
   prismaMock.resource.findMany.mockResolvedValue(RECURSOS)
   prismaMock.room.findMany.mockResolvedValue(CONSULTORIOS)
   prismaMock.weekSiteClosure.findMany.mockResolvedValue(cierres)
+  // La semana destino empieza el domingo 18-oct-2026: el lunes es el 19.
+  prismaMock.week.findMany.mockResolvedValue([
+    { id: SEM, startDate: new Date('2026-10-18T00:00:00Z'), endDate: new Date('2026-10-24T00:00:00Z') },
+  ])
+  prismaMock.siteBlock.findMany.mockResolvedValue(bloqueos)
   prismaMock.assignment.createMany.mockResolvedValue({ count: 0 })
 }
 
@@ -100,6 +107,22 @@ describe('copiarAsignacionesValidadas — el caso que motivó el cambio', () => 
   })
 })
 
+describe('sede bloqueada (3583)', () => {
+  it('no copia lo que cae en una sede bloqueada ese día, y dice por qué', async () => {
+    montar({
+      bloqueos: [{ id: 'b1', siteId: 'sedeA', startDate: new Date('2026-10-19T00:00:00Z'), endDate: new Date('2026-10-20T00:00:00Z'), reason: 'sin personal', liftedAt: null }],
+    })
+    const r = await copiarAsignacionesValidadas(
+      [candidata({ weekday: 'lunes' }), candidata({ weekday: 'miercoles' }), candidata({ weekday: 'lunes', roomId: 'c2' })],
+      { userRol: 'supervisor' },
+    )
+    expect(r.copied).toBe(2)
+    expect(r.skipped).toBe(1)
+    expect(r.errors[0]).toMatchObject({ day: 'lunes', room: 'Consultorio 1', reason: 'sede_bloqueada' })
+    expect(r.errors[0].message).toContain('Sede 2 está bloqueada del 2026-10-19 al 2026-10-20')
+  })
+})
+
 describe('coste en consultas', () => {
   it('usa un número fijo de consultas, no una por asignación', async () => {
     montar()
@@ -114,6 +137,9 @@ describe('coste en consultas', () => {
     expect(prismaMock.resource.findMany).toHaveBeenCalledTimes(1)
     expect(prismaMock.room.findMany).toHaveBeenCalledTimes(1)
     expect(prismaMock.weekSiteClosure.findMany).toHaveBeenCalledTimes(1)
+    // 3583 · las semanas destino y sus bloqueos de sede, una vez cada uno
+    expect(prismaMock.week.findMany).toHaveBeenCalledTimes(1)
+    expect(prismaMock.siteBlock.findMany).toHaveBeenCalledTimes(1)
     // Y UN solo insert para todas
     expect(prismaMock.assignment.createMany).toHaveBeenCalledTimes(1)
     // Antes: 30 transacciones × ~12 consultas = ~360 idas y vueltas.
@@ -241,6 +267,8 @@ describe('uso dentro de una transacción', () => {
       resource: { findMany: vi.fn().mockResolvedValue(RECURSOS) },
       room: { findMany: vi.fn().mockResolvedValue(CONSULTORIOS) },
       weekSiteClosure: { findMany: vi.fn().mockResolvedValue([]) },
+      week: { findMany: vi.fn().mockResolvedValue([]) },
+      siteBlock: { findMany: vi.fn().mockResolvedValue([]) },
     }
 
     const r = await copiarAsignacionesValidadas([candidata()], { userRol: 'coordinador', userSedes: ['sedeA', 'sedeB'], client: tx })

@@ -20,6 +20,7 @@ import {
   BASE_MINUTOS_SEMANA_TEORICA,
 } from '../lib/calendario.js'
 import { TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN, whereAusenciasIncapacidadEnRango } from '../lib/absences.js'
+import { cargarBloqueos, diasBloqueados } from '../lib/bloqueosSede.js'
 
 /**
  * Días HÁBILES que cubre una ausencia: excluye domingos y festivos.
@@ -203,6 +204,20 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
   // cambia a 70h, este informe se recalcula solo.
   const baseHoraria = await cargarBaseHoraria()
   const hBaseSemana = minutosBaseSemana(semanaObj, festivosSet, baseHoraria) / 60
+  // 3583 · Una sede bloqueada no cuenta: sus días bloqueados salen de la base
+  // como si fueran festivos de esa sede, y bloqueada toda la semana no aparece.
+  const bloqueos = semanaObj ? await cargarBloqueos(prisma, semanaObj.startDate, semanaObj.endDate) : []
+  const baseCache = new Map()
+  const hBaseDeSede = (siteId) => {
+    if (!bloqueos.length) return hBaseSemana
+    if (!baseCache.has(siteId)) {
+      const dias = diasBloqueados(bloqueos, siteId, semanaObj.startDate, semanaObj.endDate)
+      baseCache.set(siteId, dias.size
+        ? minutosBaseSemana(semanaObj, new Set([...festivosSet, ...dias]), baseHoraria) / 60
+        : hBaseSemana)
+    }
+    return baseCache.get(siteId)
+  }
 
   const [asignaciones] = await Promise.all([
     prisma.assignment.findMany({
@@ -246,7 +261,7 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
         // coincidir con las columnas. Se declara aquí aunque se calcule al
         // final, para fijar la posición.
         h_asignadas: 0,
-        h_base: hBaseSemana,
+        h_base: hBaseDeSede(c.siteId),
         _franjas: new Map(),
       })
     }
@@ -263,7 +278,7 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
         site: a.room.site.name,
         specialty: a.room.specialty,
         h_asignadas: 0,
-        h_base: hBaseSemana,
+        h_base: hBaseDeSede(a.room.siteId),
         _franjas: new Map(),
       })
     }
@@ -277,7 +292,7 @@ export async function dataOcupacion({ site_id: sede_id, resource_type: tipo_recu
     fr.get(a.weekday).push({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })
   }
 
-  return Array.from(porCons.values()).map(({ _franjas, ...f }) => {
+  return Array.from(porCons.values()).filter((f) => !(bloqueos.length && f.h_base === 0)).map(({ _franjas, ...f }) => {
     let minutos = 0
     for (const franjas of _franjas.values()) minutos += minutosUnion(franjas)
     const horas = minutos / 60
@@ -398,10 +413,22 @@ export async function dataOcupacionAsesores({ site_id: sede_id, week_id: semana_
     grp.asesoresBruto.add(a.resource.id)
   }
 
+  // 3583 · Los días bloqueados de una sede salen de su base, como festivos de
+  // esa sede; bloqueada toda la semana, no aparece.
+  const bloqueos = semanaObj ? await cargarBloqueos(prisma, semanaObj.startDate, semanaObj.endDate) : []
+  const minBase = semanaObj ? minutosBaseSemana(semanaObj, festivosSet) : 0
+  const factorBloqueo = (sid) => {
+    if (!bloqueos.length || !minBase) return 1
+    const dias = diasBloqueados(bloqueos, sid, semanaObj.startDate, semanaObj.endDate)
+    return dias.size ? minutosBaseSemana(semanaObj, new Set([...festivosSet, ...dias])) / minBase : 1
+  }
+
   // Paso 3: filtrar por sede (si se pidió) y armar filas.
   const filas = [...porSede.entries()]
     .filter(([sid]) => !sedeIds || sedeIds.includes(sid))
-    .map(([, f]) => ({
+    .map(([sid, f]) => ({ ...f, h_base: f.h_base * factorBloqueo(sid) }))
+    .filter((f) => !(bloqueos.length && f.h_base === 0))
+    .map((f) => ({
       site: f.site,
       n_asesores: f.asesoresBruto.size,
       h_asignadas: Math.round(f.h_asignadas * 10) / 10,
@@ -410,6 +437,115 @@ export async function dataOcupacionAsesores({ site_id: sede_id, week_id: semana_
     }))
 
   return filas.sort((a, b) => b.pct_ocupacion - a.pct_ocupacion)
+}
+
+/**
+ * INDICADORES DE ASESORES (PROYECTOS-3398 §8 · 3667/3668), por asesor.
+ *
+ * Hector eligió tres (20-oct-2026): ocupación, horas en backoffice frente a
+ * atención y ausentismo. Sin pacientes ni costo de oportunidad: los asesores no
+ * atienden pacientes, y ponérselos era parte de lo que §8 corrigió.
+ *
+ *   - Ocupación: (horas de atención + backoffice) frente a su tope semanal,
+ *     recortado por festivos con el mismo factor del informe por sede.
+ *   - Backoffice: qué parte de sus horas fue backoffice.
+ *   - Ausentismo: sus ausencias confirmadas de los 90 días que terminan con la
+ *     semana elegida, cuántas imprevistas y la anticipación promedio. Una sola
+ *     semana dice poco de ausentismo, por eso la ventana es más larga.
+ */
+export async function dataIndicadoresAsesores({ site_id: sede_id, week_id: semana_id } = {}) {
+  const sedeIds = aLista(sede_id)
+  const semanaId = semana_id ?? (await getSemanaActual())?.id
+  const semana = semanaId
+    ? await prisma.week.findUnique({ where: { id: semanaId }, select: { id: true, startDate: true, endDate: true } })
+    : null
+  if (!semana) return []
+
+  const jornadaParam = await prisma.systemSetting.findUnique({ where: { key: 'jornada_semanal_horas' } })
+  const jornadaNominal = jornadaParam ? Number(jornadaParam.value) : JORNADA_LEGAL_SEMANAL
+  const festivos = await cargarFestivosDelRango(semana.startDate, semana.endDate)
+  const factorFestivos = minutosBaseSemana(semana, festivos) / BASE_MINUTOS_SEMANA_TEORICA
+
+  const asesores = await prisma.resource.findMany({
+    where: { type: 'asesor_servicios', active: true },
+    select: { id: true, name: true, maxHoursPerWeek: true },
+  })
+  const ids = asesores.map((a) => a.id)
+  const [atencion, backoffice, ausencias] = await Promise.all([
+    prisma.assignment.findMany({
+      where: { weekId: semana.id, status: { not: 'cancelada' }, resourceId: { in: ids } },
+      select: { resourceId: true, startTime: true, endTime: true, room: { select: { siteId: true, site: { select: { name: true } } } } },
+    }),
+    prisma.backofficeAssignment.findMany({
+      where: { assistantId: { in: ids }, day: { gte: semana.startDate, lte: semana.endDate } },
+      select: { assistantId: true, startTime: true, endTime: true, siteId: true, site: { select: { name: true } } },
+    }),
+    prisma.absence.findMany({
+      where: {
+        resourceId: { in: ids }, status: 'confirmada',
+        startDate: { lte: semana.endDate }, endDate: { gte: sumarDiasUTC(semana.endDate, -89) },
+      },
+      select: { resourceId: true, startDate: true, endDate: true, noticeDays: true, isPlanned: true },
+    }),
+  ])
+
+  const desdeVentana = sumarDiasUTC(semana.endDate, -89)
+  const filas = asesores.map((r) => {
+    const horasPorSede = new Map()
+    const sumar = (siteId, nombre, h) => {
+      const x = horasPorSede.get(siteId) ?? { nombre, h: 0 }
+      x.h += h
+      horasPorSede.set(siteId, x)
+    }
+    let hAt = 0
+    for (const a of atencion.filter((x) => x.resourceId === r.id)) {
+      const h = horasEfectivasFranja(a.startTime, a.endTime, 'asesor_servicios')
+      hAt += h
+      sumar(a.room.siteId, a.room.site.name, h)
+    }
+    let hBo = 0
+    for (const b of backoffice.filter((x) => x.assistantId === r.id)) {
+      const h = horasEfectivasFranja(b.startTime, b.endTime, 'asesor_servicios')
+      hBo += h
+      sumar(b.siteId, b.site.name, h)
+    }
+    const suyas = ausencias.filter((x) => x.resourceId === r.id)
+    const dias = suyas.reduce((acc, x) => {
+      const ini = x.startDate > desdeVentana ? x.startDate : desdeVentana
+      const fin = x.endDate < semana.endDate ? x.endDate : semana.endDate
+      return acc + Math.max(0, Math.round((fin - ini) / 86400000) + 1)
+    }, 0)
+    const tope = (r.maxHoursPerWeek ?? jornadaNominal) * factorFestivos
+    const total = hAt + hBo
+    const principal = [...horasPorSede.entries()].sort((a, b) => b[1].h - a[1].h)[0]
+    return {
+      resource: r.name,
+      site: principal?.[1].nombre ?? '—',
+      _sedes: [...horasPorSede.keys()],
+      h_atencion: Math.round(hAt * 10) / 10,
+      h_backoffice: Math.round(hBo * 10) / 10,
+      pct_backoffice: total > 0 ? Math.round((hBo / total) * 100) : 0,
+      h_tope: Math.round(tope * 10) / 10,
+      ausencias_90d: suyas.length,
+      dias_ausente_90d: dias,
+      imprevistas_90d: suyas.filter((x) => !x.isPlanned).length,
+      anticipacion_prom: suyas.length ? Math.round(suyas.reduce((acc, x) => acc + (x.noticeDays ?? 0), 0) / suyas.length) : null,
+      pct_ocupacion: tope > 0 ? Math.round((total / tope) * 100) : 0,
+    }
+  })
+
+  return filas
+    // Con sede: los asesores que trabajaron en ella esa semana.
+    .filter((f) => !sedeIds || f._sedes.some((s) => sedeIds.includes(s)))
+    .map(({ _sedes, ...f }) => f)
+    .sort((a, b) => b.pct_ocupacion - a.pct_ocupacion || a.resource.localeCompare(b.resource, 'es'))
+}
+
+/** Suma días a una fecha de solo-día (medianoche UTC) sin correrla por la zona. */
+function sumarDiasUTC(d, n) {
+  const x = new Date(d)
+  x.setUTCDate(x.getUTCDate() + n)
+  return x
 }
 
 export async function dataProductividad({ site_id: sede_id, resource_type: tipo_recurso, desde, hasta } = {}) {
@@ -647,8 +783,8 @@ export async function dataAusentismo({ desde, hasta, site_id: sede_id, resource_
     }
     const r = porRecurso.get(k)
     r.absences++
-    // Contadores nuevos (ago-2026): >15 días anticipación = programada,
-    // ≤15 días = imprevista. Alimentan el análisis de reprogramación.
+    // Programada / imprevista se decide al registrar (lib/anticipacion.js:
+    // 20 días o más = programada). Alimentan el análisis de reprogramación.
     if (a.isPlanned) r.programadas++
     else r.imprevistas++
     r.dias += diasHabilesDeAusencia(a, festivos)
@@ -835,8 +971,8 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
     }
     const r = porRecurso.get(k)
     r.absences++
-    // Contadores nuevos (ago-2026): >15 días anticipación = programada,
-    // ≤15 días = imprevista. Alimentan el análisis de reprogramación.
+    // Programada / imprevista se decide al registrar (lib/anticipacion.js:
+    // 20 días o más = programada). Alimentan el análisis de reprogramación.
     if (a.isPlanned) r.programadas++
     else r.imprevistas++
     r.dias += diasHabilesDeAusencia(a, festivos)
@@ -1032,6 +1168,7 @@ export async function dataCierreSemanas({ desde, hasta, site_id: sede_id } = {})
 const GENERADORES = {
   ocupacion: dataOcupacion,
   'ocupacion-asesores': dataOcupacionAsesores,
+  'indicadores-asesores': dataIndicadoresAsesores,
   productividad: dataProductividad,
   ausentismo: dataAusentismo,
   subutilizacion: dataSubutilizacion,
@@ -1051,6 +1188,8 @@ export const ocupacion = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:ocupacion', req.query), TTL_INFORME, () => dataOcupacion(req.query)))
 export const ocupacionAsesores = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:ocupacion-asesores', req.query), TTL_INFORME, () => dataOcupacionAsesores(req.query)))
+export const indicadoresAsesores = async (req, res) =>
+  res.json(await withCache(keyDeQuery('inf:indicadores-asesores', req.query), TTL_INFORME, () => dataIndicadoresAsesores(req.query)))
 export const productividad = async (req, res) =>
   res.json(await withCache(keyDeQuery('inf:productividad', req.query), TTL_INFORME, () => dataProductividad(req.query)))
 export const ausentismo = async (req, res) =>

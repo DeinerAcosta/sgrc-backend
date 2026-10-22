@@ -250,6 +250,65 @@ export function requiereIntervaloPorPaciente(type) {
 export const TIPOS_MEDICOS = new Set(['oftalmologo', 'anestesiologo', 'otorrino'])
 
 /**
+ * PROFESIONALES — de quien reprograma la lider, y de quien el coordinador
+ * =======================================================================
+ *
+ * Oct-2026 · Hector fijo el reparto del trabajo: "la reprogramacion de los
+ * profesionales la hace Maria Duarte. La de los demas como tec, asesores, aux
+ * los hace los coordinadores de sede".
+ *
+ * Es un TERCER corte, distinto de los dos de arriba, y conviene no volverlos a
+ * mezclar — ya paso dos veces:
+ *
+ *   TIPOS_QUE_IMPACTAN_PACIENTES — tiene agenda propia. Incluye al tecnico.
+ *   TIPOS_MEDICOS                — es medico. Son tres.
+ *   TIPOS_PROFESIONALES          — de quien responde la lider. Son estos cinco.
+ *
+ * El tecnico es el que separa este conjunto del primero: SI deja pacientes sin
+ * atender cuando falta —por eso sigue impactando—, pero su reprogramacion es
+ * del coordinador de su sede, no de la lider.
+ *
+ * Esta lista debe seguir igual al grupo `profesionales` de GRUPOS_AUSENCIAS en
+ * el frontend, que arma las tarjetas y el menu. Antes de este cambio NO
+ * coincidian: el menu mandaba a la lider a `?grupo=profesionales` (cinco tipos)
+ * mientras el servidor le abria los seis de TIPOS_QUE_IMPACTAN_PACIENTES, asi
+ * que veia tecnicos que no le tocaban.
+ */
+export const TIPOS_PROFESIONALES = new Set([
+  'oftalmologo',
+  'optometra',
+  'anestesiologo',
+  'otorrino',
+  'fonoaudiologa',
+])
+
+/**
+ * Que le toca a cada rol en su lista de trabajo de reprogramacion.
+ *
+ * Ojo, que los dos roles NO se recortan igual, y confundirlo fue el error:
+ *
+ *   reprogramador — lo que LE ASIGNARON. Es quien recibe el caso de manos de
+ *     la lider y llama a los pacientes uno por uno. No le toca "todas las
+ *     agendas de profesionales": le toca lo suyo y nada mas. Hector: "este
+ *     perfil es para las personas que Duarte asigna, no para Duarte".
+ *
+ *   coordinador — lo de su sede que NO es profesional. A el nadie le asigna
+ *     nada: los casos de tecnicos, auxiliares y asesores son suyos de entrada,
+ *     por eso el corte es por tipo y no por asignacion.
+ *
+ * La lider no sale aqui porque no trabaja contra esta lista: reparte desde la
+ * pantalla del caso, en Gestion de ausencias.
+ *
+ * @param {string} rol
+ * @returns {{asignadasAMi:true}|{excluye:string[]}|null} null = ve el reparto completo
+ */
+export function alcanceDeReprogramacion(rol) {
+  if (rol === 'reprogramador') return { asignadasAMi: true }
+  if (rol === 'coordinador') return { excluye: [...TIPOS_PROFESIONALES] }
+  return null   // supervisor / gerencia / directivo: supervisan, ven todo
+}
+
+/**
  * Misma regla de interseccion que tiposConAgendaPermitidos, pero sobre el
  * conjunto de medicos: el parametro `?resource_type=` afina DENTRO y nunca
  * amplia. Pedir `?resource_type=tecnico` devuelve vacio.
@@ -327,3 +386,13 @@ export function normalizarEsquemaYTope({ type, payScheme, maxHoursPerWeek } = {}
     ? { payScheme: esquema, maxHoursPerWeek: null }
     : { payScheme: esquema, maxHoursPerWeek: maxHoursPerWeek ?? HORAS_SEMANA_POR_DEFECTO }
 }
+
+/**
+ * 21-oct · Hector: "los coordinadores pueden crear una ausencia del
+ * profesional pero no gestionarla". La de un profesional la gestiona la líder
+ * (supervisor) o gerencia; el coordinador la registra y la ve.
+ */
+export function coordSoloVe(user, tipoRecurso) {
+  return user?.role === 'coordinador' && TIPOS_PROFESIONALES.has(tipoRecurso)
+}
+export const MSG_SOLO_VE = 'Las ausencias de profesionales las gestiona la líder; el coordinador solo las registra y las ve.'

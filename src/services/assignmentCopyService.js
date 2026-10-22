@@ -4,6 +4,7 @@ import { calcularCapacidad } from './assignmentService.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { sedesDeUsuario } from '../lib/siteScope.js'
+import { fechaDeTurno, bloqueoQueCubre, cargarBloqueos, mensajeBloqueo } from '../lib/bloqueosSede.js'
 
 /**
  * COPIA VALIDADA DE ASIGNACIONES
@@ -135,12 +136,32 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
   const previasHoras = horasSemanalesPrevias(estado.assignments, estado.resources)
 
   // El acumulado semanal solo alimenta la marca de horas extras (no bloquea).
-  const conContexto = candidatas.map((c) => ({
+  // 3583 · Lo que cae en una sede bloqueada ese día no se copia.
+  const semanasCopia = await client.week.findMany({ where: { id: { in: semanaIds } }, select: { id: true, startDate: true, endDate: true } })
+  const inicioDe = new Map(semanasCopia.map((s) => [s.id, s.startDate]))
+  const bloqueos = semanasCopia.length
+    ? await cargarBloqueos(client,
+        semanasCopia.reduce((m, s) => (s.startDate < m ? s.startDate : m), semanasCopia[0].startDate),
+        semanasCopia.reduce((m, s) => (s.endDate > m ? s.endDate : m), semanasCopia[0].endDate))
+    : []
+  const bloqueoDe = (c) => {
+    const room = estado.rooms.get(c.roomId)
+    const fecha = room && fechaDeTurno(inicioDe.get(c.weekId), c.weekday)
+    return fecha ? bloqueoQueCubre(bloqueos, room.siteId, fecha) : null
+  }
+  const omitidasPorBloqueo = []
+  const libres = candidatas.filter((c) => {
+    const b = bloqueos.length ? bloqueoDe(c) : null
+    if (b) omitidasPorBloqueo.push({ candidata: c, reason: 'sede_bloqueada', message: mensajeBloqueo(b, estado.rooms.get(c.roomId)?.site?.name ?? 'del consultorio') })
+    return !b
+  })
+
+  const conContexto = libres.map((c) => ({
     ...c,
     _horasSemanaPrevias: previasHoras.get(`${c.weekId}|${c.resourceId}`) ?? 0,
   }))
 
-  const { aceptadas, skipped: omitidas } = validarLote(conContexto, {
+  const { aceptadas, skipped: omitidasLote } = validarLote(conContexto, {
     ...estado,
     // programacionLibre() levanta el cierre para todos los roles mientras dure
     // el modo temporal; fuera de él, solo supervisor y gerencia.
@@ -178,6 +199,7 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
   if (filas.length > 0) {
     await client.assignment.createMany({ data: filas })
   }
+  const omitidas = [...omitidasPorBloqueo, ...omitidasLote]
 
   return {
     copied: filas.length,

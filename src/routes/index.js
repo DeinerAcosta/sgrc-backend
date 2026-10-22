@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error.js'
 
 import * as auth from '../controllers/authController.js'
 import * as sede from '../controllers/siteController.js'
+import * as bloqueo from '../controllers/siteBlockController.js'
 import * as cons from '../controllers/roomController.js'
 import * as rec from '../controllers/resourceController.js'
 import * as usr from '../controllers/userController.js'
@@ -51,6 +52,11 @@ r.get('/sites', wrap(sede.list))
 r.get('/sites/:id', wrap(sede.getById))
 r.post('/sites', requireRol('supervisor'), wrap(sede.create))
 r.put('/sites/:id', requireRol('supervisor'), wrap(sede.update))
+// 3583 · Bloqueo de una sede completa. Lo ve quien programa; lo ponen y lo
+// levantan supervisor y gerencia (gerencia pasa todas las puertas).
+r.get('/site-blocks', requireRol('coordinador', 'supervisor', 'directivo'), wrap(bloqueo.list))
+r.post('/site-blocks', requireRol('supervisor'), wrap(bloqueo.create))
+r.put('/site-blocks/:id/lift', requireRol('supervisor'), wrap(bloqueo.lift))
 r.get('/sites/:id/rooms', wrap(sede.rooms))
 
 // ============ CONSULTORIOS ============
@@ -138,6 +144,7 @@ r.post('/weeks/:id/copy', requireRol('coordinador', 'supervisor'), wrap(semn.cop
 // tiene horas en la semana que se esta armando. Alimenta el aviso del
 // Programador y el resaltado de las casillas.
 r.get('/weeks/:id/previous-absences', wrap(semn.ausentesSemanaAnterior))
+r.get('/weeks/:id/changes', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(semn.cambiosDeLaSemana))
 // Oct-2026 · Las ausencias que caen DENTRO de la semana que se esta viendo, con
 // el dia exacto, para que el Programador pinte la casilla en rojo.
 //
@@ -154,6 +161,9 @@ r.get('/assignments/export', wrap(asig.exportarSemana))
 r.post('/assignments', requireRol('coordinador', 'supervisor'), wrap(asig.create))
 r.put('/assignments/:id', requireRol('coordinador', 'supervisor'), wrap(asig.update))
 r.delete('/assignments/:id', requireRol('coordinador', 'supervisor'), wrap(asig.remove))
+// 3739 · Turno en contingencia: lo marca el coordinador; lo aprueba la líder o gerencia.
+r.put('/assignments/:id/contingency', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(asig.marcarContingencia))
+r.put('/assignments/:id/contingency/approve', requireRol('supervisor', 'gerencia'), wrap(asig.aprobarContingencia))
 r.patch('/assignments/:id/patient-capacity', requireRol('coordinador', 'supervisor', 'gerencia', 'recurso'), wrap(asig.actualizarPacientesCapacidad))
 r.post('/assignments/copy-day', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(asig.copiarDia))
 r.post('/assignments/copy-room', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(asig.copiarConsultorio))
@@ -162,18 +172,43 @@ r.post('/assignments/:id/copy-to-days', requireRol('coordinador', 'supervisor', 
 // ============ AUSENCIAS ============
 r.get('/absences', wrap(aus.list))
 r.post('/absences', wrap(aus.create))
-r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.confirmar))
-r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.rechazar))
+r.get('/absences/data-consent', wrap(aus.autorizacionDatos))
+// Oct-2026 · Sin 'reprogramador'. Ese rol es el de quien RECIBE el encargo y
+// llama a los pacientes; decidir si una ausencia ocurrió no es lo suyo. Se
+// quedó aquí de cuando el rol era el de la líder, y le dejaba confirmar o
+// rechazar cualquier ausencia escribiendo la dirección.
+r.put('/absences/:id/confirm', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.confirmar))
+r.put('/absences/:id/reject', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.rechazar))
 // Oct-2026 · Todo lo que la pantalla de reemplazo necesita de un solo viaje:
 // las franjas que se cayeron con sede, consultorio, horario y coordinador.
 //
 // CERRADO POR ROL, por lo mismo que el de arriba: cualquier autenticado podia
 // pedir el caso de cualquier profesional y ver su motivo de ausencia, cuantos
 // pacientes dejo y donde atendia.
-r.get('/absences/:id/replacement-context', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.contextoReemplazo))
+r.get('/absences/:id/replacement-context', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.contextoReemplazo))
 // Oct-2026 · La lider asigna la reprogramacion; el reprogramador la cierra.
-r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.asignarReprogramador))
-r.put('/absences/:id/rescheduler/done', requireRol('supervisor', 'gerencia', 'reprogramador'), wrap(aus.marcarReprogramacionResuelta))
+// SIN 'reprogramador': repartir es el trabajo de la lider, que entra como
+// supervisor. Mientras estuvo abierto, quien recibia un encargo podia
+// reasignarlo a un companero o echarse encima los casos de los demas.
+r.put('/absences/:id/rescheduler', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.asignarReprogramador))
+// 'coordinador' entra aqui porque la reprogramacion de tecnicos, auxiliares y
+// asesores es suya por reparto y nadie se la asigna: sin esto no podia cerrar
+// un caso propio. El handler comprueba que sea de su reparto y de su sede.
+r.put('/absences/:id/rescheduler/done', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.marcarReprogramacionResuelta))
+
+// Oct-2026 · El trabajo real de quien recibe el encargo: llamar y anotar.
+// No mueve agendas; registra cuantos contestaron y cuantos no.
+r.put('/absences/:id/call-log', requireRol('reprogramador', 'supervisor', 'gerencia'), wrap(aus.registrarLlamadas))
+// Oct-2026 · Los pacientes reales del caso: los pone la líder (supervisor) y,
+// en su reparto, el coordinador. Quien llama solo los ve.
+r.put('/absences/:id/patients', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.corregirPacientes))
+r.put('/absences/:id/assistant-cover', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.cubrirAuxiliar))
+r.put('/absences/:id/paid', requireRol('coordinador', 'supervisor', 'gerencia'), wrap(aus.corregirRemuneracion))
+
+// La lista de trabajo de quien reprograma: la lider ve los profesionales de
+// todas las sedes, el coordinador lo demas de la suya. El reparto lo decide
+// alcanceDeReprogramacion en lib/resourceTypes.js, no la pantalla.
+r.get('/reschedules/mine', requireRol('coordinador', 'supervisor', 'gerencia', 'reprogramador'), wrap(aus.misReprogramaciones))
 
 // ============ REPOSICIONES DE AUSENCIA (Fase 3) ============
 // Lectura abierta (scoping por rol dentro del handler).
@@ -204,6 +239,7 @@ r.post('/backoffice-execution', wrap(boff.registrar))
 // ============ INFORMES ============
 r.get('/reports/occupancy', wrap(inf.ocupacion))
 r.get('/reports/advisor-occupancy', wrap(inf.ocupacionAsesores))
+r.get('/reports/advisor-indicators', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.indicadoresAsesores))
 r.get('/reports/productivity', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.productividad))
 
 r.get('/reports/absenteeism', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.ausentismo))
@@ -215,7 +251,11 @@ r.get('/reports/week-closures', requireRol('directivo', 'supervisor'), wrap(inf.
 r.get('/reports/dashboard', requireRol('directivo', 'supervisor'), wrap(inf.dashboard))
 // Fase 4 (ago-2026): dashboard gerencial de reprogramaciones — endpoint agregado
 // para el nuevo tablero /app/reprogramaciones (gerencia+directivo+supervisor).
-r.get('/reports/reschedules-dashboard', requireRol('directivo', 'supervisor', 'gerencia', 'reprogramador'), wrap(reprogDash.reprogramacionesDashboard))
+// Oct-2026 · Sin 'reprogramador': quien llama ve su propio indicador en Mis
+// reprogramaciones, no el tablero de toda la operación. El tablero salió de
+// su menú, pero el servidor lo seguía sirviendo a quien escribiera la URL.
+r.get('/reports/reschedules-dashboard', requireRol('directivo', 'supervisor', 'gerencia'), wrap(reprogDash.reprogramacionesDashboard))
+r.get('/reports/reschedulers', requireRol('directivo', 'supervisor', 'gerencia'), wrap(reprogDash.gestionReprogramadores))
 r.get('/reports/comparison', requireRol('directivo', 'supervisor'), wrap(inf.comparativo))
 r.get('/reports/:type/export', requireRol('coordinador', 'directivo', 'supervisor'), wrap(inf.exportar))
 

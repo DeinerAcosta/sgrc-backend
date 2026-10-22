@@ -1,5 +1,5 @@
-import { format } from 'date-fns'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
+import { parteAfectada } from '../lib/tramos.js'
 import { TIPOS_QUE_IMPACTAN_PACIENTES, TIPOS_QUE_LIBERAN_AUXILIAR} from '../lib/resourceTypes.js'
 
 /**
@@ -8,7 +8,7 @@ import { TIPOS_QUE_IMPACTAN_PACIENTES, TIPOS_QUE_LIBERAN_AUXILIAR} from '../lib/
  *
  * Reglas implementadas:
  *  - RN-18: impacto día a día (pacientes y costo de oportunidad)
- *  - RN-19: factor parcial cuando la ausencia es de horas y no del día completo
+ *  - RN-19: ausencia de horas: solo cuentan los pacientes de las horas que faltó (parteAfectada)
  *  - RN-24: liberación automática de auxiliar cuando falta quien la tiene asignada
  *    (oftalmólogo, anestesiólogo, otorrino — ver TIPOS_QUE_LIBERAN_AUXILIAR)
  */
@@ -27,6 +27,10 @@ const hhmmAMin = (hhmm) => {
 }
 
 /**
+ * YA NO SE USA para el impacto (oct-2026): se reemplazó por parteAfectada en
+ * lib/tramos.js, que cuenta solo las horas que faltó en cada turno. Se deja
+ * por si algún informe viejo la llama.
+ *
  * RN-19: factor parcial. Si la ausencia es de día completo → 1.
  * Si es parcial con horas, se prorratea contra una jornada estándar de 10h (600 min).
  * El min(1, ...) protege contra horas malformadas que excedan el día.
@@ -42,14 +46,27 @@ export function calcularFactorParcial(ausencia) {
 
 /**
  * Genera el listado de días que cubre la ausencia.
- * Retorna [{ fecha: 'YYYY-MM-DD', dia: 'lunes' }, ...].
+ * Retorna [{ date: 'YYYY-MM-DD', day: 'lunes' }, ...].
+ *
+ * EN UTC. Oct-2026 · Las fechas de la ausencia son de solo-día y se guardan a
+ * medianoche UTC. Antes se leían con la hora local: en Colombia (UTC-5) la
+ * medianoche UTC del martes 20 es el lunes 19 a las 19:00, así que cada día
+ * salía corrido uno atrás. Una ausencia del martes del Dr. Camargo contaba los
+ * 9 pacientes de su turno del LUNES, marcaba ese turno como no ejecutado, y la
+ * pantalla del caso —que sí lee en UTC— decía "no hay nada que reemplazar"
+ * con 9 pacientes impactados.
+ *
+ * Una fecha armada a medianoche LOCAL (parseISO de 'YYYY-MM-DD' en Colombia
+ * son las 05:00 UTC del mismo día) también da el día correcto en UTC.
  */
 export function diasDeAusencia(ausencia) {
+  // Se compara por la fecha en texto, no por el instante: así una fecha a
+  // medianoche UTC y otra a medianoche local del mismo día cuentan igual.
+  const dia = (x) => new Date(x).toISOString().slice(0, 10)
+  const fin = dia(ausencia.endDate)
   const fechas = []
-  const cursor = new Date(ausencia.startDate)
-  while (cursor <= ausencia.endDate) {
-    fechas.push({ date: format(cursor, 'yyyy-MM-dd'), day: DIAS[cursor.getDay()] })
-    cursor.setDate(cursor.getDate() + 1)
+  for (let d = new Date(`${dia(ausencia.startDate)}T00:00:00.000Z`); dia(d) <= fin; d = new Date(d.getTime() + 86400000)) {
+    fechas.push({ date: dia(d), day: DIAS[d.getUTCDay()] })
   }
   return fechas
 }
@@ -91,18 +108,21 @@ export async function resolverFactorMotivo(tx, ausencia) {
  * RN-18: calcula el impacto total de una ausencia. Itera día a día, suma
  * pacientes y costo de oportunidad, y deja el breakdown en `impactoPorDia`.
  *
- * Aplica DOS atenuadores multiplicativos:
- *   - factorParcial (RN-19): si es ausencia por horas, prorratea contra 10h
- *   - factorMotivo: del catálogo editable. Default 1.0 si la ausencia no
- *     tiene motivoId (ausencias previas al catálogo siguen midiéndose 100%).
+ * Por cada turno del día cuenta solo la parte que se cayó (parteAfectada): el
+ * turno entero si falta todo el día, o solo las horas que faltó si es parcial
+ * (RN-19, regla de oct-2026). Sobre eso aplica factorMotivo, del catálogo
+ * editable (1.0 si la ausencia no tiene motivoId).
  *
  * Requiere `tx` para correr dentro de la misma transacción del caller.
  */
 export async function calcularImpacto(tx, ausencia) {
   const fechas = diasDeAusencia(ausencia)
-  const factorParcial = calcularFactorParcial(ausencia)
+  // Oct-2026 · Ya no se usa calcularFactorParcial (horas ÷ 10 h × todos los
+  // turnos del día). Hector eligió "solo las horas que faltó": cada turno
+  // aporta solo la parte que cae dentro del horario de la ausencia
+  // (parteAfectada), igual que la pantalla del caso. Antes una parcial de la
+  // mañana sumaba también pacientes de la tarde.
   const factorMotivo = await resolverFactorMotivo(tx, ausencia)
-  const factor = factorParcial * factorMotivo
 
   const parametros = await tx.costSetting.findMany({
     orderBy: { effectiveFrom: 'desc' },
@@ -161,7 +181,9 @@ export async function calcularImpacto(tx, ausencia) {
     let pacDia = 0
     let costoDia = 0
     for (const a of asigsDia) {
-      const p = Math.round((a.patientCapacity ?? 0) * factor)
+      const parte = parteAfectada(a, ausencia)
+      if (!parte) continue   // turno que la ausencia parcial no toca
+      const p = Math.round(parte.pacientes * factorMotivo)
       pacDia += p
       costoDia += Math.round(p * costoVigente(a.room.specialty))
     }
@@ -205,21 +227,42 @@ export async function liberarAuxiliaresSiAplica(tx, ausencia, fechas) {
     return { liberadas: 0 }
   }
 
-  const asignacionesConAux = await tx.assignment.findMany({
-    where: {
-      resourceId: ausencia.resourceId,
-      assistantId: { not: null },
-      weekday: { in: fechas.map((f) => f.day) },
-      status: 'activa',
-    },
-  })
-
-  for (const a of asignacionesConAux) {
-    await tx.assignment.update({
-      where: { id: a.id },
-      data: { status: 'sin_cobertura' },
-    })
+  // Oct-2026 · CADA DÍA CONTRA SU SEMANA, Y SOLO LAS HORAS QUE FALTA. Antes se
+  // buscaba solo por día de la semana: una ausencia de un martes dejaba "sin
+  // cobertura" los turnos con auxiliar de TODOS los martes cargados —pasados y
+  // futuros—, y una parcial de la mañana también los de la tarde. Es el mismo
+  // fallo que ya se había corregido en calcularImpacto.
+  const pisaSuHorario = (a) => {
+    if (!ausencia.isPartial || !ausencia.absenceStartTime || !ausencia.absenceEndTime) return true
+    return !(ausencia.absenceEndTime <= a.startTime || ausencia.absenceStartTime >= a.endTime)
   }
 
-  return { liberadas: asignacionesConAux.length }
+  let liberadas = 0
+  for (const { date: fecha, day: dia } of fechas) {
+    const d = new Date(`${fecha}T00:00:00.000Z`)
+    const semana = await tx.week.findFirst({
+      where: { startDate: { lte: d }, endDate: { gte: d } },
+      select: { id: true },
+    })
+    if (!semana) continue
+
+    const asignacionesConAux = await tx.assignment.findMany({
+      where: {
+        weekId: semana.id,
+        resourceId: ausencia.resourceId,
+        assistantId: { not: null },
+        weekday: dia,
+        status: 'activa',
+      },
+    })
+    for (const a of asignacionesConAux.filter(pisaSuHorario)) {
+      await tx.assignment.update({
+        where: { id: a.id },
+        data: { status: 'sin_cobertura' },
+      })
+      liberadas++
+    }
+  }
+
+  return { liberadas }
 }

@@ -3,12 +3,17 @@ import PDFDocument from 'pdfkit'
 import ExcelJS from 'exceljs'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
-import { crearAsignacion, editarAsignacion, ROLES_EDITAN_CERRADA } from '../services/assignmentService.js'
+import { crearAsignacion, editarAsignacion, ROLES_EDITAN_CERRADA, pacientesPorReprogramar } from '../services/assignmentService.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { horasEfectivasFranja } from '../lib/workHours.js'
+import { SIN_TOPE_DIARIO } from '../lib/timeSlots.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar } from '../services/notificationService.js'
+import { TIPOS_CON_PRIORIDAD, prioridadDeReemplazo, compararPorPrioridad } from '../lib/prioridadReemplazo.js'
+import { TIPOS_QUE_LIBERAN_AUXILIAR, coordSoloVe, MSG_SOLO_VE } from '../lib/resourceTypes.js'
+import { diasDeAnticipacion } from '../lib/anticipacion.js'
 
 const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
 
@@ -101,6 +106,8 @@ const crearSchema = z.object({
   // Oct-2026 · "Se hace cargo aunque ya tenga turno esa franja". Unica
   // excepcion a RN-08 y solo vale junto a coveredAbsenceId.
   assumeOverlap: z.boolean().optional(),
+  // 3739 · Crear el turno ya en contingencia (naranja, pacientes vacíos).
+  contingency: z.boolean().optional(),
   supervisorReason: z.preprocess(emptyToUndef, z.string().optional()),
   // Override manual de pacientes programados — cuando el coord conoce el dato
   // real de la agenda externa (call center / eCitas) y este número difiere del
@@ -143,6 +150,21 @@ export async function list(req, res) {
 export async function create(req, res) {
   const data = crearSchema.parse(req.body)
   const result = await crearAsignacion(data, { id: req.user.id, role: req.user.role, sites: req.user.sites })
+
+  // 3739 · Hector, 21-oct: también se crea en contingencia desde una casilla
+  // vacía, con el mismo flujo: naranja, pacientes vacíos, la líder aprueba.
+  if (data.contingency) {
+    result.assignment = await prisma.assignment.update({
+      where: { id: result.assignment.id },
+      data: { contingency: true, patientCapacity: 0 },
+      include: { room: { select: { name: true, site: { select: { name: true } } } }, resource: { select: { name: true } } },
+    })
+    await registrarAuditoria({
+      userId: req.user.id, action: 'contingencia_marcar', entity: 'asignaciones', entityId: result.assignment.id,
+      newValue: { ...resumenAsignacion(result.assignment), contingencia: true },
+      ipAddress: getIp(req),
+    })
+  }
 
   // Auditoría de TODA creación (RN-05/RN-34), no solo de las excepciones.
   //
@@ -289,7 +311,11 @@ export async function actualizarPacientesCapacidad(req, res) {
     select: {
       assistantId: true,
       assistant2Id: true,
-      room: { select: { siteId: true } },
+      coveredAbsenceId: true,
+      patientCapacity: true,
+      weekId: true, weekday: true, startTime: true, endTime: true, roomId: true, resourceId: true,
+      resource: { select: { name: true } },
+      room: { select: { siteId: true, name: true, site: { select: { name: true } } } },
     },
   })
   if (!asig) throw errors.notFound('Asignación no encontrada')
@@ -318,9 +344,26 @@ export async function actualizarPacientesCapacidad(req, res) {
   }
   // supervisor/gerencia: sin restricción adicional
 
+  // 21-oct · Hector cambia desde el caso los pacientes de cada persona que
+  // cubre. El mismo tope que al crear: no más de los que faltan del caso,
+  // sin contar los que ya tenía este turno.
+  if (asig.coveredAbsenceId) {
+    const cubierta = await prisma.absence.findUnique({ where: { id: asig.coveredAbsenceId }, select: { resource: { select: { type: true } } } })
+    if (coordSoloVe(req.user, cubierta?.resource?.type)) throw errors.forbidden(MSG_SOLO_VE)
+    const pendientes = await pacientesPorReprogramar(prisma, asig.coveredAbsenceId, req.params.id)
+    if (pendientes != null && pacientesCapacidad > pendientes) {
+      throw errors.badRequest(`Quedan ${pendientes} pacientes por reprogramar en el caso: no se pueden poner ${pacientesCapacidad}.`)
+    }
+  }
+
   const actualizada = await prisma.assignment.update({
     where: { id: req.params.id },
     data: { patientCapacity: pacientesCapacidad },
+  })
+  await registrarAuditoria({
+    userId: req.user.id, action: 'asignacion_pacientes', entity: 'asignaciones', entityId: req.params.id,
+    oldValue: { pacientes: asig.patientCapacity }, newValue: resumenAsignacion({ ...asig, patientCapacity: pacientesCapacidad }),
+    ipAddress: getIp(req),
   })
   res.json(actualizada)
 }
@@ -563,6 +606,21 @@ export async function copiarDia(req, res) {
 }
 
 /**
+ * La fecha de un día de la semana, por nombre. Se busca recorriendo los siete
+ * días en UTC —las fechas de solo-día se guardan a medianoche UTC— para no
+ * depender de en qué día arranca la semana.
+ */
+function fechaDelDiaEnSemana(inicioSemana, nombreDia) {
+  const NOMBRES = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(inicioSemana)
+    d.setUTCDate(d.getUTCDate() + i)
+    if (NOMBRES[d.getUTCDay()] === nombreDia) return d
+  }
+  return null
+}
+
+/**
  * GET /recursos/sugeridos — sugiere reemplazos para una franja (HU-C-12, RN-38)
  *
  * Dos defectos corregidos aquí (sep-2026):
@@ -601,11 +659,12 @@ export async function sugerirReemplazos(req, res) {
       weekId: semana_id || undefined,
       weekday: dia,
       status: { not: 'cancelada' },
-      OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }],
+      OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }, { assistant2Id: { in: ids } }],
     },
     select: {
       resourceId: true,
       assistantId: true,
+      assistant2Id: true,
       startTime: true,
       endTime: true,
       // Oct-2026 · Antes solo viajaba siteId, que alcanzaba para el booleano
@@ -629,7 +688,7 @@ export async function sugerirReemplazos(req, res) {
   const franjasPorRecurso = new Map(ids.map((id) => [id, []]))
   const sedesPorRecurso = new Map(ids.map((id) => [id, new Set()]))
   for (const a of ocupacion) {
-    for (const rid of [a.resourceId, a.assistantId]) {
+    for (const rid of [a.resourceId, a.assistantId, a.assistant2Id]) {
       if (!rid || !franjasPorRecurso.has(rid)) continue
       franjasPorRecurso.get(rid).push(a)
       if (a.room?.siteId) sedesPorRecurso.get(rid).add(a.room.siteId)
@@ -640,8 +699,116 @@ export async function sugerirReemplazos(req, res) {
   // strings equivale a comparar minutos. Se mantiene el criterio original.
   const solapa = (a) => !(hora_fin <= a.startTime || hora_inicio >= a.endTime)
 
+  // ── Oct-2026 · Dos filtros que faltaban ────────────────────────────────
+  //
+  // Los dos hacían lo mismo en pantalla: ofrecer a alguien que luego, al
+  // pulsar "Asignar", el servidor rechaza. Hector: "intentaba asignar a alguno
+  // y no me dejaba en nada". La lista tiene que ofrecer solo lo que se puede.
+  //
+  // 1. LA CIUDAD (RN-09). La pantalla manda `city` y aquí se ignoraba: salía
+  //    quien ese día ya trabaja en Sabanalarga para cubrir en Barranquilla, y
+  //    la creación lo rebotaba por estar en dos ciudades el mismo día.
+  let ciudadObjetivo = req.query.city || null
+  if (!ciudadObjetivo && sedeObjetivo) {
+    const s = await prisma.site.findUnique({ where: { id: sedeObjetivo }, select: { city: true } })
+    ciudadObjetivo = s?.city ?? null
+  }
+  const enOtraCiudad = (rid) => !!ciudadObjetivo &&
+    franjasPorRecurso.get(rid).some((a) => a.room?.site?.city && a.room.site.city !== ciudadObjetivo)
+
+  // 2. QUIEN ESTÁ AUSENTE. Un médico de vacaciones no tiene turnos ese día, y
+  //    por eso salía como "tiene el día libre". Cuentan también las ausencias
+  //    por confirmar: quien avisó que falta no es un candidato.
+  const ausentes = new Set()
+  if (semana_id) {
+    const semana = await prisma.week.findUnique({ where: { id: semana_id }, select: { startDate: true } })
+    const fecha = semana && fechaDelDiaEnSemana(semana.startDate, dia)
+    if (fecha) {
+      const aus = await prisma.absence.findMany({
+        where: {
+          resourceId: { in: ids },
+          status: { in: ['pendiente', 'confirmada'] },
+          startDate: { lte: fecha },
+          endDate: { gte: fecha },
+        },
+        select: { resourceId: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+      })
+      for (const a of aus) {
+        // Una parcial solo lo saca de la lista si pisa la franja a cubrir.
+        const pisa = !a.isPartial || !a.absenceStartTime || !a.absenceEndTime ||
+          !(hora_fin <= a.absenceStartTime || hora_inicio >= a.absenceEndTime)
+        if (pisa) ausentes.add(a.resourceId)
+      }
+    }
+  }
+
+  // 3. EL TOPE DIARIO DE HORAS (RN-13). Oct-2026 · El barrido de QA que pulsa
+  //    Asignar en todos los casos encontró a una técnica con 6 h ese día
+  //    ofrecida para 6 h más: el servidor la rechazaba por pasar de 10 h. Se
+  //    calcula igual que VALIDACIÓN 5 de crearAsignacion (horas efectivas,
+  //    como profesional o auxiliar). Los de agenda sin tope diario y los
+  //    multi-consultorio (que allá se miden por unión de horas) no se filtran.
+  const pasaElTopeDiario = (r) => {
+    if (SIN_TOPE_DIARIO.has(r.type) || r.multiRoom) return false
+    // Un turno caído por la ausencia de su médico no suma horas ese día.
+    const delDia = franjasPorRecurso.get(r.id)
+      .filter((a) => a.resourceId === r.id || a.assistantId === r.id)
+      .filter((a) => !liberada(a))
+    const horas = delDia.reduce((n, a) => n + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0) +
+      horasEfectivasFranja(hora_inicio, hora_fin, r.type)
+    return horas > (r.maxHoursPerDay ?? 10)
+  }
+
+  // 4. PRIORIDAD PARA AUXILIARES Y ASESORES (3583). La auxiliar cuyo médico
+  //    falta ese día tiene su turno caído: está libre, no ocupada. Antes ese
+  //    turno contaba como ocupación y la candidata número 1 no salía nunca.
+  const conPrioridad = TIPOS_CON_PRIORIDAD.has(tipo) && !!semana_id
+  let liberada = () => false
+  const horasSemana = new Map()
+  let esMismoDia = false
+  if (conPrioridad) {
+    const semana = await prisma.week.findUnique({ where: { id: semana_id }, select: { startDate: true } })
+    const fecha = semana && fechaDelDiaEnSemana(semana.startDate, dia)
+    esMismoDia = !!fecha && diasDeAnticipacion(fecha.toISOString()) <= 0
+    const medicos = [...new Set(ocupacion
+      .filter((a) => ids.includes(a.assistantId) || ids.includes(a.assistant2Id))
+      .map((a) => a.resourceId))]
+    const ausMedicos = fecha && medicos.length
+      ? await prisma.absence.findMany({
+          // Solo confirmadas: es lo que el servidor acepta al asignar
+          // (turnosCaidosPorAusenciaDelMedico).
+          where: {
+            resourceId: { in: medicos }, status: 'confirmada', startDate: { lte: fecha }, endDate: { gte: fecha },
+            resource: { is: { type: { in: [...TIPOS_QUE_LIBERAN_AUXILIAR] } } },   // RN-24
+          },
+          select: { resourceId: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+        })
+      : []
+    liberada = (a) => ausMedicos.some((x) => x.resourceId === a.resourceId &&
+      (!x.isPartial || !x.absenceStartTime || !x.absenceEndTime ||
+        !(a.endTime <= x.absenceStartTime || a.startTime >= x.absenceEndTime)))
+    const semanaEntera = await prisma.assignment.findMany({
+      where: {
+        weekId: semana_id, status: { not: 'cancelada' },
+        OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }, { assistant2Id: { in: ids } }],
+      },
+      select: { resourceId: true, assistantId: true, assistant2Id: true, startTime: true, endTime: true },
+    })
+    for (const a of semanaEntera) {
+      for (const rid of new Set([a.resourceId, a.assistantId, a.assistant2Id])) {
+        if (!rid || !ids.includes(rid)) continue
+        const r = candidatos.find((c) => c.id === rid)
+        horasSemana.set(rid, (horasSemana.get(rid) ?? 0) + horasEfectivasFranja(a.startTime, a.endTime, r.type))
+      }
+    }
+  }
+  const propias = (r) => franjasPorRecurso.get(r.id).filter((a) => !liberada(a))
+
   const disponibles = candidatos
-    .filter((r) => !franjasPorRecurso.get(r.id).some(solapa))
+    .filter((r) => !propias(r).some(solapa))
+    .filter((r) => !ausentes.has(r.id))
+    .filter((r) => !enOtraCiudad(r.id))
+    .filter((r) => !pasaElTopeDiario(r))
     .map((r) => ({
       ...r,
       misma_sede: sedeObjetivo ? sedesPorRecurso.get(r.id).has(sedeObjetivo) : true,
@@ -656,10 +823,25 @@ export async function sugerirReemplazos(req, res) {
           room: a.room?.name ?? null,
           site: a.room?.site?.name ?? null,
           city: a.room?.site?.city ?? null,
+          liberada: liberada(a),
         })),
+      ...(conPrioridad ? (() => {
+        const p = prioridadDeReemplazo({
+          liberadaPorAusencia: franjasPorRecurso.get(r.id).some(liberada),
+          horasSemana: horasSemana.get(r.id) ?? 0,
+          topeSemanal: r.maxHoursPerWeek,
+          esMismoDia,
+        })
+        return {
+          prioridad: p.prioridad,
+          prioridad_motivo: p.motivo,
+          aviso_mismo_dia: !!p.avisoMismoDia,
+          horas_semana: Math.round((horasSemana.get(r.id) ?? 0) * 10) / 10,
+        }
+      })() : {}),
     }))
 
-  res.json(disponibles)
+  res.json(conPrioridad ? disponibles.sort(compararPorPrioridad) : disponibles)
 }
 
 // ============================================================================
@@ -856,4 +1038,62 @@ async function generarXLSX(semana, sede, grid) {
   for (let i = 2; i <= 8; i++) ws.getColumn(i).width = 26
 
   return Buffer.from(await wb.xlsx.writeBuffer())
+}
+
+// ============================================================================
+// Oct-2026 · PROYECTOS-3739 punto 4 · TURNO EN CONTINGENCIA (agenda colchón)
+// Hector, 21-oct: "turno en contingencia". El coordinador lo marca y sale
+// naranja con los pacientes vacíos; la líder (o gerencia) pone los pacientes y
+// lo aprueba, y vuelve a su color normal.
+// ============================================================================
+const aprobarContingenciaSchema = z.object({
+  patientCapacity: z.number({ required_error: 'Indica los pacientes' }).int().min(0).max(500),
+})
+
+async function turnoParaContingencia(req) {
+  const a = await prisma.assignment.findUnique({
+    where: { id: req.params.id },
+    include: { room: { select: { name: true, siteId: true, site: { select: { name: true } } } }, resource: { select: { name: true } } },
+  })
+  if (!a) throw errors.notFound('Asignación no encontrada')
+  assertSedePermitida(req.user, a.room.siteId, a.room.site?.name)
+  if (a.status === 'cancelada') throw errors.badRequest('El turno está cancelado.')
+  return a
+}
+
+export async function marcarContingencia(req, res) {
+  const a = await turnoParaContingencia(req)
+  if (a.contingency) throw errors.badRequest('Ese turno ya está en contingencia.')
+  const actualizada = await prisma.assignment.update({
+    where: { id: a.id },
+    data: { contingency: true, patientCapacity: 0 },
+  })
+  await registrarAuditoria({
+    userId: req.user.id, action: 'contingencia_marcar', entity: 'asignaciones', entityId: a.id,
+    oldValue: { pacientes: a.patientCapacity }, newValue: { ...resumenAsignacion(a), contingencia: true },
+    ipAddress: getIp(req),
+  })
+  res.json(actualizada)
+}
+
+export async function aprobarContingencia(req, res) {
+  const { patientCapacity } = aprobarContingenciaSchema.parse(req.body)
+  const a = await turnoParaContingencia(req)
+  if (!a.contingency) throw errors.badRequest('Ese turno no está en contingencia.')
+  if (a.coveredAbsenceId) {
+    const pendientes = await pacientesPorReprogramar(prisma, a.coveredAbsenceId, a.id)
+    if (pendientes != null && patientCapacity > pendientes) {
+      throw errors.badRequest(`Quedan ${pendientes} pacientes por reprogramar en el caso: no se pueden poner ${patientCapacity}.`)
+    }
+  }
+  const actualizada = await prisma.assignment.update({
+    where: { id: a.id },
+    data: { contingency: false, patientCapacity },
+  })
+  await registrarAuditoria({
+    userId: req.user.id, action: 'contingencia_aprobar', entity: 'asignaciones', entityId: a.id,
+    oldValue: { contingencia: true }, newValue: { ...resumenAsignacion({ ...a, patientCapacity }), contingencia: false },
+    ipAddress: getIp(req),
+  })
+  res.json(actualizada)
 }

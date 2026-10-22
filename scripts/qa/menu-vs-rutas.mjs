@@ -80,6 +80,40 @@ for (const rol of ROLES) {
     for (const x of malos) console.log(`           · ${x}`)
   }
 }
+// --- la casa de cada rol ------------------------------------------------
+//
+// Oct-2026 · El destino de entrada estaba copiado en TRES archivos y las
+// copias se separaron: a dos les faltaba `reprogramador`, que aterrizaba en
+// /app/horario sin permiso para abrirlo. El guardia lo devolvia a la misma
+// ruta, que se redirigia a si misma, y quedaba una pantalla en blanco.
+//
+// Aqui se comprueba lo unico que importa: que la casa de cada rol sea una
+// ruta que ESE rol pueda abrir. Si no, es un bucle en cuanto alguien entre.
+console.log('')
+console.log('CASA DE CADA ROL  (a dónde aterriza al entrar)')
+console.log('='.repeat(72))
+const entrada = {}
+const bloqueEntrada = navSrc.match(/RUTA_DE_ENTRADA = \{([\s\S]*?)\n\}/)
+if (!bloqueEntrada) {
+  console.log('  FALLA  no encontré RUTA_DE_ENTRADA en config/nav.js')
+  fallos++
+} else {
+  for (const m of bloqueEntrada[1].matchAll(/(\w+)\s*:\s*'([^']+)'/g)) entrada[m[1]] = m[2]
+  for (const rol of ROLES) {
+    const destino = entrada[rol]
+    if (!destino) { console.log(`  FALLA ${rol.padEnd(14)} no tiene casa definida`); fallos++; continue }
+    const r = casa(destino)
+    if (!r) { console.log(`  FALLA ${rol.padEnd(14)} ${destino}  → no hay ruta`); fallos++; continue }
+    const puede = rol === BYPASS || !r.roles || r.roles.includes(rol)
+    if (puede) console.log(`  OK    ${rol.padEnd(14)} ${destino}`)
+    else {
+      fallos++
+      console.log(`  FALLA ${rol.padEnd(14)} ${destino}  → esa ruta solo deja: ${r.roles.join(', ')}`)
+      console.log('           aterrizaría en una pantalla en blanco que se redirige a sí misma')
+    }
+  }
+}
+
 console.log('')
 console.log(fallos === 0 ? 'Sin incoherencias entre menú y rutas.' : fallos + ' INCOHERENCIA(S)')
 process.exit(fallos === 0 ? 0 : 1)
