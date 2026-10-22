@@ -133,6 +133,8 @@ r.get('/absence-reasons/:id', requireRol('supervisor', 'gerencia'), wrap(motivoA
 r.post('/absence-reasons', requireRol('supervisor', 'gerencia'), wrap(motivoAus.crear))
 r.put('/absence-reasons/:id', requireRol('supervisor', 'gerencia'), wrap(motivoAus.actualizar))
 r.delete('/absence-reasons/:id', requireRol('supervisor', 'gerencia'), wrap(motivoAus.desactivar))
+// Oct-2026 · Eliminar de verdad (los del sistema siguen protegidos).
+r.delete('/absence-reasons/:id/permanent', requireRol('supervisor', 'gerencia'), wrap(motivoAus.eliminar))
 
 // ============ SEMANAS ============
 r.get('/weeks', wrap(semn.list))

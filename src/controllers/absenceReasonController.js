@@ -38,6 +38,8 @@ const crearSchema = z.object({
   family: familiaSchema.default('ausencia_profesional'),
   impactFactor: z.coerce.number().min(0).max(1).default(1),
   sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  // Oct-2026 · Obligatorio al crear: decide en qué grupo sale en el formulario.
+  isPaid: z.boolean({ required_error: 'Indica si el motivo es remunerado' }),
 })
 
 const actualizarSchema = z.object({
@@ -47,6 +49,7 @@ const actualizarSchema = z.object({
   impactFactor: z.coerce.number().min(0).max(1).optional(),
   active: z.boolean().optional(),
   sortOrder: z.coerce.number().int().min(0).max(9999).optional(),
+  isPaid: z.boolean().optional(),
 })
 
 /**
@@ -100,6 +103,7 @@ export async function crear(req, res) {
       family: body.family,
       impactFactor: body.impactFactor,
       sortOrder: body.sortOrder,
+      isPaid: body.isPaid,
       isSystem: false,
       active: true,
     },
@@ -142,6 +146,8 @@ export async function actualizar(req, res) {
   if (body.family !== undefined) data.family = body.family
   if (body.impactFactor !== undefined) data.impactFactor = body.impactFactor
   if (body.sortOrder !== undefined) data.sortOrder = body.sortOrder
+  // La licencia remunerada lo es siempre (lib/remuneracion.js).
+  if (body.isPaid !== undefined && actual.code !== 'licencia_remunerada') data.isPaid = body.isPaid
   if (body.active !== undefined && !actual.isSystem) data.active = body.active
 
   if (Object.keys(data).length === 0) {
@@ -165,6 +171,7 @@ export async function actualizar(req, res) {
       impactFactor: Number(actual.impactFactor),
       active: actual.active,
       sortOrder: actual.sortOrder,
+      isPaid: actual.isPaid,
     },
     newValue: {
       name: m.name,
@@ -173,6 +180,7 @@ export async function actualizar(req, res) {
       impactFactor: Number(m.impactFactor),
       active: m.active,
       sortOrder: m.sortOrder,
+      isPaid: m.isPaid,
     },
     reason: 'Edición de motivo de ausencia',
     ipAddress: getIp(req),
@@ -209,6 +217,39 @@ export async function desactivar(req, res) {
   res.json({ ok: true, reason: toApi(m) })
 }
 
+/**
+ * DELETE /absence-reasons/:id/permanent (gerencia/supervisor)
+ * Oct-2026 · Hector: eliminar un motivo de verdad, aunque ya se haya usado. Las
+ * ausencias que lo tenían conservan su tipo base y pierden solo el enlace al
+ * motivo (queda en la auditoría cuántas y cuáles). Los del sistema siguen
+ * protegidos: el programa depende de ellos por código.
+ */
+export async function eliminar(req, res) {
+  const actual = await prisma.absenceReason.findUnique({
+    where: { id: req.params.id },
+    include: { absences: { select: { id: true } } },
+  })
+  if (!actual) throw errors.notFound('Motivo no encontrado')
+  if (actual.isSystem || actual.code === 'retraso_inicio') {
+    throw errors.badRequest('Este motivo es del sistema y no se puede eliminar; se puede editar.')
+  }
+  const ausencias = actual.absences.map((a) => a.id)
+  await registrarAuditoria({
+    userId: req.user.id,
+    action: 'motivo_ausencia_eliminar',
+    entity: 'motivo_ausencia',
+    entityId: actual.id,
+    oldValue: { code: actual.code, name: actual.name, isPaid: actual.isPaid, ausencias },
+    reason: `Eliminado definitivamente · ${ausencias.length} ausencia(s) quedan sin motivo del catálogo`,
+    ipAddress: getIp(req),
+  })
+  await prisma.$transaction([
+    prisma.absence.updateMany({ where: { reasonId: actual.id }, data: { reasonId: null } }),
+    prisma.absenceReason.delete({ where: { id: actual.id } }),
+  ])
+  res.json({ ok: true, ausencias_sin_motivo: ausencias.length })
+}
+
 // Helper: Prisma Decimal → number en respuestas
 function toApi(m) {
   return {
@@ -219,6 +260,7 @@ function toApi(m) {
     family: m.family,
     familia_label: FAMILIAS_MOTIVO_LABEL[m.family] ?? 'Otros',
     impact_factor: Number(m.impactFactor),
+    is_paid: m.isPaid,
     active: m.active,
     is_system: m.isSystem,
     sortOrder: m.sortOrder,

@@ -651,6 +651,9 @@ model AbsenceReason {
   // Multiplicador de impacto en RN-18 (pacientes y costo). Rango 0.00–1.00.
   // Default 1.00 = el motivo no atenúa el impacto (igual que antes del catálogo).
   impactFactor Decimal  @default(1.00) @map("factor_impacto") @db.Decimal(3, 2)
+  // Oct-2026 · Si la ausencia por este motivo es remunerada. Arma los dos
+  // grupos del formulario ("¿La ausencia es remunerada?").
+  isPaid       Boolean  @default(false) @map("es_remunerada")
   active       Boolean  @default(true) @map("activo")
   // Los 9 motivos del enum original tienen esSistema=true y no se pueden borrar
   // ni desactivar — solo se editan su nombre/descripción/factor.
