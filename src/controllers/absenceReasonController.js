@@ -221,8 +221,10 @@ export async function desactivar(req, res) {
  * DELETE /absence-reasons/:id/permanent (gerencia/supervisor)
  * Oct-2026 · Hector: eliminar un motivo de verdad, aunque ya se haya usado. Las
  * ausencias que lo tenían conservan su tipo base y pierden solo el enlace al
- * motivo (queda en la auditoría cuántas y cuáles). Los del sistema siguen
- * protegidos: el programa depende de ellos por código.
+ * motivo (queda en la auditoría cuántas y cuáles). 22-oct · también los del
+ * sistema: las reglas (remunerada, incapacidad) van por el tipo guardado en
+ * cada ausencia, no por la fila del catálogo. Solo "Retraso al inicio" queda
+ * fijo, porque el registro por horas depende de él.
  */
 export async function eliminar(req, res) {
   const actual = await prisma.absenceReason.findUnique({
@@ -230,8 +232,8 @@ export async function eliminar(req, res) {
     include: { absences: { select: { id: true } } },
   })
   if (!actual) throw errors.notFound('Motivo no encontrado')
-  if (actual.isSystem || actual.code === 'retraso_inicio') {
-    throw errors.badRequest('Este motivo es del sistema y no se puede eliminar; se puede editar.')
+  if (actual.code === 'retraso_inicio') {
+    throw errors.badRequest('"Retraso al inicio" no se puede eliminar: el registro por horas depende de él.')
   }
   const ausencias = actual.absences.map((a) => a.id)
   await registrarAuditoria({
