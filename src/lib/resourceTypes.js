@@ -224,32 +224,6 @@ export function requiereIntervaloPorPaciente(type) {
  * @returns {string[]} Los tipos permitidos. Vacio = no devolver nada.
  */
 /**
- * MEDICOS — mas estrecho que "tiene agenda propia de pacientes"
- * ==============================================================
- *
- * Oct-2026 · Hector, sobre el tablero: "¿por que sale un tecnico en
- * reprogramaciones?". Tenia razon, y el error era mio de concepto: yo habia
- * usado TIPOS_QUE_IMPACTAN_PACIENTES para el tablero, y son DOS COSAS
- * DISTINTAS que conviene no volver a mezclar.
- *
- *   TIPOS_QUE_IMPACTAN_PACIENTES — tiene agenda propia de pacientes.
- *     Incluye tecnico, optometra y fonoaudiologa, y debe seguir incluyendolos:
- *     un tecnico de diagnostico que falta SI deja pacientes sin atender, SI
- *     necesita intervalo por paciente y SI hay que reprogramarlo en la semana
- *     siguiente. Recortar esa lista subreportaria el impacto real.
- *
- *   TIPOS_MEDICOS — es medico.
- *     Es lo que pide el tablero, que se llama "Reprogramacion de agendas
- *     MEDICAS", tiene una pestana "Medicos" y un KPI "Medicos involucrados".
- *     Un tecnico no es medico, asi que no va ahi aunque tenga agenda.
- *
- * Optometra y fonoaudiologa quedan FUERA por el mismo criterio que el tecnico:
- * tienen agenda propia pero no son medicos. Si direccion los quiere adentro,
- * se agregan aqui y las pruebas avisan del cambio.
- */
-export const TIPOS_MEDICOS = new Set(['oftalmologo', 'anestesiologo', 'otorrino'])
-
-/**
  * PROFESIONALES — de quien reprograma la lider, y de quien el coordinador
  * =======================================================================
  *
@@ -257,12 +231,16 @@ export const TIPOS_MEDICOS = new Set(['oftalmologo', 'anestesiologo', 'otorrino'
  * profesionales la hace Maria Duarte. La de los demas como tec, asesores, aux
  * los hace los coordinadores de sede".
  *
- * Es un TERCER corte, distinto de los dos de arriba, y conviene no volverlos a
- * mezclar — ya paso dos veces:
+ * Es un corte distinto de "tiene agenda", y conviene no volverlos a mezclar
+ * — ya paso dos veces:
  *
  *   TIPOS_QUE_IMPACTAN_PACIENTES — tiene agenda propia. Incluye al tecnico.
- *   TIPOS_MEDICOS                — es medico. Son tres.
  *   TIPOS_PROFESIONALES          — de quien responde la lider. Son estos cinco.
+ *
+ * 22-oct · Hector: el tablero de Reprogramaciones es "solamente profesionales,
+ * nada de aux, asesores y tecnicos". Antes contaba solo los tres medicos
+ * (oftalmologo, anestesiologo, otorrino) y dejaba fuera a optometras y
+ * fonoaudiologas; ahora usa esta misma lista.
  *
  * El tecnico es el que separa este conjunto del primero: SI deja pacientes sin
  * atender cuando falta —por eso sigue impactando—, pero su reprogramacion es
@@ -309,16 +287,16 @@ export function alcanceDeReprogramacion(rol) {
 }
 
 /**
- * Misma regla de interseccion que tiposConAgendaPermitidos, pero sobre el
- * conjunto de medicos: el parametro `?resource_type=` afina DENTRO y nunca
- * amplia. Pedir `?resource_type=tecnico` devuelve vacio.
+ * Misma regla de interseccion que tiposConAgendaPermitidos, pero sobre los
+ * profesionales (tablero de Reprogramaciones): el parametro `?resource_type=`
+ * afina DENTRO y nunca amplia. Pedir `?resource_type=tecnico` devuelve vacio.
  *
  * @param {string[]|null} tiposPedidos
  * @returns {string[]} vacio = no devolver nada
  */
-export function tiposMedicosPermitidos(tiposPedidos) {
-  if (!tiposPedidos || tiposPedidos.length === 0) return [...TIPOS_MEDICOS]
-  return tiposPedidos.filter((t) => TIPOS_MEDICOS.has(t))
+export function tiposProfesionalesPermitidos(tiposPedidos) {
+  if (!tiposPedidos || tiposPedidos.length === 0) return [...TIPOS_PROFESIONALES]
+  return tiposPedidos.filter((t) => TIPOS_PROFESIONALES.has(t))
 }
 
 export function tiposConAgendaPermitidos(tiposPedidos) {

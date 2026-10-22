@@ -11,7 +11,7 @@
 import { prisma } from '../lib/prisma.js'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
-import { tiposMedicosPermitidos } from '../lib/resourceTypes.js'
+import { tiposProfesionalesPermitidos } from '../lib/resourceTypes.js'
 import { resumirGestion } from '../lib/gestionReprogramadores.js'
 import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
 import { esProgramada } from '../lib/anticipacion.js'
@@ -140,22 +140,21 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (familiasFiltro.includes('ausencia_profesional')) orFam.push({ reasonId: null })
     whereAus.OR = orFam
   }
-  // Oct-2026 · PROYECTOS-3398 §8 · SOLO MEDICOS.
+  // Oct-2026 · PROYECTOS-3398 §8 · SOLO PROFESIONALES.
   //
-  // El tablero mezclaba a todo el mundo. Primero se recortó a quien tiene
-  // agenda propia de pacientes, lo que sacó a auxiliares y asesores — pero
-  // dejó dentro a técnicos, optómetras y fonoaudiólogas, que tienen agenda
-  // pero NO son médicos. La pantalla se llama "Reprogramación de agendas
-  // MÉDICAS", tiene una pestaña "Médicos" y un KPI "Médicos involucrados",
-  // así que el criterio correcto es TIPOS_MEDICOS y no "tiene agenda".
+  // Primero se recortó a quien tiene agenda propia (sacó auxiliares y
+  // asesores, pero dejó técnicos); luego a los tres médicos. El 22-oct Hector
+  // lo fijó: "solamente profesionales, nada de aux, asesores y técnicos", que
+  // son los cinco de TIPOS_PROFESIONALES (incluye optómetra y fonoaudióloga).
   //
-  // Ojo: esa otra lista NO se recorta. Un técnico que falta sí deja pacientes
-  // sin atender y sí hay que reprogramarlo; lo que no es, es un médico.
+  // Ojo: la lista de "tiene agenda" NO se recorta. Un técnico que falta sí
+  // deja pacientes sin atender y sí hay que reprogramarlo; lo hace su
+  // coordinador, y por eso no sale en este tablero.
   //
   // El filtro `resource_type` de la consulta sigue sirviendo para afinar DENTRO
   // de ese conjunto, pero no puede ampliarlo: se intersecta. Pedir
   // `?resource_type=auxiliar` devuelve vacío en vez de saltarse la regla.
-  const tiposPermitidos = tiposMedicosPermitidos(tiposFiltro)
+  const tiposPermitidos = tiposProfesionalesPermitidos(tiposFiltro)
   whereAus.resource = { is: { type: { in: tiposPermitidos } } }
 
   const ausencias = await prisma.absence.findMany({

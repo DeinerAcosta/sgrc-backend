@@ -15,8 +15,8 @@ import {
   TIPOS_CON_SUBESPECIALIDAD,
   TIPO_RECURSO_LABEL,
   etiquetaTipoRecurso,
-  TIPOS_MEDICOS,
-  tiposMedicosPermitidos,
+  TIPOS_PROFESIONALES,
+  tiposProfesionalesPermitidos,
 } from './resourceTypes.js'
 
 // El invariante que estas pruebas protegen:
@@ -345,68 +345,54 @@ describe('otorrino es igual al oftalmologo en TODAS las reglas por tipo', () => 
 // todo que al recortar el tablero no se recorte por error la otra lista: un
 // tecnico que falta sigue dejando pacientes sin atender.
 // ============================================================================
-describe('TIPOS_MEDICOS', () => {
-  it('son los tres tipos medicos', () => {
-    expect([...TIPOS_MEDICOS].sort()).toEqual(['anestesiologo', 'oftalmologo', 'otorrino'])
+describe('tablero de Reprogramaciones: solo profesionales (22-oct)', () => {
+  it('son los cinco profesionales, incluidos optometra y fonoaudiologa', () => {
+    expect([...TIPOS_PROFESIONALES].sort()).toEqual(['anestesiologo', 'fonoaudiologa', 'oftalmologo', 'optometra', 'otorrino'])
   })
 
-  it('tecnico, optometra y fonoaudiologa NO son medicos', () => {
-    // Tienen agenda propia, pero no son medicos. Es justo la distincion que
-    // faltaba y que puso a una tecnica en "TOP 3 MEDICOS".
-    for (const t of ['tecnico', 'optometra', 'fonoaudiologa']) {
-      expect(TIPOS_MEDICOS.has(t)).toBe(false)
+  it('tecnicos, auxiliares y asesores NO salen', () => {
+    for (const t of ['tecnico', 'auxiliar', 'asesor_servicios']) {
+      expect(TIPOS_PROFESIONALES.has(t)).toBe(false)
     }
   })
 
-  it('auxiliares y asesores tampoco', () => {
-    for (const t of ['auxiliar', 'asesor_servicios']) {
-      expect(TIPOS_MEDICOS.has(t)).toBe(false)
-    }
-  })
-
-  it('todo medico tiene agenda propia de pacientes', () => {
-    // La relacion es de subconjunto y tiene que seguir siendolo: no puede
-    // haber un medico al que no se le calcule impacto.
-    for (const t of TIPOS_MEDICOS) {
+  it('todo profesional tiene agenda propia de pacientes', () => {
+    for (const t of TIPOS_PROFESIONALES) {
       expect(TIPOS_QUE_IMPACTAN_PACIENTES.has(t)).toBe(true)
     }
   })
 
-  it('pero NO al reves: hay quien tiene agenda y no es medico', () => {
+  it('pero NO al reves: el tecnico tiene agenda y no es profesional', () => {
     // Si algun dia los dos conjuntos coinciden, alguien recorto la lista
-    // equivocada y el impacto de tecnicos y optometras dejo de contarse.
-    const conAgendaSinSerMedico = [...TIPOS_QUE_IMPACTAN_PACIENTES].filter((t) => !TIPOS_MEDICOS.has(t))
-    expect(conAgendaSinSerMedico.sort()).toEqual(['fonoaudiologa', 'optometra', 'tecnico'])
-  })
-
-  it('todos son tipos de recurso validos', () => {
-    for (const t of TIPOS_MEDICOS) expect(TIPOS_RECURSO).toContain(t)
+    // equivocada y el impacto de los tecnicos dejo de contarse.
+    const conAgendaSinSerProfesional = [...TIPOS_QUE_IMPACTAN_PACIENTES].filter((t) => !TIPOS_PROFESIONALES.has(t))
+    expect(conAgendaSinSerProfesional).toEqual(['tecnico'])
   })
 })
 
-describe('tiposMedicosPermitidos — intersecta, nunca amplia', () => {
-  it('sin filtro devuelve los tres medicos', () => {
-    expect(new Set(tiposMedicosPermitidos(null))).toEqual(TIPOS_MEDICOS)
-    expect(new Set(tiposMedicosPermitidos([]))).toEqual(TIPOS_MEDICOS)
+describe('tiposProfesionalesPermitidos — intersecta, nunca amplia', () => {
+  it('sin filtro devuelve los cinco profesionales', () => {
+    expect(new Set(tiposProfesionalesPermitidos(null))).toEqual(TIPOS_PROFESIONALES)
+    expect(new Set(tiposProfesionalesPermitidos([]))).toEqual(TIPOS_PROFESIONALES)
   })
 
-  it('un medico si afina', () => {
-    expect(tiposMedicosPermitidos(['oftalmologo'])).toEqual(['oftalmologo'])
+  it('un profesional si afina', () => {
+    expect(tiposProfesionalesPermitidos(['optometra'])).toEqual(['optometra'])
   })
 
-  it('pedir un tecnico devuelve vacio, no se cuela', () => {
-    expect(tiposMedicosPermitidos(['tecnico'])).toEqual([])
-    expect(tiposMedicosPermitidos(['optometra'])).toEqual([])
-    expect(tiposMedicosPermitidos(['auxiliar'])).toEqual([])
+  it('pedir un tecnico, auxiliar o asesor devuelve vacio, no se cuela', () => {
+    expect(tiposProfesionalesPermitidos(['tecnico'])).toEqual([])
+    expect(tiposProfesionalesPermitidos(['auxiliar'])).toEqual([])
+    expect(tiposProfesionalesPermitidos(['asesor_servicios'])).toEqual([])
   })
 
   it('mezclar permitido y prohibido descarta solo el prohibido', () => {
-    expect(tiposMedicosPermitidos(['tecnico', 'otorrino'])).toEqual(['otorrino'])
+    expect(tiposProfesionalesPermitidos(['tecnico', 'otorrino'])).toEqual(['otorrino'])
   })
 
   it('recorre el enum completo', () => {
     for (const tipo of TIPOS_RECURSO) {
-      expect(tiposMedicosPermitidos([tipo])).toEqual(TIPOS_MEDICOS.has(tipo) ? [tipo] : [])
+      expect(tiposProfesionalesPermitidos([tipo])).toEqual(TIPOS_PROFESIONALES.has(tipo) ? [tipo] : [])
     }
   })
 })

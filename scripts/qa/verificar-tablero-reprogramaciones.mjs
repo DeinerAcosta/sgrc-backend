@@ -7,7 +7,7 @@
 // No escribe nada. Sirve para responder "¿estos números son reales?" contra
 // la base de producción sin abrir la base a mano.
 import { PrismaClient } from '@prisma/client'
-import { tiposMedicosPermitidos } from '../../src/lib/resourceTypes.js'
+import { tiposProfesionalesPermitidos } from '../../src/lib/resourceTypes.js'
 import { pacientesDelCaso } from '../../src/lib/pacientesDelCaso.js'
 import { coberturaDeAusencia, bucketAntelacion, diasEntreFechas } from '../../src/lib/coberturaTablero.js'
 
@@ -20,7 +20,7 @@ const aus = await prisma.absence.findMany({
     status: { not: 'rechazada' },
     startDate: { lte: new Date(`${hasta}T00:00:00Z`) },
     endDate: { gte: new Date(`${desde}T00:00:00Z`) },
-    resource: { is: { type: { in: tiposMedicosPermitidos(null) } } },
+    resource: { is: { type: { in: tiposProfesionalesPermitidos(null) } } },
   },
   select: {
     id: true, startDate: true, reportedAt: true, noticeDays: true, isPlanned: true,
@@ -54,7 +54,7 @@ for (const a of aus) {
 
 console.log(`\nTABLERO DE REPROGRAMACIONES · solo lectura · ${desde} a ${hasta}`)
 console.log('='.repeat(72))
-console.log(`Ausencias de médicos (sin rechazadas): ${n(aus.length)}`)
+console.log(`Ausencias de profesionales (sin rechazadas): ${n(aus.length)}`)
 console.log(`  registradas por el coordinador (no por el médico): ${n(porCoordinador)}`)
 console.log(`  registradas ANTES del día de la ausencia: ${n(registradasAntes)} · el mismo día o después: ${n(aus.length - registradasAntes)}`)
 console.log(`  anticipación guardada → retroactivas/mismo día: ${n(buckets.retroactivo ?? 0)} · 1-7 d: ${n(buckets.uno_a_siete ?? 0)} · 8-19 d: ${n(buckets.ocho_a_diecinueve ?? 0)} · 20+ d: ${n(buckets.veinte_o_mas ?? 0)}`)
