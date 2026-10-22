@@ -16,7 +16,7 @@ const prismaMock = {
 }
 vi.mock('../lib/prisma.js', () => ({ prisma: prismaMock }))
 
-const { metricasDeSemanas, dataProductividad } = await import('./reportController.js')
+const { metricasDeSemanas, dataProductividad, elegirSemanasComparativo, etiquetaSemana } = await import('./reportController.js')
 
 const semana = (id, inicio, fin) => ({
   id,
@@ -370,5 +370,56 @@ describe('dataProductividad — filtros, left-join a recursos activos y promedio
       'Dra. Pérez',      // 59% — segundo
       'Dr. Zuluaga',     // sin actividad — al final
     ])
+  })
+})
+
+describe('elegirSemanasComparativo — Históricos de semanas (22-oct)', () => {
+  const sem = (id, inicio, fin) => ({ id, startDate: new Date(`${inicio}T00:00:00Z`), endDate: new Date(`${fin}T00:00:00Z`) })
+  // La más reciente primero, como las trae la consulta.
+  const semanas = [
+    sem('s19', '2026-10-19', '2026-10-25'),
+    sem('s12', '2026-10-12', '2026-10-18'),
+    sem('s05', '2026-10-05', '2026-10-11'),
+    sem('s28', '2026-09-28', '2026-10-04'),
+  ]
+
+  it('un jueves, por defecto compara la última semana completa con la anterior (no la que va a medias)', () => {
+    const { a, b } = elegirSemanasComparativo(semanas, '2026-10-22')
+    expect([a.id, b.id]).toEqual(['s12', 's05'])
+  })
+
+  it('el lunes siguiente, la semana que acaba de terminar ya es completa', () => {
+    const { a, b } = elegirSemanasComparativo(semanas, '2026-10-26')
+    expect([a.id, b.id]).toEqual(['s19', 's12'])
+  })
+
+  it('A y B se pueden elegir de la lista', () => {
+    const { a, b } = elegirSemanasComparativo(semanas, '2026-10-22', { semanaA: 's19', semanaB: 's28' })
+    expect([a.id, b.id]).toEqual(['s19', 's28'])
+  })
+
+  it('al cambiar solo A, B pasa a ser la anterior a la nueva A', () => {
+    const { b } = elegirSemanasComparativo(semanas, '2026-10-22', { semanaA: 's05' })
+    expect(b.id).toBe('s28')
+  })
+
+  it('B nunca es la misma semana que A', () => {
+    const { a, b } = elegirSemanasComparativo(semanas, '2026-10-22', { semanaA: 's05', semanaB: 's05' })
+    expect(a.id).toBe('s05')
+    expect(b.id).toBe('s28')
+  })
+
+  it('un id que no existe cae al valor por defecto', () => {
+    const { a, b } = elegirSemanasComparativo(semanas, '2026-10-22', { semanaA: 'nada', semanaB: 'nada' })
+    expect([a.id, b.id]).toEqual(['s12', 's05'])
+  })
+
+  it('las fechas se leen: "12 – 18 oct 2026" y, si cruza de mes, "28 sep – 4 oct 2026"', () => {
+    expect(etiquetaSemana(semanas[1])).toBe('12 – 18 oct 2026')
+    expect(etiquetaSemana(semanas[3])).toBe('28 sep – 4 oct 2026')
+  })
+
+  it('sin semanas no revienta', () => {
+    expect(elegirSemanasComparativo([], '2026-10-22')).toMatchObject({ a: null, b: null })
   })
 })

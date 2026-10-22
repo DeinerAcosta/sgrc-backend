@@ -1560,77 +1560,90 @@ export async function metricasDeSemanas(semanas) {
   return out
 }
 
+/** "12 – 18 oct 2026" (o "29 sep – 5 oct 2026"). Las semanas son solo-fecha en UTC. */
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+export function etiquetaSemana(s) {
+  const f = (d, conMes) => `${d.getUTCDate()}${conMes ? ` ${MESES_CORTOS[d.getUTCMonth()]}` : ''}`
+  const mismoMes = s.startDate.getUTCMonth() === s.endDate.getUTCMonth()
+  return `${f(s.startDate, !mismoMes)} – ${f(s.endDate, true)} ${s.endDate.getUTCFullYear()}`
+}
+
+/**
+ * Elige A y B del comparativo. Puro, para probarlo sin BD.
+ *
+ * 22-oct · Hector: "no le veo coherencia". La pantalla decía "cualquiera de
+ * las últimas 52" pero solo ofrecía 3 atajos, y A era siempre la semana en
+ * curso: un jueves se comparaba media semana contra una completa y todo salía
+ * en rojo. Ahora A y B se eligen de la lista, y por defecto A es la última
+ * semana COMPLETA (ya terminó) y B la anterior a A.
+ *
+ * @param {Array} semanas Las ya iniciadas, la más reciente primero.
+ * @param {string} hoy 'YYYY-MM-DD' en Colombia.
+ */
+export function elegirSemanasComparativo(semanas, hoy, { semanaA, semanaB } = {}) {
+  const completa = (s) => s.endDate.toISOString().slice(0, 10) < hoy
+  const a = semanas.find((s) => s.id === semanaA) ?? semanas.find(completa) ?? semanas[0] ?? null
+  const idxA = a ? semanas.indexOf(a) : -1
+  const b = semanas.find((s) => s.id === semanaB && s.id !== a?.id) ?? (idxA >= 0 ? semanas[idxA + 1] : null) ?? null
+  return { a, b, completa }
+}
+
 /**
  * GET /informes/comparativo — HU-D-06
- * Compara la semana actual contra otra (por defecto la anterior) y devuelve
- * la serie de las últimas 12 semanas. Todo con datos reales de la BD.
+ * Compara dos semanas cualesquiera de las últimas 52 y devuelve la serie de
+ * las últimas 12. Todo con datos reales de la BD.
  *
- * Query: ?semana_b=<uuid> (opcional — si no se pasa, usa la semana anterior)
+ * Query: ?semana_a=<uuid>&semana_b=<uuid> (opcionales; ver elegirSemanasComparativo)
  */
 async function computeComparativo(query) {
-  const { semana_b: semanaBSpec } = query
+  const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date())
 
-  // Últimas 12 semanas (la más reciente primero) — solo las ya iniciadas.
-  // Una semana futura no tiene historial real para comparar.
-  const ultimas = await prisma.week.findMany({
-    where: { startDate: { lte: new Date() } },
+  // Solo las ya iniciadas: una semana futura no tiene historial que comparar.
+  const semanas = await prisma.week.findMany({
+    where: { startDate: { lte: new Date(`${hoy}T00:00:00Z`) } },
     orderBy: { startDate: 'desc' },
-    take: 13, // +1 para acceder a la "anterior" si la actual es ultimas[0]
+    take: 52,
   })
-
-  const semanaA = ultimas[0] ?? null
-
-  // semanaB puede venir como UUID, o como string simbólico ('sem-anterior',
-  // 'sem-mes-anterior', 'sem-trimestre-anterior'). Por defecto: la anterior.
-  let semanaB = null
-  if (semanaBSpec === 'sem-mes-anterior') {
-    semanaB = ultimas[4] ?? null
-  } else if (semanaBSpec === 'sem-trimestre-anterior') {
-    semanaB = ultimas[12] ?? null
-  } else if (semanaBSpec && semanaBSpec !== 'sem-anterior') {
-    // Asumir UUID
-    semanaB = await prisma.week.findUnique({ where: { id: semanaBSpec } }).catch(() => null)
-  }
-  if (!semanaB) semanaB = ultimas[1] ?? null
-
-  const fmtLabel = (s) =>
-    s ? `${s.startDate.toISOString().slice(5, 10)} – ${s.endDate.toISOString().slice(5, 10)}` : '—'
+  const { a: semanaA, b: semanaB, completa } = elegirSemanasComparativo(semanas, hoy, {
+    semanaA: query.semana_a, semanaB: query.semana_b,
+  })
 
   // Serie cronológica de las últimas 12 (la más antigua primero, para gráficas)
-  const ultimasCronologico = [...ultimas.slice(0, 12)].reverse()
+  const ultimasCronologico = [...semanas.slice(0, 12)].reverse()
 
-  // Una sola tanda de consultas para las 12 de la serie + A + B (que casi
-  // siempre ya están dentro de la serie; metricasDeSemanas las deduplica).
+  // Una sola tanda de consultas para las 12 de la serie + A + B;
+  // metricasDeSemanas las deduplica.
   const metricas = await metricasDeSemanas([...ultimasCronologico, semanaA, semanaB])
-  const metA = semanaA ? metricas.get(semanaA.id) ?? null : null
-  const metB = semanaB ? metricas.get(semanaB.id) ?? null : null
-
-  const ultimas12 = ultimasCronologico.map((s) => {
-    const m = metricas.get(s.id)
-    return {
-      week: s.startDate.toISOString().slice(5, 10),
-      pacientes: m?.pacientes ?? 0,
-      ocupacion: m?.ocupacion ?? 0,
-      absences: m?.absences ?? 0,
-    }
-  })
+  const vacio = { pacientes: 0, horas_ejec: 0, ocupacion: 0, absences: 0, costo_ausentismo: 0 }
+  const resumen = (s) => s ? {
+    id: s.id,
+    label: etiquetaSemana(s),
+    en_curso: !completa(s),
+    cerrada: s.status === 'cerrada',
+    ...(metricas.get(s.id) ?? vacio),
+  } : null
 
   return {
-    semana_a: semanaA
-      ? { label: fmtLabel(semanaA), ...(metA ?? { pacientes: 0, horas_ejec: 0, ocupacion: 0, absences: 0, costo_ausentismo: 0 }) }
-      : null,
-    semana_b: semanaB
-      ? { label: fmtLabel(semanaB), ...(metB ?? { pacientes: 0, horas_ejec: 0, ocupacion: 0, absences: 0, costo_ausentismo: 0 }) }
-      : null,
-    ultimas_12: ultimas12,
+    semana_a: resumen(semanaA),
+    semana_b: resumen(semanaB),
+    semanas: semanas.map((s) => ({ id: s.id, label: etiquetaSemana(s), en_curso: !completa(s) })),
+    ultimas_12: ultimasCronologico.map((s) => {
+      const m = metricas.get(s.id)
+      return {
+        week: s.startDate.toISOString().slice(5, 10),
+        pacientes: m?.pacientes ?? 0,
+        ocupacion: m?.ocupacion ?? 0,
+        absences: m?.absences ?? 0,
+      }
+    }),
   }
 }
 
-/** GET /informes/comparativo — HU-D-06. Cacheado TTL_INFORME por semana comparada. */
+/** GET /informes/comparativo — HU-D-06. Cacheado TTL_INFORME por par de semanas. */
 export async function comparativo(req, res) {
   res.json(
     await withCache(
-      keyDeQuery('comparativo', { semana_b: req.query.semana_b }),
+      keyDeQuery('comparativo', { semana_a: req.query.semana_a, semana_b: req.query.semana_b }),
       TTL_INFORME,
       () => computeComparativo(req.query),
     ),
