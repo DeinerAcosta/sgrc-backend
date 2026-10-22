@@ -9,7 +9,9 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { invalidarUsuarioEnCache } from '../middleware/auth.js'
 import { TIPOS_RECURSO, TIPOS_RECURSO_SET, ESQUEMAS_PAGO_SET, normalizarEsquemaYTope, puedeMultiConsultorio, TIPOS_CON_SUBESPECIALIDAD, TIPOS_SIN_COORDINADOR_LIDER} from '../lib/resourceTypes.js'
 
-const ROLES = ['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia']
+// 22-oct · Faltaba 'reprogramador': crear o editar un usuario con ese rol
+// respondía "Datos inválidos" (lo vio Hector en producción).
+const ROLES = ['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia', 'reprogramador']
 // Listas compartidas en lib/resourceTypes.js — antes estaban copiadas aqui y
 // quedaron sin 'otorrino', que si existe en la BD y en el frontend.
 const TIPOS_RECURSO_VALIDOS = TIPOS_RECURSO
@@ -97,7 +99,7 @@ const bulkSchema = z.object({
   })).min(1).max(500),
 })
 
-const ROLES_VALIDOS = new Set(['recurso', 'coordinador', 'directivo', 'supervisor', 'gerencia'])
+const ROLES_VALIDOS = new Set(ROLES)
 const TIPOS_VALIDOS = TIPOS_RECURSO_SET
 const ESQUEMAS_VALIDOS = ESQUEMAS_PAGO_SET
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
