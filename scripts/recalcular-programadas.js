@@ -1,55 +1,70 @@
 /**
- * RECALCULAR "PROGRAMADA / IMPREVISTA" CON LA REGLA DE 20 DÍAS (PROYECTOS-3654)
+ * RECALCULAR LA ANTICIPACIÓN Y "PROGRAMADA / IMPREVISTA" (PROYECTOS-3654)
  *
  *   npm run recalcular:programadas              solo muestra qué cambiaría
  *   npm run recalcular:programadas -- --aplicar  escribe
  *
  * Desde el 20-oct-2026 una ausencia es programada con 20 días o más de
- * anticipación (lib/anticipacion.js). Las ya guardadas conservan la regla
- * vieja (más de 15 días), así que los informes del pasado mezclan las dos. Esto
- * recalcula `es_programada` desde `anticipacion_dias`, que está guardado. No
- * toca nada más. Deja una entrada de auditoría ANTES de escribir y aborta si no
- * quedó, como el resto de guiones que cambian datos.
+ * anticipación, contados en DÍAS DE CALENDARIO desde el registro, en hora de
+ * Colombia (lib/anticipacion.js).
  *
- * Ojo: `anticipacion_dias` de lo anterior al 20-oct se contó restando la hora
- * del registro (un día menos en la mayoría de los casos); no se corrige aquí,
- * porque la hora exacta del registro original es la que se guardó.
+ * 22-oct · Ahora también recalcula `anticipacion_dias` desde `reportado_en`.
+ * Antes de la corrección se restaba la hora del registro: quien avisaba "para
+ * mañana" a las 3 p. m. quedaba con 0 días. En producción había 5 ausencias de
+ * médicos avisadas con antelación y guardadas con 0, y el tablero de
+ * Reprogramaciones las contaba como avisadas el mismo día. Después recalcula
+ * `es_programada` con el número corregido.
+ *
+ * Deja una entrada de auditoría ANTES de escribir y aborta si no quedó.
  */
 import 'dotenv/config'
 import { prisma } from '../src/lib/prisma.js'
 import { registrarAuditoria } from '../src/middleware/audit.js'
-import { esProgramada, DIAS_PROGRAMADA } from '../src/lib/anticipacion.js'
+import { esProgramada, diasDeAnticipacion, DIAS_PROGRAMADA } from '../src/lib/anticipacion.js'
 
 const aplicar = process.argv.includes('--aplicar')
+const iso = (d) => d.toISOString().slice(0, 10)
 
 try {
-  const ausencias = await prisma.absence.findMany({ select: { id: true, noticeDays: true, isPlanned: true } })
-  const cambian = ausencias.filter((a) => esProgramada(a.noticeDays) !== a.isPlanned)
-  const aImprevista = cambian.filter((a) => a.isPlanned)
-  const aProgramada = cambian.filter((a) => !a.isPlanned)
+  const ausencias = await prisma.absence.findMany({
+    select: { id: true, startDate: true, reportedAt: true, noticeDays: true, isPlanned: true },
+  })
+  const cambios = ausencias.map((a) => {
+    const dias = Math.max(0, diasDeAnticipacion(iso(a.startDate), a.reportedAt))
+    return { ...a, dias, programada: esProgramada(dias) }
+  }).filter((a) => a.dias !== a.noticeDays || a.programada !== a.isPlanned)
 
-  console.log(`Regla: programada con ${DIAS_PROGRAMADA} días o más de anticipación.`)
-  console.log(`${ausencias.length} ausencias revisadas · ${cambian.length} cambian de clasificación:`)
-  console.log(`  programada → imprevista: ${aImprevista.length} (avisadas con 16 a 19 días)`)
+  const conDias = cambios.filter((a) => a.dias !== a.noticeDays)
+  const aImprevista = cambios.filter((a) => a.isPlanned && !a.programada)
+  const aProgramada = cambios.filter((a) => !a.isPlanned && a.programada)
+
+  console.log(`Regla: programada con ${DIAS_PROGRAMADA} días o más de anticipación (días de calendario, hora de Colombia).`)
+  console.log(`${ausencias.length} ausencias revisadas:`)
+  console.log(`  días de anticipación corregidos: ${conDias.length}`)
+  for (const a of conDias.slice(0, 40)) console.log(`    · ausencia del ${iso(a.startDate)} · registrada ${iso(a.reportedAt)} · ${a.noticeDays} → ${a.dias} días`)
+  console.log(`  programada → imprevista: ${aImprevista.length}`)
   console.log(`  imprevista → programada: ${aProgramada.length}`)
 
   if (!aplicar) {
     console.log('\nNo se escribió nada. Para aplicar: npm run recalcular:programadas -- --aplicar')
-  } else if (cambian.length) {
+  } else if (cambios.length) {
     const auditoria = await registrarAuditoria({
       userId: null,
       action: 'recalcular_programadas',
       entity: 'ausencias',
       entityId: 'lote',
-      newValue: { regla: `>= ${DIAS_PROGRAMADA} dias`, a_imprevista: aImprevista.map((a) => a.id), a_programada: aProgramada.map((a) => a.id) },
-      reason: 'PROYECTOS-3654 · regla de 20 días',
+      newValue: {
+        regla: `>= ${DIAS_PROGRAMADA} dias calendario desde reportado_en`,
+        cambios: cambios.map((a) => ({ id: a.id, dias: [a.noticeDays, a.dias], programada: [a.isPlanned, a.programada] })),
+      },
+      reason: 'PROYECTOS-3654 · regla de 20 días y anticipación en días de calendario',
     })
     if (!auditoria) throw new Error('No quedó la auditoría: no se escribe nada.')
-    await prisma.$transaction([
-      prisma.absence.updateMany({ where: { id: { in: aImprevista.map((a) => a.id) } }, data: { isPlanned: false } }),
-      prisma.absence.updateMany({ where: { id: { in: aProgramada.map((a) => a.id) } }, data: { isPlanned: true } }),
-    ])
-    console.log(`\nAPLICADO · ${cambian.length} ausencias recalculadas.`)
+    await prisma.$transaction(cambios.map((a) => prisma.absence.update({
+      where: { id: a.id },
+      data: { noticeDays: a.dias, isPlanned: a.programada },
+    })))
+    console.log(`\nAPLICADO · ${cambios.length} ausencias recalculadas.`)
   }
 } finally {
   await prisma.$disconnect()
