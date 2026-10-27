@@ -99,14 +99,14 @@ export const solapan = (a1, a2, b1, b2) => !(a2 <= b1 || a1 >= b2)
  */
 export const RECURSOS_MASIVOS = [
   // nombre, tipo, especialidad, intervalo en minutos
-  ['Dr. Joaquín Ortega Lemus', 'oftalmologo', 'Retina', 15],
-  ['Dra. Isabela Montoya Paz', 'oftalmologo', 'Córnea', 15],
+  ['Dr. Joaquín Ortega Lemus', 'oftalmologo', 'Retina y vítreo', 15],
+  ['Dra. Isabela Montoya Paz', 'oftalmologo', 'Córnea y refractiva', 15],
   ['Dr. Rafael Benítez Ariza', 'oftalmologo', 'Glaucoma', 15],
   ['Dra. Natalia Cuéllar Ibáñez', 'oftalmologo', 'Segmento anterior', 12],
   ['Dr. Emilio Rangel Saucedo', 'oftalmologo', 'Oculoplastia', 20],
   ['Dra. Carolina Villamizar Ochoa', 'oftalmologo', 'Oftalmopediatría', 15],
-  ['Dr. Gustavo Lizcano Durán', 'oftalmologo', 'Estrabismo', 15],
-  ['Dra. Paola Echeverri Galvis', 'oftalmologo', 'General', 12],
+  ['Dr. Gustavo Lizcano Durán', 'oftalmologo', 'Oftalmopediatría', 15],
+  ['Dra. Paola Echeverri Galvis', 'oftalmologo', 'Oftalmología general', 12],
   ['Dra. Mariana Cortés Rubio', 'optometra', 'Lentes de contacto', 20],
   ['Dr. Sebastián Quintero Vega', 'optometra', 'Baja visión', 20],
   ['Dra. Ximena Sierra Pardo', 'optometra', 'General', 15],

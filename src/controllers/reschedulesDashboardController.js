@@ -463,15 +463,19 @@ async function calcularDatosFOCA({ ausencias, reposiciones, coberturaDe, cubren 
     where: { id: { in: recIds } },
     select: { id: true, type: true, specialty: true },
   }) : []
-  const specByRid = new Map(recs.map((r) => [r.id, { type: r.type, specialty: r.specialty ?? 'General' }]))
+  // 27-oct · PROYECTOS-3800 · Sin subespecialidad se muestra así, no como
+  // "General": desde el catálogo existe "Oftalmología general" y salían dos
+  // barras que parecían la misma.
+  const SIN_SUB = 'Sin subespecialidad'
+  const specByRid = new Map(recs.map((r) => [r.id, { type: r.type, specialty: r.specialty?.trim() || SIN_SUB }]))
   const subAgg = new Map()  // key = `${type}|${specialty}` → count, pacientes
   for (const a of ausencias) {
     const meta = specByRid.get(a.resourceId)
     if (!meta) continue
-    const key = `${meta.type}|${meta.specialty || 'General'}`
+    const key = `${meta.type}|${meta.specialty}`
     if (!subAgg.has(key)) subAgg.set(key, {
       type: meta.type,
-      specialty: meta.specialty || 'General',
+      specialty: meta.specialty,
       count: 0,
       pacientes: 0,
     })
