@@ -131,3 +131,26 @@ export function parteAfectada(turno, ausencia) {
     pacientes: pacientesDelTramo(entero.pacientes, { desde: turno.startTime, hasta: turno.endTime }, { desde, hasta }),
   }
 }
+
+/**
+ * ¿Dos ausencias del mismo recurso se cruzan? (Oct-2026)
+ *
+ * Un asesor pidió permiso de 08:00 a 09:00, se le extendió hasta las 10:30 y
+ * la coordinadora registró otro de 09:00 a 10:30 el mismo día. El anti-
+ * duplicado solo miraba las fechas y lo rechazó como "ya registrada". Son dos
+ * permisos distintos, cada uno con sus horas y sus pacientes.
+ *
+ *   · las fechas no se tocan                     → no se cruzan
+ *   · alguna es de día completo (o sin horas)    → se cruzan
+ *   · las dos parciales con horas                → se cruzan solo si los
+ *     horarios se pisan; terminar a las 09:00 y empezar a las 09:00 no es pisar
+ *
+ * Las fechas son 'YYYY-MM-DD' (o Date a medianoche UTC) y las horas "HH:mm".
+ */
+export function ausenciasSeCruzan(a, b) {
+  const dia = (d) => (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10)
+  if (dia(a.startDate) > dia(b.endDate) || dia(a.endDate) < dia(b.startDate)) return false
+  const conHoras = (x) => x.isPartial && x.absenceStartTime && x.absenceEndTime
+  if (!conHoras(a) || !conHoras(b)) return true
+  return a.absenceStartTime < b.absenceEndTime && a.absenceEndTime > b.absenceStartTime
+}

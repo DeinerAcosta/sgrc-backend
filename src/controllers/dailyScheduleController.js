@@ -70,12 +70,23 @@ export async function get(req, res) {
     },
     select: { resourceId: true, type: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
   })
-  const ausPorRecurso = Object.fromEntries(ausencias.map((a) => [a.resourceId, a]))
+  // Oct-2026 · Una persona puede tener dos permisos el mismo día (08–09 y
+  // 09–10:30): se guardan todos y a cada turno le toca el que pisa su horario.
+  // Una parcial que no lo pisa no lo marca (antes un permiso de la mañana
+  // pintaba "ausente" también el turno de la tarde).
+  const ausPorRecurso = new Map()
+  for (const a of ausencias) {
+    if (!ausPorRecurso.has(a.resourceId)) ausPorRecurso.set(a.resourceId, [])
+    ausPorRecurso.get(a.resourceId).push(a)
+  }
+  const ausenciaDelTurno = (recursoId, turno) => (ausPorRecurso.get(recursoId) ?? []).find((x) =>
+    !x.isPartial || !x.absenceStartTime || !x.absenceEndTime ||
+    (x.absenceStartTime < turno.endTime && x.absenceEndTime > turno.startTime)) ?? null
 
   // Anotar cada asignación con su estado de cobertura
   const items = asignaciones.map((a) => {
-    const ausR = ausPorRecurso[a.resourceId]
-    const ausA = a.assistantId ? ausPorRecurso[a.assistantId] : null
+    const ausR = ausenciaDelTurno(a.resourceId, a)
+    const ausA = a.assistantId ? ausenciaDelTurno(a.assistantId, a) : null
     return {
       id: a.id,
       start_time: a.startTime,

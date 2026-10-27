@@ -6,7 +6,7 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notificarDirectivos, notificarDireccionMedica } from '../services/notificationService.js'
 import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/absenceService.js'
 import { alcanceDeReprogramacion, TIPOS_PROFESIONALES, coordSoloVe, MSG_SOLO_VE } from '../lib/resourceTypes.js'
-import { huecosDeFranja, pacientesDelTramo, parteAfectada } from '../lib/tramos.js'
+import { huecosDeFranja, pacientesDelTramo, parteAfectada, ausenciasSeCruzan } from '../lib/tramos.js'
 import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
 import { fechaSolo } from '../lib/fechas.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
@@ -507,22 +507,36 @@ export async function create(req, res) {
   //
   // Solape de rangos: inicioA <= finB  AND  finA >= inicioB.
   // Las rechazadas no cuentan (se pueden volver a pedir).
-  const solapada = await prisma.absence.findFirst({
+  // Oct-2026 · Dos permisos por horas del mismo día que no se pisan (08–09 y
+  // 09–10:30) son dos ausencias distintas: lib/tramos ausenciasSeCruzan.
+  // Las fechas guardadas son de solo-día (medianoche UTC): se compara contra
+  // medianoche UTC, no contra parseISO, que en un equipo con hora de Colombia
+  // da las 05:00 UTC y dejaba fuera la ausencia del mismo día.
+  const diaUtc = (s) => new Date(`${s.slice(0, 10)}T00:00:00Z`)
+  const candidatas = await prisma.absence.findMany({
     where: {
       resourceId: data.resourceId,
       status: { not: 'rechazada' },
-      startDate: { lte: fechaFin },
-      endDate: { gte: fechaInicio },
+      startDate: { lte: diaUtc(data.endDate || data.startDate) },
+      endDate: { gte: diaUtc(data.startDate) },
     },
-    select: { id: true, startDate: true, endDate: true, status: true },
+    select: { id: true, startDate: true, endDate: true, status: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
   })
+  const nueva = {
+    startDate: data.startDate.slice(0, 10), endDate: (data.endDate || data.startDate).slice(0, 10),
+    isPartial: data.isPartial ?? false, absenceStartTime: data.absenceStartTime, absenceEndTime: data.absenceEndTime,
+  }
+  const solapada = candidatas.find((a) => ausenciasSeCruzan(a, nueva))
   if (solapada) {
     const f = (d) => new Date(d).toISOString().slice(0, 10)
-    const mismasFechas = f(solapada.startDate) === f(fechaInicio) && f(solapada.endDate) === f(fechaFin)
+    const horario = solapada.isPartial && solapada.absenceStartTime && solapada.absenceEndTime
+      ? ` de ${solapada.absenceStartTime} a ${solapada.absenceEndTime}`
+      : ''
+    const fechas = f(solapada.startDate) === f(solapada.endDate)
+      ? `el ${f(solapada.startDate)}`
+      : `del ${f(solapada.startDate)} al ${f(solapada.endDate)}`
     throw errors.badRequest(
-      mismasFechas
-        ? `Esta ausencia ya está registrada (${f(solapada.startDate)} a ${f(solapada.endDate)}, estado: ${solapada.status}). No se registró de nuevo.`
-        : `El recurso ya tiene una ausencia ${solapada.status} del ${f(solapada.startDate)} al ${f(solapada.endDate)}, que se cruza con estas fechas. Edita la existente en vez de crear otra.`
+      `El recurso ya tiene una ausencia ${solapada.status} ${fechas}${horario}, que se cruza con la que intentas registrar. No se registró.`
     )
   }
 

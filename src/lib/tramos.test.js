@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { huecosDeFranja, pacientesDelTramo, horaDeCorte, parteAfectada } from './tramos.js'
+import { huecosDeFranja, pacientesDelTramo, horaDeCorte, parteAfectada, ausenciasSeCruzan } from './tramos.js'
 
 const FRANJA = { desde: '07:00', hasta: '11:00' }
 
@@ -123,5 +123,40 @@ describe('parteAfectada', () => {
 
   it('parcial sin horas cargadas se trata como día completo', () => {
     expect(parteAfectada(manana, { isPartial: true })).toEqual({ desde: '07:00', hasta: '13:00', pacientes: 22 })
+  })
+})
+
+describe('ausenciasSeCruzan', () => {
+  const parcial = (desde, hasta, fecha = '2026-10-27') =>
+    ({ startDate: fecha, endDate: fecha, isPartial: true, absenceStartTime: desde, absenceEndTime: hasta })
+  const completa = (inicio, fin = inicio) => ({ startDate: inicio, endDate: fin, isPartial: false })
+
+  it('dos permisos seguidos el mismo día (08–09 y 09–10:30) no se cruzan', () => {
+    expect(ausenciasSeCruzan(parcial('08:00', '09:00'), parcial('09:00', '10:30'))).toBe(false)
+  })
+
+  it('dos permisos que se pisan el mismo día sí se cruzan', () => {
+    expect(ausenciasSeCruzan(parcial('08:00', '09:00'), parcial('08:30', '10:00'))).toBe(true)
+  })
+
+  it('el mismo permiso registrado dos veces se cruza', () => {
+    expect(ausenciasSeCruzan(parcial('08:00', '09:00'), parcial('08:00', '09:00'))).toBe(true)
+  })
+
+  it('un permiso dentro de una ausencia de día completo se cruza', () => {
+    expect(ausenciasSeCruzan(completa('2026-10-26', '2026-10-28'), parcial('09:00', '10:00'))).toBe(true)
+  })
+
+  it('días distintos no se cruzan aunque las horas coincidan', () => {
+    expect(ausenciasSeCruzan(parcial('08:00', '09:00', '2026-10-27'), parcial('08:00', '09:00', '2026-10-28'))).toBe(false)
+  })
+
+  it('una parcial sin horas cargadas cuenta como día completo', () => {
+    expect(ausenciasSeCruzan({ ...parcial('08:00', '09:00'), absenceEndTime: null }, parcial('10:00', '11:00'))).toBe(true)
+  })
+
+  it('acepta fechas como Date a medianoche UTC', () => {
+    const a = { ...parcial('08:00', '09:00'), startDate: new Date('2026-10-27T00:00:00Z'), endDate: new Date('2026-10-27T00:00:00Z') }
+    expect(ausenciasSeCruzan(a, parcial('09:00', '10:30'))).toBe(false)
   })
 })
