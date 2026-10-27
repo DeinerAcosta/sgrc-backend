@@ -62,3 +62,28 @@ export function diasEntreFechas(desde, hasta) {
 
 /** 'YYYY-MM' de una fecha @db.Date, en UTC (en Bogotá, el día 1 caía en el mes anterior). */
 export const mesDeFecha = (f) => (f instanceof Date ? f.toISOString() : String(f)).slice(0, 7)
+
+/**
+ * 27-oct · PROYECTOS-3799 · CONCENTRACIÓN SOBRE EL 10%.
+ * Qué parte de los pacientes impactados la generan el 10% de los
+ * profesionales con más pacientes afectados. n = máx(1, 10% hacia arriba) de
+ * los profesionales involucrados (cuentan también los de 0 pacientes).
+ * `pacientes` es la lista de pacientes afectados de cada profesional.
+ * Antes el frontend sumaba el "top 3" de una lista recortada y ordenada por
+ * días, y las dos pestañas daban cifras distintas.
+ */
+export function concentracionTop(pacientes = [], pct = 10) {
+  const vals = pacientes.map((p) => Math.max(0, Number(p) || 0)).sort((a, b) => b - a)
+  const total = vals.length
+  const n = total > 0 ? Math.max(1, Math.ceil((total * pct) / 100)) : 0
+  const pacientesTop = vals.slice(0, n).reduce((s, v) => s + v, 0)
+  const totalPacientes = vals.reduce((s, v) => s + v, 0)
+  return {
+    pct_profesionales: pct,
+    n,
+    total_profesionales: total,
+    pacientes_top: pacientesTop,
+    total_pacientes: totalPacientes,
+    pct_impacto: totalPacientes > 0 ? Math.round((pacientesTop / totalPacientes) * 1000) / 10 : 0,
+  }
+}

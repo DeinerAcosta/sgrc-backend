@@ -17,7 +17,7 @@ import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
 import { esProgramada } from '../lib/anticipacion.js'
 import { fechaDeTurno } from '../lib/bloqueosSede.js'
 import {
-  coberturaDeAusencia, bucketAntelacion, BUCKETS_ANTELACION, bucketSla, BUCKETS_SLA, diasEntreFechas, mesDeFecha,
+  coberturaDeAusencia, bucketAntelacion, BUCKETS_ANTELACION, bucketSla, BUCKETS_SLA, diasEntreFechas, mesDeFecha, concentracionTop,
 } from '../lib/coberturaTablero.js'
 
 const TTL_REPROG = 60_000  // 60s — dashboard ejecutivo, no necesita tiempo real
@@ -294,6 +294,9 @@ async function dataReprogramacionesDashboard(query = {}) {
     if (repuesta(a)) b.approved_makeups++
   }
   const porRecurso = [...recAgg.values()].sort((a, b) => b.dias - a.dias).slice(0, 30)
+  // 27-oct · PROYECTOS-3799 · Concentración sobre el 10%: con TODOS los
+  // profesionales (por_recurso viene recortado a 30 y ordenado por días).
+  const concentracion = concentracionTop([...recAgg.values()].map((r) => r.pacientes), 10)
 
   // ==== 8. Reposiciones (tab 3) ====
   const reposicionesData = await calcularReposiciones({
@@ -346,6 +349,7 @@ async function dataReprogramacionesDashboard(query = {}) {
     por_familia: porFamilia,
     top_motivos: topMotivos,
     por_recurso: porRecurso,
+    concentracion,
     makeups: { ...reposicionesData, _raw: undefined },
     por_especialidad: porEspecialidad,
     cruce_familia_especialidad: cruceFamiliaEspecialidad,
