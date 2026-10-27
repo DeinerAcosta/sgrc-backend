@@ -78,6 +78,8 @@ r.get('/resources/:id', wrap(rec.getById))
 r.post('/resources', requireRol('supervisor'), wrap(rec.create))
 r.get('/resources/:id/dependencies', requireRol('supervisor'), wrap(rec.dependencias))
 r.put('/resources/:id', requireRol('supervisor'), wrap(rec.update))
+// Oct-2026 · PROYECTOS-3800: catálogo de subespecialidades (lo leen los formularios).
+r.get('/subspecialties', wrap(rec.subespecialidades))
 // Sep-2026: no existia forma de borrar un recurso. Solo supervisor, y el
 // controlador se niega si tiene historial (responde 409 con el detalle).
 r.delete('/resources/:id', requireRol('supervisor'), wrap(rec.remove))

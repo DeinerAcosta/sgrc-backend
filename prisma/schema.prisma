@@ -668,6 +668,22 @@ model AbsenceReason {
   @@map("motivos_ausencia")
 }
 
+// Oct-2026 · PROYECTOS-3800 · Catálogo de subespecialidades por tipo de
+// recurso. Antes era texto libre y opcional: 32 de 99 oftalmólogos sin ella y
+// la misma escrita de varias formas ("Segamento", "OCULOPASTIA"…), así que los
+// informes no agrupaban bien. Recurso.especialidad guarda el NOMBRE de aquí.
+model Subspecialty {
+  id           String   @id @default(uuid())
+  resourceType String   @map("tipo_recurso") @db.VarChar(30)
+  name         String   @map("nombre") @db.VarChar(100)
+  sortOrder    Int      @default(0) @map("orden")
+  active       Boolean  @default(true) @map("activo")
+  createdAt    DateTime @default(now()) @map("creado_en")
+
+  @@unique([resourceType, name])
+  @@map("subespecialidades")
+}
+
 // ============ REPOSICIÓN DE AUSENCIAS (Fase 3 · ago-2026) ============
 // Un profesional (rol=recurso) puede proponer reponer una ausencia CONFIRMADA
 // trabajando en otro horario. El coord/gerencia aprueba o rechaza. Al aprobar,

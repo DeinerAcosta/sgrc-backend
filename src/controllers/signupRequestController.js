@@ -7,6 +7,7 @@ import { titleCase } from '../lib/strings.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { normalizarEsquemaYTope } from '../lib/resourceTypes.js'
+import { resolverSubespecialidad } from '../lib/subespecialidades.js'
 
 /** Genera una contraseña provisional alfanumérica de 12 caracteres. */
 function generarPasswordProvisional() {
@@ -57,6 +58,9 @@ export async function aprobar(req, res) {
   let recursoId = null
   if (sol.role === 'recurso') {
     if (!sol.resourceType) throw errors.badRequest('La solicitud no especificó el tipo de recurso')
+    // Oct-2026 · PROYECTOS-3800: quien aprueba elige la subespecialidad del
+    // catálogo (la que escribió la persona al registrarse es solo orientativa).
+    const subespecialidad = await resolverSubespecialidad(prisma, sol.resourceType, req.body?.specialty ?? sol.specialty)
     // Sep-2026 · misma fuga que la carga en lote: el tope se decidía por TIPO y
     // el esquema por lo que trajera la solicitud, así que un oftalmólogo al que
     // se le aprobara esquema 'fijo' quedaba con tope NULL (combinación
@@ -68,7 +72,7 @@ export async function aprobar(req, res) {
       data: {
         name: titleCase(sol.name),
         type: sol.resourceType,
-        specialty: sol.specialty,
+        specialty: subespecialidad,
         ...normalizarEsquemaYTope({
           type: sol.resourceType,
           payScheme: sol.payScheme,

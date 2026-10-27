@@ -30,6 +30,7 @@
     "datos:prueba": "node scripts/datos-prueba.js",
     "datos:asesores": "node scripts/datos-asesores.js",
     "recalcular:programadas": "node scripts/recalcular-programadas.js",
+    "normalizar:subespecialidades": "node scripts/normalizar-subespecialidades.js",
     "reparar:turnos-auxiliar": "node scripts/reparar-turnos-auxiliar.js",
     "datos:masivos": "node scripts/datos-masivos.js",
     "datos:todo": "node scripts/datos-prueba.js --aplicar && node scripts/datos-masivos.js --aplicar && node scripts/qa/integridad-semana.mjs",

@@ -6,6 +6,7 @@ import { getSemanaActual } from '../lib/week.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
 import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
+import { resolverSubespecialidad, nombresDelCatalogo, exigeSubespecialidad } from '../lib/subespecialidades.js'
 
 const TIPOS = TIPOS_RECURSO
 
@@ -389,6 +390,10 @@ export async function create(req, res) {
     }
   }
 
+  // Oct-2026 · PROYECTOS-3800: oftalmólogo y otorrino no se crean sin
+  // subespecialidad, y debe ser una del catálogo.
+  data.specialty = await resolverSubespecialidad(prisma, data.type, data.specialty)
+
   // RN-12: intervalo solo lo modifica supervisor (la ruta ya está protegida por rol)
   const r = await prisma.resource.create({
     data: {
@@ -421,6 +426,19 @@ export async function update(req, res) {
         maxHoursPerWeek: data.maxHoursPerWeek ?? anterior.maxHoursPerWeek,
       })
     : {}
+
+  // Oct-2026 · PROYECTOS-3800: al guardar el formulario (llega el tipo o la
+  // subespecialidad) se exige una del catálogo. Así los 38 que quedaron sin
+  // ella se completan la próxima vez que alguien los edite. Desactivar a
+  // alguien no obliga a ponérsela.
+  if (data.specialty !== undefined || data.type !== undefined) {
+    data.specialty = await resolverSubespecialidad(
+      prisma,
+      data.type ?? anterior.type,
+      data.specialty !== undefined ? data.specialty : anterior.specialty,
+      { obligatoria: data.active !== false },
+    )
+  }
 
   // RN-14: si se desactiva, las asignaciones futuras se mantienen (el coordinador las resuelve)
   const r = await prisma.resource.update({
@@ -641,4 +659,24 @@ export async function liberadas(req, res) {
     where: { id: { in: idsLiberadas }, active: true },
   })
   res.json(liberadas.map((r) => ({ ...r, statusBadge: 'liberada' })))
+}
+
+/**
+ * GET /subspecialties?type=oftalmologo — catálogo de subespecialidades de un
+ * tipo (PROYECTOS-3800). Sin tipo, todas agrupadas por tipo. Un tipo que no la
+ * usa devuelve lista vacía.
+ */
+export async function subespecialidades(req, res) {
+  const tipo = req.query.type
+  if (tipo) {
+    return res.json({ type: tipo, required: exigeSubespecialidad(tipo), items: await nombresDelCatalogo(prisma, tipo) })
+  }
+  const filas = await prisma.subspecialty.findMany({
+    where: { active: true },
+    orderBy: [{ resourceType: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+    select: { resourceType: true, name: true },
+  })
+  const porTipo = {}
+  for (const f of filas) (porTipo[f.resourceType] ??= []).push(f.name)
+  res.json(porTipo)
 }

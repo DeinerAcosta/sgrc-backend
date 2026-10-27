@@ -8,6 +8,7 @@ import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { invalidarUsuarioEnCache } from '../middleware/auth.js'
 import { TIPOS_RECURSO, TIPOS_RECURSO_SET, ESQUEMAS_PAGO_SET, normalizarEsquemaYTope, puedeMultiConsultorio, TIPOS_CON_SUBESPECIALIDAD, TIPOS_SIN_COORDINADOR_LIDER} from '../lib/resourceTypes.js'
+import { resolverSubespecialidad } from '../lib/subespecialidades.js'
 
 // 22-oct · Faltaba 'reprogramador': crear o editar un usuario con ese rol
 // respondía "Datos inválidos" (lo vio Hector en producción).
@@ -156,6 +157,16 @@ export async function bulkCreate(req, res) {
       if (yaExiste) {
         resultados.push({ email, ok: false, error: 'Email ya registrado' })
         continue
+      }
+      // Oct-2026 · PROYECTOS-3800: la fila de un oftalmólogo u otorrino sin
+      // subespecialidad del catálogo no se crea (se informa en el resultado).
+      if (u.role === 'recurso') {
+        try {
+          u.specialty = await resolverSubespecialidad(prisma, u.resourceType, u.specialty)
+        } catch (e) {
+          resultados.push({ email, ok: false, error: e.message })
+          continue
+        }
       }
 
       const passProv = generarPasswordProvisional()
@@ -445,6 +456,8 @@ export async function create(req, res) {
     // multi-consultorio y sin tope semanal.
     let recursoId = data.resourceId ?? null
     if (data.role === 'recurso' && !recursoId) {
+      // Oct-2026 · PROYECTOS-3800: misma regla que en Recursos.
+      data.specialty = await resolverSubespecialidad(tx, data.resourceType, data.specialty)
       const r = await tx.resource.create({
         data: {
           name: titleCase(data.name),
