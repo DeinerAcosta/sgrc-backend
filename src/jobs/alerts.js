@@ -5,6 +5,7 @@ import { horasEfectivasFranja } from '../lib/workHours.js'
 import { fechaSolo } from '../lib/fechas.js'
 import { huellaResumen } from '../lib/resumenHuella.js'
 import { etiquetaTipoRecurso } from '../lib/resourceTypes.js'
+import { diasLaborables, ausenciaEnSemana, horasDisponibles } from '../lib/disponibilidadSemana.js'
 
 /**
  * RESUMEN DIARIO PARA EL COORDINADOR (RN-25)
@@ -99,16 +100,28 @@ export async function jobResumenCoordinador() {
     },
   })
 
-  // Ausencia confirmada que solapa la semana → no se reporta: es esperado que
-  // no tenga agenda. Antes esto genero friccion real con los coordinadores.
-  const conAusencia = new Set((await prisma.absence.findMany({
+  // Ausencias confirmadas de la semana. Oct-2026 · Antes bastaba UN día de
+  // ausencia para sacar al recurso del resumen, y el dashboard no las miraba:
+  // decían cosas distintas. Ahora los dos usan lib/disponibilidadSemana.js:
+  // ausente toda la semana → no se reporta; ausente unos días → se mide contra
+  // las horas que sí puede trabajar.
+  const festivos = await prisma.holiday.findMany({
+    where: { date: { gte: semana.startDate, lte: semana.endDate } },
+    select: { date: true },
+  })
+  const laborables = diasLaborables(semana.startDate, festivos.map((f) => f.date))
+  const ausenciasPorRecurso = new Map()
+  for (const a of await prisma.absence.findMany({
     where: {
       status: 'confirmada',
       startDate: { lte: semana.endDate },
       endDate: { gte: semana.startDate },
     },
-    select: { resourceId: true },
-  })).map((a) => a.resourceId))
+    select: { resourceId: true, startDate: true, endDate: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+  })) {
+    if (!ausenciasPorRecurso.has(a.resourceId)) ausenciasPorRecurso.set(a.resourceId, [])
+    ausenciasPorRecurso.get(a.resourceId).push(a)
+  }
 
   const coordinadores = await prisma.user.findMany({
     where: { role: 'coordinador', active: true },
@@ -120,14 +133,16 @@ export async function jobResumenCoordinador() {
   let evaluados = 0, saltadosAusencia = 0, saltadosSinTope = 0, sinDestinatario = 0
 
   for (const r of recursos) {
-    if (conAusencia.has(r.id)) { saltadosAusencia++; continue }
     // Sin tope semanal no hay porcentaje que comparar.
     if (!(r.maxHoursPerWeek > 0)) { saltadosSinTope++; continue }
+    const aus = ausenciaEnSemana(ausenciasPorRecurso.get(r.id) ?? [], laborables)
+    const tope = horasDisponibles(r.maxHoursPerWeek, laborables, aus)
+    if (aus.todaLaSemana || !(tope > 0)) { saltadosAusencia++; continue }
     evaluados++
 
     const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
     const horas = propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
-    const pct = Math.round((horas / r.maxHoursPerWeek) * 100)
+    const pct = Math.round((horas / tope) * 100)
     if (horas > 0 && pct >= UMBRAL) continue
 
     // A quien le toca:
@@ -152,7 +167,7 @@ export async function jobResumenCoordinador() {
       nombre: r.name,
       tipo: etiquetaTipoRecurso(r.type),
       horas: Math.round(horas * 10) / 10,
-      tope: r.maxHoursPerWeek,
+      tope,
       pct,
     }
     for (const d of destinos) {
@@ -181,17 +196,17 @@ export async function jobResumenCoordinador() {
     if (ultimo?.referenceId === firma) { sinCambios++; continue }
 
     const total = sinProgramar.length + porCompletar.length
-    let cuerpo = `<p>Resumen de tu equipo para la semana <strong>${periodo}</strong>. Tienes <strong>${total} recurso(s)</strong> con capacidad sin usar.</p>`
+    let cuerpo = `<p>Resumen de su equipo para la semana <strong>${periodo}</strong>. Tiene <strong>${total} recurso(s)</strong> con capacidad sin usar.</p>`
 
     if (sinProgramar.length) {
-      cuerpo += `<p style="margin-top:18px"><strong>Sin programación (${sinProgramar.length})</strong> — no tienen ninguna asignación esta semana. Si alguno ya no trabaja contigo o quedó mal vinculado de sede, corrígelo en el catálogo de recursos.</p>`
+      cuerpo += `<p style="margin-top:18px"><strong>Sin programación (${sinProgramar.length})</strong> — no tienen ninguna asignación esta semana. Si alguno ya no trabaja con usted o quedó mal vinculado de sede, corríjalo en el catálogo de recursos.</p>`
       cuerpo += tabla(
         sinProgramar.map((r) => [r.nombre, r.tipo, `${r.tope} h`]),
         ['Recurso', 'Tipo', 'Tope semanal'],
       )
     }
     if (porCompletar.length) {
-      cuerpo += `<p style="margin-top:18px"><strong>Por completar (${porCompletar.length})</strong> — están programados por debajo del ${UMBRAL}% de su tope semanal.</p>`
+      cuerpo += `<p style="margin-top:18px"><strong>Por completar (${porCompletar.length})</strong> — están programados por debajo del ${UMBRAL}% de las horas que pueden trabajar esa semana (tope semanal menos festivos y ausencias).</p>`
       cuerpo += tabla(
         porCompletar.map((r) => [
           r.nombre, r.tipo, `${r.horas} h de ${r.tope} h`,
@@ -204,7 +219,7 @@ export async function jobResumenCoordinador() {
     await notificar({
       userId: coord.id,
       type: 'resumen_coordinador',
-      title: `Tu equipo: ${total} recurso(s) por programar — semana ${periodo}`,
+      title: `Su equipo: ${total} recurso(s) por programar — semana ${periodo}`,
       message: cuerpo,
       contexto: 'Resumen diario del módulo de Productividad — Regla de Negocio RN-25',
       criticidad: sinProgramar.length > 0 ? 'alta' : 'media',

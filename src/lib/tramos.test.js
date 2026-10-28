@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { huecosDeFranja, pacientesDelTramo, horaDeCorte, parteAfectada, ausenciasSeCruzan } from './tramos.js'
+import { huecosDeFranja, pacientesDelTramo, horaDeCorte, parteAfectada, ausenciasSeCruzan, errorEnFechasDeAusencia } from './tramos.js'
 
 const FRANJA = { desde: '07:00', hasta: '11:00' }
 
@@ -158,5 +158,30 @@ describe('ausenciasSeCruzan', () => {
   it('acepta fechas como Date a medianoche UTC', () => {
     const a = { ...parcial('08:00', '09:00'), startDate: new Date('2026-10-27T00:00:00Z'), endDate: new Date('2026-10-27T00:00:00Z') }
     expect(ausenciasSeCruzan(a, parcial('09:00', '10:30'))).toBe(false)
+  })
+})
+
+describe('errorEnFechasDeAusencia', () => {
+  it('acepta un día, un rango y un permiso por horas bien escritos', () => {
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27' })).toBeNull()
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27', endDate: '2026-11-12' })).toBeNull()
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27', isPartial: true, absenceStartTime: '08:00', absenceEndTime: '09:00' })).toBeNull()
+  })
+
+  it('rechaza la fecha final antes de la inicial (el caso real del 27-nov al 11-nov)', () => {
+    expect(errorEnFechasDeAusencia({ startDate: '2026-11-27', endDate: '2026-11-11' }))
+      .toBe('La fecha final no puede ser anterior a la fecha de inicio.')
+  })
+
+  it('rechaza fechas que no son fechas', () => {
+    expect(errorEnFechasDeAusencia({ startDate: 'mañana' })).toBe('La fecha de inicio no es válida.')
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27', endDate: '12/11/2026' })).toBe('La fecha final no es válida.')
+  })
+
+  it('rechaza un permiso cuya hora final no es posterior a la inicial', () => {
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27', isPartial: true, absenceStartTime: '10:00', absenceEndTime: '09:00' }))
+      .toBe('La hora final debe ser posterior a la hora de inicio.')
+    expect(errorEnFechasDeAusencia({ startDate: '2026-10-27', isPartial: true, absenceStartTime: '09:00', absenceEndTime: '09:00' }))
+      .toBe('La hora final debe ser posterior a la hora de inicio.')
   })
 })

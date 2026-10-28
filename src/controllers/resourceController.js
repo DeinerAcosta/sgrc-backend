@@ -7,6 +7,7 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
 import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 import { resolverSubespecialidad, nombresDelCatalogo, exigeSubespecialidad } from '../lib/subespecialidades.js'
+import { diasLaborables, ausenciaEnSemana, horasDisponibles } from '../lib/disponibilidadSemana.js'
 
 const TIPOS = TIPOS_RECURSO
 
@@ -211,6 +212,28 @@ export async function list(req, res) {
     asignaciones.filter((a) => a.status === 'sin_cobertura' && a.assistantId).map((a) => a.assistantId)
   )
 
+  // Ausencias confirmadas de la semana: el tope se mide contra lo que el recurso
+  // PUEDE trabajar (ver lib/disponibilidadSemana.js). Mismo criterio que el
+  // resumen diario al coordinador.
+  const laborables = diasLaborables(semana.startDate, festivosSemana.map((f) => f.date))
+  const ausenciasSemana = await prisma.absence.findMany({
+    where: {
+      status: 'confirmada',
+      resourceId: { in: recursos.map((r) => r.id) },
+      startDate: { lte: semana.endDate },
+      endDate: { gte: semana.startDate },
+    },
+    select: {
+      resourceId: true, startDate: true, endDate: true, isPartial: true,
+      absenceStartTime: true, absenceEndTime: true, reasonRef: { select: { name: true } },
+    },
+  })
+  const ausenciasPorRecurso = new Map()
+  for (const a of ausenciasSemana) {
+    if (!ausenciasPorRecurso.has(a.resourceId)) ausenciasPorRecurso.set(a.resourceId, [])
+    ausenciasPorRecurso.get(a.resourceId).push({ ...a, motivo: a.reasonRef?.name ?? null })
+  }
+
   const enriquecidos = recursos.map((r) => {
     const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
     // Horas EFECTIVAS (descontando almuerzo por franja). Es lo que se compara
@@ -254,6 +277,16 @@ export async function list(req, res) {
       weeklyPresenceHours: Math.round(horasPresencia * 10) / 10,   // horas brutas (con almuerzo)
       maxEffectiveHours: horasMaxEfectivas,                       // tope ajustado por festivos
       festivosEnSemana: festivosLaborables,    // para que el UI muestre el badge
+      ...(() => {
+        const aus = ausenciaEnSemana(ausenciasPorRecurso.get(r.id) ?? [], laborables)
+        return {
+          // Tope descontando festivos Y ausencias: contra esto se mide "ocioso".
+          availableHours: horasDisponibles(horasMaxNominal, laborables, aus),
+          absentDays: aus.diasAusente,
+          absentAllWeek: aus.todaLaSemana,
+          absenceReason: aus.motivo,
+        }
+      })(),
       isOvertime: horasMaxEfectivas != null && horas > horasMaxEfectivas,
       statusBadge: liberadas.has(r.id) ? 'liberada' : null,
       coordinadorLiderNombre: liderByIdTop.get(r.leadCoordinatorId) ?? null,

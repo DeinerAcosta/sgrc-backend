@@ -214,9 +214,9 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
         await notificar({
           userId: usuarioId,
           type: 'cierre_automatico_semana',
-          title: `Tu semana operativa fue cerrada automáticamente: ${rangoBonito}`,
-          message: `<p>La semana operativa que tenías asignada fue <strong>cerrada automáticamente</strong> por el sistema, ya que no se realizó el cierre manual antes del plazo establecido: <strong>${fechaHora(closedAtDeadline)}</strong>.</p>
-          <p>A partir de este momento, las asignaciones, ejecuciones y ausencias de esta semana quedan registradas como <strong>definitivas</strong>. Si requieres ajustar algún registro, debes solicitarlo formalmente al supervisor, quien tiene la facultad de reabrir la semana dejando constancia en el log de auditoría.</p>`,
+          title: `Su semana operativa fue cerrada automáticamente: ${rangoBonito}`,
+          message: `<p>La semana operativa que tenía asignada fue <strong>cerrada automáticamente</strong> por el sistema, ya que no se realizó el cierre manual antes del plazo establecido: <strong>${fechaHora(closedAtDeadline)}</strong>.</p>
+          <p>A partir de este momento, las asignaciones, ejecuciones y ausencias de esta semana quedan registradas como <strong>definitivas</strong>. Si requiere ajustar algún registro, debe solicitarlo formalmente al supervisor, quien tiene la facultad de reabrir la semana dejando constancia en el log de auditoría.</p>`,
           contexto: `Notificación del módulo de Cierre de Semana — Política RN-29`,
           criticidad: 'alta',
           referenceId: sem.id,
@@ -247,7 +247,7 @@ export async function jobAutoCierreSemana(ahoraOverride = null) {
         type: 'error_cierre_automatico',
         title: `⚠️ Cierre automático: ${errores.length} semana(s) fallaron`,
         message: `<p>El job de cierre automático de semanas encontró errores procesando ${errores.length} semana(s). Estas semanas <strong>quedan abiertas</strong> hasta que un supervisor las cierre manualmente o el error se resuelva en el próximo run del job (mañana 02:00).</p>
-        <p>Revisa los detalles a continuación y contacta al equipo técnico si el error persiste.</p>`,
+        <p>Revise los detalles a continuación y comuníquese con el equipo técnico si el error persiste.</p>`,
         contexto: 'Notificación del módulo de Cierre de Semana — el job diario detectó errores',
         criticidad: 'alta',
         detalles: errores.slice(0, 10).map((e) => [

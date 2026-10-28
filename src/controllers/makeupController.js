@@ -255,7 +255,7 @@ export async function crear(req, res) {
     await notificarCoordinadoresDeSede(sedeId, {
       type: 'reposicion_solicitada',
       title: `Reposición solicitada: ${ausencia.resource?.name ?? 'profesional'}`,
-      message: `<p>El profesional <strong>${ausencia.resource?.name ?? ''}</strong> propuso una reposición para la ausencia del <strong>${fechaSolo(ausencia.startDate)}</strong>. Requiere tu aprobación.</p>`,
+      message: `<p>El profesional <strong>${ausencia.resource?.name ?? ''}</strong> propuso una reposición para la ausencia del <strong>${fechaSolo(ausencia.startDate)}</strong>. Requiere su aprobación.</p>`,
       contexto: 'Acción requerida — Reposiciones',
       criticidad: 'media',
       referenceId: reposicion.id,
@@ -324,8 +324,8 @@ export async function aprobar(req, res) {
     await notificar({
       userId: usuarioRecurso.id,
       type: 'reposicion_aprobada',
-      title: 'Tu reposición fue aprobada',
-      message: '<p>El coordinador aprobó tu solicitud de reposición de ausencia. Debes presentarte en el horario acordado.</p>',
+      title: 'Su reposición fue aprobada',
+      message: '<p>El coordinador aprobó su solicitud de reposición de ausencia. Debe presentarse en el horario acordado.</p>',
       contexto: 'Confirmación — Reposiciones',
       criticidad: 'media',
       referenceId: rep.id,
@@ -396,8 +396,8 @@ export async function rechazar(req, res) {
     await notificar({
       userId: usuarioRecurso.id,
       type: 'reposicion_rechazada',
-      title: 'Tu reposición fue rechazada',
-      message: `<p>El coordinador no aprobó tu solicitud de reposición. Puedes proponer otra fecha u horario y volver a solicitarla.</p>`,
+      title: 'Su reposición fue rechazada',
+      message: `<p>El coordinador no aprobó su solicitud de reposición. Puede proponer otra fecha u horario y volver a solicitarla.</p>`,
       contexto: 'Novedad — Reposiciones',
       criticidad: 'media',
       referenceId: rep.id,

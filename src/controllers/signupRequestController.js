@@ -125,11 +125,11 @@ export async function aprobar(req, res) {
   const origin = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173').split(',')[0]
   await enviarEmail({
     to: usuario.email,
-    subject: '[VIU · FOCA | SGRC] Tu solicitud de registro fue aprobada',
+    subject: '[VIU · FOCA | SGRC] Su solicitud de registro fue aprobada',
     html: plantillaEmail(
       `¡Bienvenido(a), ${usuario.name.split(' ')[0]}!`,
-      `Tu solicitud de registro al <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong> fue <strong>aprobada</strong> por el supervisor.<br><br>
-      Usa las siguientes credenciales para iniciar sesión:<br><br>
+      `Su solicitud de registro al <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong> fue <strong>aprobada</strong> por el supervisor.<br><br>
+      Use las siguientes credenciales para iniciar sesión:<br><br>
       <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:8px 0">
         <tr>
           <td style="padding:10px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px 8px 0 0;font-size:13px;color:#475569;width:130px">📧 Usuario / Email</td>
@@ -141,21 +141,21 @@ export async function aprobar(req, res) {
         </tr>
       </table>
       <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 12px;margin:14px 0;border-radius:0 6px 6px 0;font-size:13px;color:#78350f">
-        ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En tu primer ingreso el sistema te pedirá cambiarla por una propia.
+        ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En su primer ingreso el sistema le pedirá cambiarla por una propia.
       </div>
       ¡Gracias por ser parte del equipo COFCA!`,
       origin,
       'Iniciar sesión ahora'
     ),
-    text: `SGRC — Tu solicitud fue aprobada
+    text: `SGRC — Su solicitud fue aprobada
 
 Credenciales:
   Usuario / Email:         ${usuario.email}
   Contraseña provisional:  ${passwordProv}
 
-⚠️ IMPORTANTE: esta contraseña es PROVISIONAL. En tu primer ingreso el sistema te pedirá cambiarla.
+⚠️ IMPORTANTE: esta contraseña es PROVISIONAL. En su primer ingreso el sistema le pedirá cambiarla.
 
-Ingresa en: ${origin}`,
+Ingrese en: ${origin}`,
   })
 
   await registrarAuditoria({
@@ -192,12 +192,12 @@ export async function rechazar(req, res) {
 
   await enviarEmail({
     to: sol.email,
-    subject: '[VIU · FOCA | SGRC] Tu solicitud de registro fue rechazada',
+    subject: '[VIU · FOCA | SGRC] Su solicitud de registro fue rechazada',
     html: plantillaEmail(
       'Solicitud de registro rechazada',
-      `Hola ${sol.name},<br><br>Lamentamos informarte que tu solicitud no fue aprobada.<br><br><strong>Motivo:</strong><br><em>${motivo}</em><br><br>Si crees que se trata de un error, comunícate con el área de tecnología.`,
+      `Hola ${sol.name},<br><br>Lamentamos informarle que su solicitud no fue aprobada.<br><br><strong>Motivo:</strong><br><em>${motivo}</em><br><br>Si cree que se trata de un error, comuníquese con el área de tecnología.`,
     ),
-    text: `Tu solicitud SGRC fue rechazada. Motivo: ${motivo}`,
+    text: `Su solicitud SGRC fue rechazada. Motivo: ${motivo}`,
   })
 
   await registrarAuditoria({

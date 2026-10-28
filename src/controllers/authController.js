@@ -128,11 +128,11 @@ export async function forgotPassword(req, res) {
       subject: '[VIU · FOCA | SGRC] Recuperación de contraseña',
       html: plantillaEmail(
         'Recuperación de contraseña',
-        `Hola ${usuario.name},<br><br>Recibimos una solicitud para restablecer tu contraseña. El enlace es válido por <strong>1 hora</strong>. Si no lo solicitaste, ignora este correo.`,
+        `Hola ${usuario.name},<br><br>Recibimos una solicitud para restablecer su contraseña. El enlace es válido por <strong>1 hora</strong>. Si no lo solicitó, ignore este correo.`,
         enlace,
         'Restablecer contraseña'
       ),
-      text: `Recupera tu contraseña en: ${enlace} (válido 1 hora)`,
+      text: `Recupere su contraseña en: ${enlace} (válido 1 hora)`,
     })
   }
 
@@ -289,7 +289,7 @@ export async function registro(req, res) {
   await notificarSupervisores({
     type: 'solicitud_registro',
     title: `Nueva solicitud de registro: ${titleCase(data.name)}`,
-    message: `<p>Una persona realizó una solicitud de registro a través del portal público del SGRC y requiere tu aprobación para acceder al sistema. La cuenta queda inactiva hasta que la apruebes o rechaces.</p>
+    message: `<p>Una persona realizó una solicitud de registro a través del portal público del SGRC y requiere su aprobación para acceder al sistema. La cuenta queda inactiva hasta que la apruebe o la rechace.</p>
     <p>Al aprobar la solicitud, el sistema generará automáticamente una contraseña provisional y enviará las credenciales por correo al solicitante.</p>`,
     contexto: 'Acción requerida del módulo de Usuarios — Solicitudes pendientes',
     criticidad: 'media',

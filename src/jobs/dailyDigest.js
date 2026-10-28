@@ -76,15 +76,15 @@ export async function jobResumenDiario(fechaOverride = null) {
       const enviarARecursos = emailsRecursoActivados()
       for (const { user: usuario, filas } of (enviarARecursos ? filasPorUsuario.values() : [])) {
         const totalPac = filas.reduce((acc, f) => acc + f.pacientes, 0)
-        const html = `Hola ${usuario.name},<br><br>Este es tu horario de hoy <strong>${fechaTxt}</strong> en <strong>${sede.name}</strong>:<br><br>
+        const html = `Hola ${usuario.name},<br><br>Este es su horario de hoy <strong>${fechaTxt}</strong> en <strong>${sede.name}</strong>:<br><br>
           ${tabla(filas)}<br>
           <div style="margin-top:8px;font-size:13px;color:#555">Total pacientes programados: <strong>${totalPac}</strong></div>
-          <div style="margin-top:8px;font-size:12px;color:#999">Recuerda registrar tu ejecución antes del lunes 23:59 siguiente al sábado (o el día hábil posterior si el lunes es festivo).</div>`
+          <div style="margin-top:8px;font-size:12px;color:#999">Recuerde registrar su ejecución antes del lunes 23:59 siguiente al sábado (o el día hábil posterior si el lunes es festivo).</div>`
         await enviarEmail({
           to: usuario.email,
-          subject: `[VIU · FOCA | SGRC] Tu horario de hoy — ${fechaTxt}`,
-          html: plantillaEmail('Tu horario de hoy', html),
-          text: `Hoy ${fechaTxt} tienes ${filas.length} franja(s) programada(s) en ${sede.name}.`,
+          subject: `[VIU · FOCA | SGRC] Su horario de hoy — ${fechaTxt}`,
+          html: plantillaEmail('Su horario de hoy', html),
+          text: `Hoy ${fechaTxt} tiene ${filas.length} franja(s) programada(s) en ${sede.name}.`,
         })
         emailsEnviados++
       }

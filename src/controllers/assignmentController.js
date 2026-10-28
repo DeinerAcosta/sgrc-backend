@@ -194,8 +194,8 @@ export async function create(req, res) {
     await notificar({
       userId: u.id,
       type: 'asignacion_cambiada',
-      title: 'Nueva asignación en tu horario',
-      message: `Tienes una asignación el ${a.weekday} de ${a.startTime} a ${a.endTime} en ${a.room?.name ?? 'un consultorio'}.`,
+      title: 'Nueva asignación en su horario',
+      message: `Tiene una asignación el ${a.weekday} de ${a.startTime} a ${a.endTime} en ${a.room?.name ?? 'un consultorio'}.`,
       // Criticidad baja: el recurso lo ve en la app cuando entra. No saturamos
       // su bandeja con un email por cada nueva asignación (los coords editan
       // muchas asignaciones al cuadrar la semana).
@@ -235,8 +235,8 @@ export async function create(req, res) {
       await notificar({
         userId: quienAsume.id,
         type: 'agenda_asumida',
-        title: `Vas a atender además la agenda de ${deQuien}`,
-        message: `<p>Se te asignó un turno <strong>adicional</strong> el ${a.weekday} de ${a.startTime} a ${a.endTime}: son los pacientes que tenía programados <strong>${deQuien}</strong>, que se ausentó.</p><p>Tu turno propio de esa franja no cambia — este se suma.</p>`,
+        title: `Atenderá además la agenda de ${deQuien}`,
+        message: `<p>Se le asignó un turno <strong>adicional</strong> el ${a.weekday} de ${a.startTime} a ${a.endTime}: son los pacientes que tenía programados <strong>${deQuien}</strong>, que se ausentó.</p><p>Su turno propio de esa franja no cambia — este se suma.</p>`,
         contexto: 'Reprogramación de agendas',
         criticidad: 'alta',
         referenceId: a.id,
@@ -274,8 +274,8 @@ export async function update(req, res) {
     await notificar({
       userId: u.id,
       type: 'asignacion_cambiada',
-      title: 'Asignación actualizada en tu horario',
-      message: `Cambió tu asignación el ${a.weekday}: ahora ${a.startTime}–${a.endTime} en ${a.room?.name ?? 'un consultorio'}.`,
+      title: 'Asignación actualizada en su horario',
+      message: `Cambió su asignación el ${a.weekday}: ahora ${a.startTime}–${a.endTime} en ${a.room?.name ?? 'un consultorio'}.`,
       // Criticidad baja: solo in-app, sin email. Ver create() arriba.
       criticidad: 'baja',
       referenceId: a.id,

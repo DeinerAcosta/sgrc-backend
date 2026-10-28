@@ -6,7 +6,7 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar, notificarCoordinadoresDeSede, notificarSupervisores, notificarDirectivos, notificarDireccionMedica } from '../services/notificationService.js'
 import { calcularImpacto, liberarAuxiliaresSiAplica } from '../services/absenceService.js'
 import { alcanceDeReprogramacion, TIPOS_PROFESIONALES, coordSoloVe, MSG_SOLO_VE } from '../lib/resourceTypes.js'
-import { huecosDeFranja, pacientesDelTramo, parteAfectada, ausenciasSeCruzan } from '../lib/tramos.js'
+import { huecosDeFranja, pacientesDelTramo, parteAfectada, ausenciasSeCruzan, errorEnFechasDeAusencia } from '../lib/tramos.js'
 import { pacientesDelCaso } from '../lib/pacientesDelCaso.js'
 import { fechaSolo } from '../lib/fechas.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
@@ -393,8 +393,8 @@ async function notificarRecursoAusenciaConfirmada(tx, ausencia, actualizada, { p
       userId: usuarioRecurso.id,
       type: 'ausencia_confirmada',
       title: 'Ausencia confirmada y registrada en el sistema',
-      message: `<p>El coordinador validó la ausencia que reportaste y la registró como <strong>confirmada</strong>. A partir de este momento queda incluida en los informes de Ausentismo del sistema.</p>
-      <p>Si tienes alguna observación, contacta a tu coordinador. Para visualizar el detalle e impacto, accede a la sección "Mis ausencias" en el sistema.</p>`,
+      message: `<p>El coordinador validó la ausencia que usted reportó y la registró como <strong>confirmada</strong>. A partir de este momento queda incluida en los informes de Ausentismo del sistema.</p>
+      <p>Si tiene alguna observación, comuníquese con su coordinador. Puede ver el detalle y el impacto en la sección "Mis ausencias" del sistema.</p>`,
       contexto: 'Confirmación del módulo de Ausencias',
       criticidad: 'media',
       referenceId: actualizada.id,
@@ -429,6 +429,8 @@ export function autorizacionDatos(_req, res) {
 
 export async function create(req, res) {
   const data = crearSchema.parse(req.body)
+  const errorFechas = errorEnFechasDeAusencia(data)
+  if (errorFechas) throw errors.badRequest(errorFechas)
   const fechaInicio = parseISO(data.startDate)
   const fechaFin = data.endDate ? parseISO(data.endDate) : fechaInicio
   const anticipacionDias = diasDeAnticipacion(data.startDate)
@@ -686,16 +688,16 @@ export async function create(req, res) {
 
   // Mensajes de notificación según si la ausencia queda confirmada o pendiente.
   const msgRecurso = seAutoConfirmara
-    ? `<p>Se registró en el sistema una ausencia a tu nombre — quedó <strong>confirmada automáticamente</strong> porque la reportó ${reportadaPor.split(' (')[0]}. Su impacto operativo (pacientes afectados, costo de oportunidad) ya se calculó y aparece en los informes.</p>
-       <p>Si tienes alguna observación, contacta a tu coordinador. Puedes ver el detalle en "Mis ausencias".</p>`
-    : `<p>Se registró en el sistema una ausencia a tu nombre. Quedó en estado <strong>Pendiente de confirmación</strong> a la espera del coordinador, quien validará el impacto operativo y la marcará como confirmada.</p>
-       <p>Una vez confirmada, recibirás una segunda notificación con el impacto registrado (pacientes afectados, costo de oportunidad, etc.).</p>`
+    ? `<p>Se registró en el sistema una ausencia a su nombre — quedó <strong>confirmada automáticamente</strong> porque la reportó ${reportadaPor.split(' (')[0]}. Su impacto operativo (pacientes afectados, costo de oportunidad) ya se calculó y aparece en los informes.</p>
+       <p>Si tiene alguna observación, comuníquese con su coordinador. Puede ver el detalle en "Mis ausencias".</p>`
+    : `<p>Se registró en el sistema una ausencia a su nombre. Quedó en estado <strong>Pendiente de confirmación</strong> a la espera del coordinador, quien validará el impacto operativo y la marcará como confirmada.</p>
+       <p>Una vez confirmada, recibirá una segunda notificación con el impacto registrado (pacientes afectados, costo de oportunidad, etc.).</p>`
 
   const msgCoord = seAutoConfirmara
-    ? `<p>Se registró una ausencia que afecta a una de las sedes bajo tu responsabilidad. <strong>Quedó confirmada automáticamente</strong> al reportarla ${reportadaPor.split(' (')[0]} — el impacto operativo (pacientes afectados, ejecuciones marcadas como no ejecutada, liberación de auxiliares) ya se aplicó.</p>
-       <p>Si necesitas revisar el detalle o hacer ajustes, ingresa al módulo de Ausencias.</p>`
-    : `<p>Se reportó una ausencia que afecta a una de las sedes bajo tu responsabilidad. La ausencia está en estado <strong>pendiente</strong> y requiere tu revisión y confirmación para registrar el impacto operativo (pacientes afectados, asignaciones canceladas, costo de oportunidad).</p>
-       <p>Por favor, ingresa al módulo de Ausencias en el sistema y procesa esta solicitud antes de que comience la franja afectada para permitir reasignación si corresponde.</p>`
+    ? `<p>Se registró una ausencia que afecta a una de las sedes bajo su responsabilidad. <strong>Quedó confirmada automáticamente</strong> al reportarla ${reportadaPor.split(' (')[0]} — el impacto operativo (pacientes afectados, ejecuciones marcadas como no ejecutada, liberación de auxiliares) ya se aplicó.</p>
+       <p>Si necesita revisar el detalle o hacer ajustes, ingrese al módulo de Ausencias.</p>`
+    : `<p>Se reportó una ausencia que afecta a una de las sedes bajo su responsabilidad. La ausencia está en estado <strong>pendiente</strong> y requiere su revisión y confirmación para registrar el impacto operativo (pacientes afectados, asignaciones canceladas, costo de oportunidad).</p>
+       <p>Por favor, ingrese al módulo de Ausencias en el sistema y procese esta solicitud antes de que comience la franja afectada para permitir reasignación si corresponde.</p>`
 
   const msgSup = seAutoConfirmara
     ? `<p>Se registró una nueva ausencia en el sistema y quedó <strong>confirmada automáticamente</strong>. El impacto operativo ya se aplicó. Esta notificación es informativa.</p>`
@@ -713,7 +715,7 @@ export async function create(req, res) {
     await notificar({
       userId: usuarioRecurso.id,
       type: seAutoConfirmara ? 'ausencia_confirmada' : 'ausencia_reportada',
-      title: seAutoConfirmara ? `Ausencia confirmada: ${tipoLabel}` : `Registro de tu ausencia: ${tipoLabel}`,
+      title: seAutoConfirmara ? `Ausencia confirmada: ${tipoLabel}` : `Registro de su ausencia: ${tipoLabel}`,
       message: msgRecurso,
       contexto: 'Notificación del módulo de Ausencias',
       criticidad: 'media',
@@ -1300,8 +1302,8 @@ export async function asignarReprogramador(req, res) {
   await notificar({
     userId: reschedulerId,
     type: 'reprogramacion_asignada',
-    title: `Te asignaron la reprogramacion de ${ausencia.resource?.name}`,
-    message: `<p>Se te asigno la reprogramacion de la agenda de <strong>${ausencia.resource?.name}</strong>.</p>${notes ? `<p><em>Indicaciones:</em> ${notes}</p>` : ''}`,
+    title: `Se le asignó la reprogramación de ${ausencia.resource?.name}`,
+    message: `<p>Se le asignó la reprogramación de la agenda de <strong>${ausencia.resource?.name}</strong>.</p>${notes ? `<p><em>Indicaciones:</em> ${notes}</p>` : ''}`,
     contexto: 'Gestion de ausencias',
   })
 

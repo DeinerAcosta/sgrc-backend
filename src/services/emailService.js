@@ -15,7 +15,16 @@ let transporter = null
 const smtpConfigurado = !!process.env.SMTP_HOST
 
 if (smtpConfigurado) {
+  // Oct-2026 · Conexión reutilizada (pool). Sin pool, cada correo abría su propia
+  // conexión e iniciaba sesión; al registrar una ausencia se avisa a varias
+  // personas a la vez y Gmail respondía "454 Too many login attempts": en los
+  // registros del servidor hubo más de 12.000 envíos perdidos así.
   transporter = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 2,
+    maxMessages: 100,
+    rateDelta: 1000,
+    rateLimit: 5,
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT ?? 587),
     secure: parseInt(process.env.SMTP_PORT ?? 587) === 465,
@@ -41,19 +50,30 @@ export async function enviarEmail({ to, subject, html, text }) {
     console.log('')
     return { enviado: false, modo: 'log' }
   }
-  try {
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM ?? 'SGRC <noreply@cofca.co>',
-      to,
-      subject,
-      html,
-      text,
-    })
-    return { enviado: true, modo: 'smtp' }
-  } catch (e) {
-    console.error('📧 Error enviando email:', e.message)
-    return { enviado: false, modo: 'error', error: e.message }
+  const correo = { from: process.env.SMTP_FROM ?? 'SGRC <noreply@cofca.co>', to, subject, html, text }
+  let ultimoError = null
+  for (let intento = 1; intento <= REINTENTOS.length + 1; intento++) {
+    try {
+      await transporter.sendMail(correo)
+      return { enviado: true, modo: 'smtp', intentos: intento }
+    } catch (e) {
+      ultimoError = e
+      if (!errorTemporal(e) || intento > REINTENTOS.length) break
+      await new Promise((r) => setTimeout(r, REINTENTOS[intento - 1]))
+    }
   }
+  console.error('📧 Error enviando email:', ultimoError.message)
+  return { enviado: false, modo: 'error', error: ultimoError.message }
+}
+
+// Esperas entre reintentos (ms). Solo se reintenta lo que el servidor de correo
+// marca como temporal: 4xx ("intente más tarde") o la conexión caída.
+const REINTENTOS = [5_000, 30_000, 120_000]
+
+export function errorTemporal(e) {
+  const codigo = Number(e?.responseCode)
+  if (codigo >= 400 && codigo < 500) return true
+  return ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNRESET'].includes(e?.code)
 }
 
 /** Prefijo estándar para todos los asuntos: marca + aplicativo. */

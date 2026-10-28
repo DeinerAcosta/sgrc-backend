@@ -154,3 +154,22 @@ export function ausenciasSeCruzan(a, b) {
   if (!conHoras(a) || !conHoras(b)) return true
   return a.absenceStartTime < b.absenceEndTime && a.absenceEndTime > b.absenceStartTime
 }
+
+/**
+ * Oct-2026 · Fechas y horas de una ausencia nueva. Devuelve el mensaje de error
+ * o null. Antes no se validaba: en producción quedó guardada una vacación del
+ * 27-nov al 11-nov, y como el rango estaba al revés tampoco la detectó
+ * `ausenciasSeCruzan`.
+ */
+export function errorEnFechasDeAusencia({ startDate, endDate, isPartial, absenceStartTime, absenceEndTime }) {
+  const dia = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null)
+  const inicio = dia(startDate)
+  if (!inicio) return 'La fecha de inicio no es válida.'
+  const fin = endDate ? dia(endDate) : inicio
+  if (!fin) return 'La fecha final no es válida.'
+  if (fin < inicio) return 'La fecha final no puede ser anterior a la fecha de inicio.'
+  if (isPartial && absenceStartTime && absenceEndTime && absenceEndTime <= absenceStartTime) {
+    return 'La hora final debe ser posterior a la hora de inicio.'
+  }
+  return null
+}

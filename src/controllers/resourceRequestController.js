@@ -226,10 +226,10 @@ export async function aprobar(req, res) {
   await notificar({
     userId: sol.requesterId,
     type: 'solicitud_recurso_aprobada',
-    title: 'Tu solicitud de recurso fue aprobada',
+    title: 'Su solicitud de recurso fue aprobada',
     message: sol.requestType === 'prestamo'
-      ? `<p>Tu solicitud de <strong>préstamo de ${sol.resource?.name}</strong> en la sede <strong>${sol.targetSite.name}</strong> fue aprobada. Ya puedes asignarlo desde el programador.</p>`
-      : `<p>Tu solicitud de <strong>alta nueva (${sol.newResourceType})</strong> para la sede <strong>${sol.targetSite.name}</strong> fue aprobada. El supervisor creará el recurso en breve.</p>`,
+      ? `<p>Su solicitud de <strong>préstamo de ${sol.resource?.name}</strong> en la sede <strong>${sol.targetSite.name}</strong> fue aprobada. Ya puede asignarlo desde el programador.</p>`
+      : `<p>Su solicitud de <strong>alta nueva (${sol.newResourceType})</strong> para la sede <strong>${sol.targetSite.name}</strong> fue aprobada. El supervisor creará el recurso en breve.</p>`,
     criticidad: 'media',
     accionUrl: `${process.env.FRONTEND_ORIGIN?.split(',')[0] ?? 'https://gestionderecursos.ttncompany.com'}/app/solicitudes-recurso`,
     accionTexto: 'Ver mis solicitudes',
@@ -240,8 +240,8 @@ export async function aprobar(req, res) {
     await notificar({
       userId: sol.resource.leadCoordinatorId,
       type: 'solicitud_recurso_aprobada',
-      title: 'Préstamo aprobado de un recurso de tu equipo',
-      message: `<p>El recurso <strong>${sol.resource.name}</strong> (de tu equipo) fue prestado a la sede <strong>${sol.targetSite.name}</strong> por solicitud de <strong>${sol.requester.name}</strong>. Esto es informativo — coordina con esa sede si hay choques de agenda.</p>`,
+      title: 'Préstamo aprobado de un recurso de su equipo',
+      message: `<p>El recurso <strong>${sol.resource.name}</strong> (de su equipo) fue prestado a la sede <strong>${sol.targetSite.name}</strong> por solicitud de <strong>${sol.requester.name}</strong>. Esto es informativo — coordine con esa sede si hay choques de agenda.</p>`,
       criticidad: 'baja',
     })
   }
@@ -285,8 +285,8 @@ export async function rechazar(req, res) {
   await notificar({
     userId: sol.requesterId,
     type: 'solicitud_recurso_rechazada',
-    title: 'Tu solicitud de recurso fue rechazada',
-    message: `<p>Tu solicitud para la sede <strong>${sol.targetSite.name}</strong> fue rechazada.</p><p><em>Motivo:</em> ${motivoDecision}</p>`,
+    title: 'Su solicitud de recurso fue rechazada',
+    message: `<p>Su solicitud para la sede <strong>${sol.targetSite.name}</strong> fue rechazada.</p><p><em>Motivo:</em> ${motivoDecision}</p>`,
     criticidad: 'media',
     accionUrl: `${process.env.FRONTEND_ORIGIN?.split(',')[0] ?? 'https://gestionderecursos.ttncompany.com'}/app/solicitudes-recurso`,
     accionTexto: 'Ver mis solicitudes',
@@ -352,7 +352,7 @@ export async function asociarRecurso(req, res) {
     userId: sol.requesterId,
     type: 'solicitud_recurso_ejecutada',
     title: 'Recurso creado y vinculado',
-    message: `<p>El supervisor creó el recurso <strong>${recurso.name}</strong> y lo vinculó a la sede que solicitaste. Ya puedes asignarlo en el programador.</p>`,
+    message: `<p>El supervisor creó el recurso <strong>${recurso.name}</strong> y lo vinculó a la sede que usted solicitó. Ya puede asignarlo en el programador.</p>`,
     criticidad: 'media',
   })
 

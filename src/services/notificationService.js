@@ -78,8 +78,9 @@ export async function notificar({
     }
 
     // Registrar en BD — un registro por canal
+    const filaPorCanal = {}
     for (const canal of canales) {
-      await prisma.notification.create({
+      filaPorCanal[canal] = await prisma.notification.create({
         data: {
           userId: usuarioId,
           type: tipo,
@@ -110,13 +111,20 @@ export async function notificar({
           subject: `${ASUNTO_PREFIJO} ${titulo}`,
           html: plantillaEmail(titulo, mensaje, accionUrl, accionTexto, detalles, contexto),
           text: textoPlano,
-        })
+        }).then((r) => r.enviado && prisma.notification.update({
+          // Sin esto, todo correo quedaba como "no enviado" aunque hubiera salido.
+          where: { id: filaPorCanal.email.id },
+          data: { sent: true },
+        }))
       )
     }
     if (canales.includes('whatsapp')) {
       envios.push(enviarWhatsApp(usuario.phone, `*SGRC — ${titulo}*\n${mensaje}`))
     }
-    await Promise.allSettled(envios)
+    // Correo y WhatsApp salen en segundo plano: con los reintentos ante fallos
+    // temporales del servidor de correo (hasta ~2,5 min) no deben demorar la
+    // respuesta de quien registró la ausencia. La notificación en la app ya quedó.
+    void Promise.allSettled(envios)
   } catch (e) {
     console.error('[NOTIFICACION] Error:', e.message)
   }
