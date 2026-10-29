@@ -116,6 +116,7 @@ async function importar() {
   const subsPorRecurso = new Map()   // recursoId → Map(sub → filas)
   const vistas = new Set()
   const aCrear = []
+  let costoAnticipado = 0
   const futuras = []
 
   for (const f of filas) {
@@ -159,7 +160,16 @@ async function importar() {
     const pacientes = numeroDeCelda(f.PACIENTES_AFECTADOS) ?? numeroDeCelda(f.PROGRAMACIONES) ?? 0
     const anticipacion = Math.max(0, diasEntre(reportada, fecha))
     const codigo = motivoDe(f.TIPO_AUSENCIA)
-    const costo = Math.round(pacientes * buildCostoResolver(parametros, dia(fecha))(CONSULTA_DE_TIPO[recurso.type]))
+    // Los parámetros de costo existen desde el 21-jul-2026. Antes de su primer
+    // valor se usa ese primer valor: si no, enero-julio quedaban en $0 y el
+    // costo parecía dispararse en julio.
+    const consulta = CONSULTA_DE_TIPO[recurso.type]
+    let valor = buildCostoResolver(parametros, dia(fecha))(consulta)
+    if (!valor) {
+      const primero = parametros.filter((p) => p.visitType === consulta).at(-1)   // vienen de la más nueva a la más vieja
+      if (primero) { valor = Number(primero.visitCost); costoAnticipado++ }
+    }
+    const costo = Math.round(pacientes * valor)
     const cobertura = fechaDeCelda(f.FECHA_CUBRE) ?? fechaDeCelda(f.FECHA_REPONE)
     const servicio = normalizar(f.TIPO_SERVICIO)
     cont.cargar++
@@ -227,7 +237,9 @@ async function importar() {
   const pac = aCrear.reduce((s, a) => s + a.data.patientsAffected, 0)
   console.log(`\nPacientes: ${pac} · con fecha de cobertura: ${conCobertura} de ${aCrear.length} · sin sede reconocida: ${sinSede}`)
   const sinCosto = aCrear.filter((a) => !a.data.opportunityCost && a.data.patientsAffected).length
+  if (costoAnticipado) console.log(`Costo con el primer valor de Parámetros de costo (fecha anterior a su vigencia): ${costoAnticipado} filas`)
   if (sinCosto) console.log(`Sin valor de consulta para calcular el costo: ${sinCosto} filas (el tipo de consulta no está en Parámetros de costo)`)
+  console.log(`Costo de oportunidad total: $ ${aCrear.reduce((t, a) => t + a.data.opportunityCost, 0).toLocaleString('es-CO')}`)
 
   if (futuras.length) {
     console.log(`
