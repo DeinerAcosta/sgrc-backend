@@ -22,7 +22,7 @@ const asignarSchema = z.object({
   sabadoMedioDia: z.boolean().optional(),
 }).refine(
   (d) => d.day || (d.startDate && d.endDate),
-  { message: 'Debes enviar `dia` o el rango `fechaInicio`+`fechaFin`' },
+  { message: 'Debe enviar `dia` o el rango `fechaInicio`+`fechaFin`' },
 )
 
 const hhmmAMin = (hhmm) => {

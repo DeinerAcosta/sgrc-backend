@@ -39,7 +39,7 @@ const crearSchema = z.object({
   impactFactor: z.coerce.number().min(0).max(1).default(1),
   sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
   // Oct-2026 · Obligatorio al crear: decide en qué grupo sale en el formulario.
-  isPaid: z.boolean({ required_error: 'Indica si el motivo es remunerado' }),
+  isPaid: z.boolean({ required_error: 'Indique si el motivo es remunerado' }),
 })
 
 const actualizarSchema = z.object({

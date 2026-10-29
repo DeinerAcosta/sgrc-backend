@@ -106,8 +106,8 @@ export async function cerrar(req, res) {
   // motor quisiera devolver: ni siquiera era predecible.
   if (!sede_id) {
     throw errors.badRequest(
-      'Falta la sede a cerrar. Si el problema persiste, recarga la pagina con Ctrl+Shift+R: ' +
-      'tu navegador puede tener una version antigua del programador.',
+      'Falta la sede a cerrar. Si el problema persiste, recargue la pagina con Ctrl+Shift+R: ' +
+      'su navegador puede tener una version antigua del programador.',
     )
   }
 
@@ -116,7 +116,7 @@ export async function cerrar(req, res) {
     const vinc = await prisma.userSite.findFirst({
       where: { userId: req.user.id, siteId: sede_id },
     })
-    if (!vinc) throw errors.forbidden('No estás vinculado a esa sede')
+    if (!vinc) throw errors.forbidden('No está vinculado a esa sede')
   }
 
   // Idempotencia: si ya existe el cierre de esa sede para esta semana, devolverlo.
@@ -272,11 +272,11 @@ export async function copiar(req, res) {
         sedesObjetivo = [mias[0].siteId]
       } else if (mias.length > 1) {
         throw errors.badRequest(
-          `Tienes ${mias.length} sedes asignadas. Selecciona una en el panel antes de copiar la semana.`
+          `Tiene ${mias.length} sedes asignadas. Seleccione una en el panel antes de copiar la semana.`
         )
       } else {
         throw errors.badRequest(
-          'No tienes sedes asignadas. Contacta al supervisor para que revise tu configuración.'
+          'No tiene sedes asignadas. Comuníquese con el supervisor para que revise su configuración.'
         )
       }
     }
@@ -287,7 +287,7 @@ export async function copiar(req, res) {
     const misSedesSet = new Set(misSedes.map((u) => u.siteId))
     const noAutorizadas = sedesObjetivo.filter((s) => !misSedesSet.has(s))
     if (noAutorizadas.length > 0) {
-      throw errors.forbidden('No estás vinculado a alguna de las sedes solicitadas')
+      throw errors.forbidden('No está vinculado a alguna de las sedes solicitadas')
     }
   }
 
@@ -344,7 +344,7 @@ export async function copiar(req, res) {
 
   if (existente) {
     if (existente.status === 'cerrada' && !programacionLibre()) {
-      throw errors.badRequest('La semana destino está cerrada. Reabre primero o edítala como supervisor.')
+      throw errors.badRequest('La semana destino está cerrada. Reábrala primero o edítela como supervisor.')
     }
     // SOFT-DELETE filtrado POR SEDE: solo cancelamos las asignaciones de las
     // sedes objetivo. Las demás sedes quedan intactas.
@@ -504,7 +504,7 @@ export async function cambiosDeLaSemana(req, res) {
   let sedes = req.query.site_id ? [req.query.site_id] : null
   if (req.user?.role === 'coordinador') {
     const mias = (await prisma.userSite.findMany({ where: { userId: req.user.id }, select: { siteId: true } })).map((m) => m.siteId)
-    if (sedes && !sedes.every((s) => mias.includes(s))) throw errors.forbidden('No tienes acceso a esta sede')
+    if (sedes && !sedes.every((s) => mias.includes(s))) throw errors.forbidden('No tiene acceso a esta sede')
     sedes = sedes ?? mias
   }
   const entradas = await prisma.auditEntry.findMany({
@@ -567,7 +567,7 @@ export async function ausentesSemanaAnterior(req, res) {
       select: { siteId: true },
     })
     const misSedes = mias.map((m) => m.siteId)
-    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tienes acceso a esta sede')
+    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tiene acceso a esta sede')
     sedesAlcance = sedeId ? [sedeId] : misSedes
     if (sedesAlcance.length === 0) { res.json({ semana_anterior: null, ausentes: [] }); return }
   } else if (sedeId) {
@@ -778,7 +778,7 @@ export async function ausenciasDeLaSemana(req, res) {
       select: { siteId: true },
     })
     const misSedes = mias.map((m) => m.siteId)
-    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tienes acceso a esta sede')
+    if (sedeId && !misSedes.includes(sedeId)) throw errors.forbidden('No tiene acceso a esta sede')
     sedesAlcance = sedeId ? [sedeId] : misSedes
     if (sedesAlcance.length === 0) { res.json({ ausencias: [] }); return }
   } else if (sedeId) {

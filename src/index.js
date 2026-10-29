@@ -91,7 +91,7 @@ app.use('/api/auth/login', rateLimit({
     return email ? `login:${email}` : `ip:${req.ip}`
   },
   validate: false,
-  message: { message: 'Demasiados intentos fallidos para esta cuenta. Intenta en 15 minutos.' },
+  message: { message: 'Demasiados intentos fallidos para esta cuenta. Intente en 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
 }))
@@ -107,7 +107,7 @@ app.use('/api', rateLimit({
     return `ip:${req.ip}`
   },
   validate: false,
-  message: { message: 'Demasiadas peticiones. Espera un momento.' },
+  message: { message: 'Demasiadas peticiones. Espere un momento.' },
   standardHeaders: true,
   legacyHeaders: false,
 }))

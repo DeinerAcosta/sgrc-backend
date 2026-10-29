@@ -112,6 +112,6 @@ export function requireSedeAccess(getSedeId) {
     if (['gerencia', 'directivo', 'supervisor'].includes(req.user.role)) return next()
     // coordinador solo sus sedes
     if (req.user.role === 'coordinador' && req.user.sites?.includes(sedeId)) return next()
-    return next(errors.forbidden('No tienes acceso a esta sede'))
+    return next(errors.forbidden('No tiene acceso a esta sede'))
   }
 }

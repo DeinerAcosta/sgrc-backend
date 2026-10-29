@@ -115,7 +115,7 @@ export async function resolverSubespecialidad(db, tipo, valor, { obligatoria = t
   const nombre = enCatalogo(nombres, valor)
   if (!nombre) {
     throw errors.badRequest(
-      `"${valor}" no está en el catálogo de subespecialidades. Elige una de la lista.`,
+      `"${valor}" no está en el catálogo de subespecialidades. Elija una de la lista.`,
       { field: 'specialty', opciones: nombres },
     )
   }

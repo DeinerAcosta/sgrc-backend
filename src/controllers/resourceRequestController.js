@@ -91,7 +91,7 @@ export async function getById(req, res) {
 
   // Coord solo puede ver las suyas
   if (req.user.role === 'coordinador' && item.requesterId !== req.user.id) {
-    throw errors.forbidden('Solo puedes ver tus propias solicitudes')
+    throw errors.forbidden('Solo puede ver sus propias solicitudes')
   }
   res.json(item)
 }
@@ -102,10 +102,10 @@ export async function crear(req, res) {
 
   // Validación de consistencia según tipo
   if (data.requestType === 'prestamo' && !data.resourceId) {
-    throw errors.badRequest('Para préstamo de recurso debes elegir un recursoId')
+    throw errors.badRequest('Para préstamo de recurso debe elegir un recursoId')
   }
   if (data.requestType === 'alta_nueva' && !data.newResourceType) {
-    throw errors.badRequest('Para alta nueva debes indicar tipoRecursoNuevo')
+    throw errors.badRequest('Para alta nueva debe indicar tipoRecursoNuevo')
   }
 
   // Validar sede destino existe
@@ -252,7 +252,7 @@ export async function aprobar(req, res) {
 /** PUT /solicitudes-recurso/:id/rechazar — solo supervisor */
 export async function rechazar(req, res) {
   const { decisionReason: motivoDecision } = decisionSchema.parse(req.body)
-  if (!motivoDecision) throw errors.badRequest('Debes indicar un motivo al rechazar')
+  if (!motivoDecision) throw errors.badRequest('Debe indicar un motivo al rechazar')
 
   const sol = await prisma.resourceRequest.findUnique({
     where: { id: req.params.id },
@@ -300,7 +300,7 @@ export async function cancelar(req, res) {
   const sol = await prisma.resourceRequest.findUnique({ where: { id: req.params.id } })
   if (!sol) throw errors.notFound('Solicitud no encontrada')
   if (sol.requesterId !== req.user.id) {
-    throw errors.forbidden('Solo puedes cancelar tus propias solicitudes')
+    throw errors.forbidden('Solo puede cancelar sus propias solicitudes')
   }
   if (sol.status !== 'pendiente') {
     throw errors.badRequest(`Solo se pueden cancelar solicitudes pendientes (actual: ${sol.status})`)

@@ -43,7 +43,7 @@ async function validarAsignacionEsDeMisSedes(req, asignacionId) {
   })
   if (!asig) throw errors.notFound('Asignación no encontrada')
   if (!sedes.has(asig.room.siteId)) {
-    throw errors.forbidden('No tienes permiso sobre esta asignación — no pertenece a tu sede')
+    throw errors.forbidden('No tiene permiso sobre esta asignación — no pertenece a su sede')
   }
 }
 
@@ -70,7 +70,7 @@ async function recursoIdDelUsuario(req) {
     select: { resourceId: true },
   })
   if (!u?.resourceId) {
-    throw errors.forbidden('Tu usuario no está vinculado a un recurso. Contacta al supervisor.')
+    throw errors.forbidden('Su usuario no está vinculado a un recurso. Comuníquese con el supervisor.')
   }
   req._recursoIdCache = u.resourceId
   return u.resourceId
@@ -240,7 +240,7 @@ export async function create(req, res) {
       select: { assistantId: true, assistant2Id: true },
     })
     if (!dueño || (dueño.assistantId !== recursoIdActor && dueño.assistant2Id !== recursoIdActor)) {
-      throw errors.forbidden('No eres el auxiliar asignado — no puedes registrar esta ejecución')
+      throw errors.forbidden('No es el auxiliar asignado — no puede registrar esta ejecución')
     }
   }
 
@@ -340,7 +340,7 @@ export async function saveDay(req, res) {
   if (sedesUser !== null) {
     const ajenas = asigs.filter((a) => !sedesUser.has(a.room.siteId))
     if (ajenas.length > 0) {
-      throw errors.forbidden(`El batch incluye ${ajenas.length} asignación(es) de sedes que no coordinas. Operación rechazada.`)
+      throw errors.forbidden(`El batch incluye ${ajenas.length} asignación(es) de sedes que no coordina. Operación rechazada.`)
     }
   }
 
@@ -352,7 +352,7 @@ export async function saveDay(req, res) {
   if (recursoIdBatch) {
     const ajenas = asigs.filter((a) => a.assistantId !== recursoIdBatch && a.assistant2Id !== recursoIdBatch)
     if (ajenas.length > 0) {
-      throw errors.forbidden(`El batch incluye ${ajenas.length} asignación(es) que no te corresponden como auxiliar. Operación rechazada.`)
+      throw errors.forbidden(`El batch incluye ${ajenas.length} asignación(es) que no le corresponden como auxiliar. Operación rechazada.`)
     }
   }
 

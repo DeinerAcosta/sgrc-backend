@@ -114,7 +114,7 @@ async function validarAutorizacionFinDeSemana(tx, data, recurso, editingId = nul
   const listaNombres = auxsQueRequierenAutorizacion.join(', ')
   if (!data.authorizedById || !data.authorizationReason || data.authorizationReason.trim().length < 5) {
     throw errors.badRequest(
-      `Asignar a ${listaNombres} tanto sábado como domingo de la misma semana requiere autorización de un directivo (Ley 2101). Seleccioná un directivo del sistema y anotá el motivo (mínimo 5 caracteres).`,
+      `Asignar a ${listaNombres} tanto sábado como domingo de la misma semana requiere autorización de un directivo (Ley 2101). Seleccione un directivo del sistema y anote el motivo (mínimo 5 caracteres).`,
     )
   }
 
@@ -262,7 +262,7 @@ export async function editarAsignacion(id, data, userCtx) {
     // (ver lib/modoProgramacion.js). El resto de validaciones siguen igual.
     if (cierreSede && !programacionLibre()) {
       if (!ROLES_EDITAN_CERRADA.has(userCtx.role)) {
-        throw errors.forbidden('No tienes permiso para modificar esta sede — su cierre semanal ya fue procesado')
+        throw errors.forbidden('No tiene permiso para modificar esta sede — su cierre semanal ya fue procesado')
       }
       if (!data.supervisorReason || data.supervisorReason.trim().length < 5) {
         throw errors.badRequest('Modificar una sede cerrada requiere un motivo (mín 5 caracteres)')
@@ -311,7 +311,7 @@ export async function editarAsignacion(id, data, userCtx) {
       const conflictoRecurso = delDia.find((a) => solapan(a, data.startTime, data.endTime))
       if (conflictoRecurso) {
         throw errors.conflict(
-          `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesitas usarlo en tu sede, coordina con esa sede o crea una Solicitud de recurso.`
+          `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesita usarlo en su sede, coordine con esa sede o cree una Solicitud de recurso.`
         )
       }
     }
@@ -495,7 +495,7 @@ export async function editarAsignacion(id, data, userCtx) {
     if (!SIN_TOPE_DIARIO.has(recurso.type) && horasDiaTotal > (recurso.maxHoursPerDay ?? 10)) {
       const topeActual = recurso.maxHoursPerDay ?? 10
       throw errors.badRequest(
-        `${recurso.name} superaría el tope diario de ${topeActual}h efectivas (lleva ${horasDiaActual.toFixed(1)}h asignadas, agregarías ${(horasDiaTotal - horasDiaActual).toFixed(1)}h más = ${horasDiaTotal.toFixed(1)}h total — descontando almuerzo). Si este recurso trabaja habitualmente horas extras, pide al supervisor que aumente "Horas máx. día" en el catálogo de Recursos.`
+        `${recurso.name} superaría el tope diario de ${topeActual}h efectivas (lleva ${horasDiaActual.toFixed(1)}h asignadas, agregaría ${(horasDiaTotal - horasDiaActual).toFixed(1)}h más = ${horasDiaTotal.toFixed(1)}h total — descontando almuerzo). Si este recurso trabaja habitualmente horas extras, pida al supervisor que aumente "Horas máx. día" en el catálogo de Recursos.`
       )
     }
 
@@ -756,7 +756,7 @@ async function exigirAusenciaConfirmada(tx, coveredAbsenceId, userCtx = null) {
   // 21-oct · El coordinador no cubre la agenda de un profesional: es de la líder.
   if (coordSoloVe(userCtx, ausencia.resource?.type)) throw errors.forbidden(MSG_SOLO_VE)
   if (ausencia.status === 'pendiente') {
-    throw errors.badRequest('Primero confirma la ausencia: no se cubre una agenda que no se sabe si se cayó.')
+    throw errors.badRequest('Primero confirme la ausencia: no se cubre una agenda que no se sabe si se cayó.')
   }
   if (ausencia.status !== 'confirmada') {
     throw errors.badRequest('Esa ausencia fue rechazada: no hay agenda que cubrir.')
@@ -812,7 +812,7 @@ export async function crearAsignacion(data, userCtx) {
     // Ver comentario equivalente en editarAsignacion.
     if (cierreSede && !programacionLibre()) {
       if (!ROLES_EDITAN_CERRADA.has(userCtx.role)) {
-        throw errors.forbidden('No tienes permiso para asignar en esta sede — su cierre semanal ya fue procesado')
+        throw errors.forbidden('No tiene permiso para asignar en esta sede — su cierre semanal ya fue procesado')
       }
       if (!data.supervisorReason || data.supervisorReason.trim().length < 5) {
         throw errors.badRequest('Modificar una sede cerrada requiere un motivo (mín 5 caracteres)')
@@ -884,7 +884,7 @@ export async function crearAsignacion(data, userCtx) {
       const conflictoRecurso = delDia.find((a) => solapan(a, data.startTime, data.endTime))
       if (conflictoRecurso) {
         throw errors.conflict(
-          `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesitas usarlo en tu sede, coordina con esa sede o crea una Solicitud de recurso.`
+          `Conflicto: ${recurso.name} ya está asignado el ${data.weekday} en ${conflictoRecurso.room.name} (Sede ${conflictoRecurso.room.site.name} · ${conflictoRecurso.room.site.city}) de ${conflictoRecurso.startTime} a ${conflictoRecurso.endTime}. Si necesita usarlo en su sede, coordine con esa sede o cree una Solicitud de recurso.`
         )
       }
     }
@@ -926,7 +926,7 @@ export async function crearAsignacion(data, userCtx) {
     const tramoPrevio = await tramoQueSePisa(tx, data)
     if (tramoPrevio) {
       throw errors.conflict(
-        `Ese horario ya lo cubre ${tramoPrevio.resource?.name ?? 'otro profesional'} de ${tramoPrevio.startTime} a ${tramoPrevio.endTime}. Elige el tramo que falta.`
+        `Ese horario ya lo cubre ${tramoPrevio.resource?.name ?? 'otro profesional'} de ${tramoPrevio.startTime} a ${tramoPrevio.endTime}. Elija el tramo que falta.`
       )
     }
 
@@ -1094,7 +1094,7 @@ export async function crearAsignacion(data, userCtx) {
     if (!SIN_TOPE_DIARIO.has(recurso.type) && horasDiaTotal > (recurso.maxHoursPerDay ?? 10)) {
       const topeActual = recurso.maxHoursPerDay ?? 10
       throw errors.badRequest(
-        `${recurso.name} superaría el tope diario de ${topeActual}h efectivas (lleva ${horasDiaActual.toFixed(1)}h asignadas, agregarías ${(horasDiaTotal - horasDiaActual).toFixed(1)}h más = ${horasDiaTotal.toFixed(1)}h total — descontando almuerzo). Si este recurso trabaja habitualmente horas extras, pide al supervisor que aumente "Horas máx. día" en el catálogo de Recursos.`
+        `${recurso.name} superaría el tope diario de ${topeActual}h efectivas (lleva ${horasDiaActual.toFixed(1)}h asignadas, agregaría ${(horasDiaTotal - horasDiaActual).toFixed(1)}h más = ${horasDiaTotal.toFixed(1)}h total — descontando almuerzo). Si este recurso trabaja habitualmente horas extras, pida al supervisor que aumente "Horas máx. día" en el catálogo de Recursos.`
       )
     }
 

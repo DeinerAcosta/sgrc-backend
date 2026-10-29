@@ -11,10 +11,10 @@ import { isoDia } from '../lib/bloqueosSede.js'
 // ============================================================================
 
 const crearSchema = z.object({
-  siteId: z.string().uuid('Elige la sede'),
+  siteId: z.string().uuid('Elija la sede'),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha desde inválida'),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha hasta inválida'),
-  reason: z.string().trim().min(5, 'Escribe el motivo (mínimo 5 caracteres)').max(500),
+  reason: z.string().trim().min(5, 'Escriba el motivo (mínimo 5 caracteres)').max(500),
 })
 
 const serializar = (b) => ({

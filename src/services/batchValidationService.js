@@ -139,7 +139,7 @@ export function crearValidadorLote({
       return {
         ok: false,
         reason: MOTIVOS.FUERA_DE_MI_SEDE,
-        message: `No estás vinculado a la sede ${consultorio.site.name}: esa asignación no se copia.`,
+        message: `No está vinculado a la sede ${consultorio.site.name}: esa asignación no se copia.`,
       }
     }
 

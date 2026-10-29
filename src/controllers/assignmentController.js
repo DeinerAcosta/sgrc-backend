@@ -328,7 +328,7 @@ export async function actualizarPacientesCapacidad(req, res) {
     })
     const misSedes = new Set(vinculos.map((v) => v.siteId))
     if (!misSedes.has(asig.room.siteId)) {
-      throw errors.forbidden('No tienes permiso sobre esta asignación — no pertenece a tu sede')
+      throw errors.forbidden('No tiene permiso sobre esta asignación — no pertenece a su sede')
     }
   } else if (rol === 'recurso') {
     const u = await prisma.user.findUnique({
@@ -336,10 +336,10 @@ export async function actualizarPacientesCapacidad(req, res) {
       select: { resourceId: true },
     })
     if (!u?.resourceId) {
-      throw errors.forbidden('Tu usuario no está vinculado a un recurso. Contacta al supervisor.')
+      throw errors.forbidden('Su usuario no está vinculado a un recurso. Comuníquese con el supervisor.')
     }
     if (asig.assistantId !== u.resourceId && asig.assistant2Id !== u.resourceId) {
-      throw errors.forbidden('No eres el auxiliar asignado — no puedes editar los pacientes de esta asignación')
+      throw errors.forbidden('No es el auxiliar asignado — no puede editar los pacientes de esta asignación')
     }
   }
   // supervisor/gerencia: sin restricción adicional
@@ -398,7 +398,7 @@ export async function remove(req, res) {
       where: { weekId_siteId: { weekId: a.weekId, siteId: a.room.siteId } },
     })
     if (cierreSede) {
-      throw errors.forbidden('No puedes borrar asignaciones de esta sede — su cierre semanal ya fue procesado')
+      throw errors.forbidden('No puede borrar asignaciones de esta sede — su cierre semanal ya fue procesado')
     }
   }
 
@@ -473,7 +473,7 @@ async function asegurarOrigenNoCerradaOAlternativa(semanaOrigenId, semanaDestino
   if (!origen) throw errors.badRequest('La semana origen no existe.')
   if (origen.status !== 'cerrada') return
   if (!semanaDestinoId || semanaDestinoId === semanaOrigenId) {
-    throw errors.badRequest('La semana origen está cerrada. Debes elegir otra semana destino para copiar.')
+    throw errors.badRequest('La semana origen está cerrada. Debe elegir otra semana destino para copiar.')
   }
 }
 
@@ -1047,7 +1047,7 @@ async function generarXLSX(semana, sede, grid) {
 // lo aprueba, y vuelve a su color normal.
 // ============================================================================
 const aprobarContingenciaSchema = z.object({
-  patientCapacity: z.number({ required_error: 'Indica los pacientes' }).int().min(0).max(500),
+  patientCapacity: z.number({ required_error: 'Indique los pacientes' }).int().min(0).max(500),
 })
 
 async function turnoParaContingencia(req) {

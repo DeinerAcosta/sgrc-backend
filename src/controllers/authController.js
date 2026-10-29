@@ -136,7 +136,7 @@ export async function forgotPassword(req, res) {
     })
   }
 
-  res.json({ message: 'Si el correo existe, recibirás un enlace de recuperación en breve.' })
+  res.json({ message: 'Si el correo existe, recibirá un enlace de recuperación en breve.' })
 }
 
 /**
@@ -155,7 +155,7 @@ export async function resetPassword(req, res) {
     throw errors.badRequest('El enlace de recuperación no es válido o ya fue usado')
   }
   if (reset.expiresAt < new Date()) {
-    throw errors.badRequest('El enlace de recuperación expiró. Solicita uno nuevo.')
+    throw errors.badRequest('El enlace de recuperación expiró. Solicite uno nuevo.')
   }
 
   const passwordHash = await bcrypt.hash(password, 12)
@@ -178,7 +178,7 @@ export async function resetPassword(req, res) {
     ipAddress: getIp(req),
   })
 
-  res.json({ message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' })
+  res.json({ message: 'Contraseña actualizada correctamente. Ya puede iniciar sesión.' })
 }
 
 /** GET /usuarios/me */
@@ -246,13 +246,13 @@ export async function registro(req, res) {
   // Evitar registros duplicados (email ya en uso o solicitud pendiente)
   const usuarioYaExiste = await prisma.user.findUnique({ where: { email } })
   if (usuarioYaExiste) {
-    return res.status(202).json({ message: 'Si los datos son válidos, recibirás una respuesta por email.' })
+    return res.status(202).json({ message: 'Si los datos son válidos, recibirá una respuesta por email.' })
   }
   const yaPendiente = await prisma.signupRequest.findFirst({
     where: { email, status: 'pendiente' },
   })
   if (yaPendiente) {
-    return res.status(202).json({ message: 'Ya tienes una solicitud pendiente. El supervisor la revisará.' })
+    return res.status(202).json({ message: 'Ya tiene una solicitud pendiente. El supervisor la revisará.' })
   }
 
   const sol = await prisma.signupRequest.create({
@@ -308,7 +308,7 @@ export async function registro(req, res) {
     accionTexto: 'Revisar solicitud',
   })
 
-  res.status(201).json({ ok: true, id: sol.id, message: 'Solicitud enviada. Recibirás un email cuando el supervisor la apruebe.' })
+  res.status(201).json({ ok: true, id: sol.id, message: 'Solicitud enviada. Recibirá un email cuando el supervisor la apruebe.' })
 }
 
 const cambiarPasswordSchema = z.object({

@@ -49,7 +49,7 @@ export async function aprobar(req, res) {
 
   // Validar que el email no haya sido tomado entre tanto
   const yaUsado = await prisma.user.findUnique({ where: { email: sol.email } })
-  if (yaUsado) throw errors.conflict('Ese email ya fue registrado por otro flujo. Rechaza la solicitud.')
+  if (yaUsado) throw errors.conflict('Ese email ya fue registrado por otro flujo. Rechace la solicitud.')
 
   const passwordProv = generarPasswordProvisional()
   const passwordHash = await bcrypt.hash(passwordProv, 12)

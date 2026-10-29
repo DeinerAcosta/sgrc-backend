@@ -136,7 +136,7 @@ export async function list(req, res) {
     }
     if (sedeIdFinal) {
       if (!misSedes.includes(sedeIdFinal)) {
-        throw errors.forbidden('No tienes acceso a esta sede')
+        throw errors.forbidden('No tiene acceso a esta sede')
       }
     } else if (misSedes.length > 0) {
       // Sin sede_id explícita → restringe a TODAS sus sedes.
@@ -287,7 +287,7 @@ async function turnosDeAuxiliar(list) {
 // ejecucionesOmitidasPorBloqueo } para que quien llame arme la notificación.
 // El caller es responsable de la notificación al recurso.
 // ============================================================================
-async function procesarConfirmacionAusencia(tx, ausencia, opts) {
+export async function procesarConfirmacionAusencia(tx, ausencia, opts) {
   const { confirmadorId, notaCoordinador, accionAgenda, ipAddress, auditReason: motivoAudit } = opts
   const { fechas, pacImpactados, opportunityCost: costoOportunidad, dailyImpact: impactoPorDia, quejasEstimadas } = await calcularImpacto(tx, ausencia)
   await liberarAuxiliaresSiAplica(tx, ausencia, fechas)
@@ -444,7 +444,7 @@ export async function create(req, res) {
   if (req.user.role === 'recurso') {
     const yo = await prisma.user.findUnique({ where: { id: req.user.id }, select: { resourceId: true } })
     if (!yo?.resourceId || yo.resourceId !== data.resourceId) {
-      throw errors.forbidden('Solo puedes registrar tus propias ausencias.')
+      throw errors.forbidden('Solo puede registrar sus propias ausencias.')
     }
   }
 
@@ -538,7 +538,7 @@ export async function create(req, res) {
       ? `el ${f(solapada.startDate)}`
       : `del ${f(solapada.startDate)} al ${f(solapada.endDate)}`
     throw errors.badRequest(
-      `El recurso ya tiene una ausencia ${solapada.status} ${fechas}${horario}, que se cruza con la que intentas registrar. No se registró.`
+      `El recurso ya tiene una ausencia ${solapada.status} ${fechas}${horario}, que se cruza con la que intenta registrar. No se registró.`
     )
   }
 
@@ -558,7 +558,7 @@ export async function create(req, res) {
   }
   // Hector, 21-oct: si NO desea reponer, el motivo es obligatorio.
   if (data.wantsMakeup === false && (data.makeupNotes?.trim().length ?? 0) < 5) {
-    throw errors.badRequest('Indica el motivo por el que no vas a reponer (mínimo 5 caracteres).')
+    throw errors.badRequest('Indique el motivo por el que no va a reponer (mínimo 5 caracteres).')
   }
 
   const ausencia = await prisma.absence.create({
@@ -937,7 +937,7 @@ export async function contextoReemplazo(req, res) {
   // cuantos pacientes llamo"—, asi que no entra aqui. Su pantalla es
   // /reschedules/mine, que le da su caso y el registro de llamadas.
   if (req.user?.role === 'reprogramador') {
-    throw errors.forbidden('Tu caso se trabaja desde Mis reprogramaciones, no desde aqui')
+    throw errors.forbidden('Su caso se trabaja desde Mis reprogramaciones, no desde aqui')
   }
 
   // Oct-2026 · Los nombres de quien recibió el caso y de quien lo repartió
@@ -1238,7 +1238,7 @@ export async function asignarReprogramador(req, res) {
   // Por confirmar → por cubrir → por repartir. Sin confirmar no hay caso.
   if (ausencia.status !== 'confirmada') {
     throw errors.badRequest(ausencia.status === 'pendiente'
-      ? 'Primero confirma la ausencia.'
+      ? 'Primero confirme la ausencia.'
       : 'Esa ausencia fue rechazada: no hay pacientes que repartir.')
   }
 
@@ -1259,7 +1259,7 @@ export async function asignarReprogramador(req, res) {
   })
   if (cubiertos === 0) {
     throw errors.badRequest(
-      'Primero cubre al menos una franja —con otro médico o moviendo la agenda—: así quien llama sabe qué decirle al paciente.'
+      'Primero cubra al menos una franja —con otro médico o moviendo la agenda—: así quien llama sabe qué decirle al paciente.'
     )
   }
 
@@ -1339,7 +1339,7 @@ async function recursoEsDelCoord(user, resourceId) {
 // ============================================================================
 const cubrirAuxSchema = z.object({
   assignmentId: z.string().uuid('Falta el turno'),
-  assistantId: z.string().uuid('Elige quién la reemplaza'),
+  assistantId: z.string().uuid('Elija quién la reemplaza'),
 })
 
 export async function cubrirAuxiliar(req, res) {
@@ -1349,7 +1349,7 @@ export async function cubrirAuxiliar(req, res) {
     include: { resource: { select: { id: true, name: true, type: true } } },
   })
   if (!ausencia) throw errors.notFound('Ausencia no encontrada')
-  if (ausencia.status !== 'confirmada') throw errors.badRequest('Primero confirma la ausencia.')
+  if (ausencia.status !== 'confirmada') throw errors.badRequest('Primero confirme la ausencia.')
   if (ausencia.rescheduleStatus === 'resuelta') throw errors.badRequest('El caso ya está terminado.')
 
   const turno = await prisma.assignment.findUnique({
@@ -1362,7 +1362,7 @@ export async function cubrirAuxiliar(req, res) {
   if (!fecha || fecha < isoDia(ausencia.startDate) || fecha > isoDia(ausencia.endDate)) {
     throw errors.badRequest('Ese turno no cae en los días de la ausencia.')
   }
-  if (assistantId === ausencia.resourceId) throw errors.badRequest('Elige a otra persona.')
+  if (assistantId === ausencia.resourceId) throw errors.badRequest('Elija a otra persona.')
   const nueva = await prisma.resource.findUnique({ where: { id: assistantId }, select: { id: true, name: true, type: true, active: true } })
   if (!nueva || !nueva.active) throw errors.badRequest('Esa persona no está activa.')
   if (nueva.type !== ausencia.resource.type) throw errors.badRequest('La reemplazante tiene que ser del mismo tipo.')
@@ -1401,8 +1401,8 @@ export async function cubrirAuxiliar(req, res) {
     await notificar({
       userId: usuarioNueva.id,
       type: 'asignacion_cambiada',
-      title: 'Te asignaron un turno',
-      message: `Acompañas a ${turno.resource?.name} el ${turno.weekday} ${turno.startTime}–${turno.endTime} en ${turno.room?.name ?? 'un consultorio'}, en reemplazo de ${ausencia.resource.name}.`,
+      title: 'Se le asignó un turno',
+      message: `Acompaña a ${turno.resource?.name} el ${turno.weekday} ${turno.startTime}–${turno.endTime} en ${turno.room?.name ?? 'un consultorio'}, en reemplazo de ${ausencia.resource.name}.`,
       criticidad: 'media',
     })
   }
@@ -1416,7 +1416,7 @@ export async function cubrirAuxiliar(req, res) {
 // gerencia; el coordinador, en lo de su reparto (no profesionales de su sede),
 // igual que los pacientes reales.
 // ============================================================================
-const remuneracionSchema = z.object({ isPaid: z.boolean({ required_error: 'Indica si es remunerada' }) })
+const remuneracionSchema = z.object({ isPaid: z.boolean({ required_error: 'Indique si es remunerada' }) })
 
 export async function corregirRemuneracion(req, res) {
   const { isPaid } = remuneracionSchema.parse(req.body)

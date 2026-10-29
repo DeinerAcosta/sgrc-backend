@@ -83,7 +83,7 @@ async function asegurarJurisdiccion(req, recursoId) {
   const misSedes = req.user.sites ?? []
   const overlap = sedes.some((s) => misSedes.includes(s))
   if (!overlap) {
-    throw errors.forbidden('No tienes jurisdicción sobre este profesional')
+    throw errors.forbidden('No tiene jurisdicción sobre este profesional')
   }
 }
 
@@ -123,7 +123,7 @@ export async function list(req, res) {
       return
     }
     if (sede_id && !misSedes.includes(sede_id)) {
-      throw errors.forbidden('No tienes acceso a esta sede')
+      throw errors.forbidden('No tiene acceso a esta sede')
     }
     const sedeFilter = sede_id ? [sede_id] : misSedes
     // Sep-2026: mismo bug que absenceController.list — antes solo miraba
@@ -185,7 +185,7 @@ export async function crear(req, res) {
   // el flujo cuando el prof no tiene el sistema disponible), pero SOLO si
   // el coord tiene jurisdicción sobre las sedes del recurso.
   if (rol === 'recurso' && ausencia.resourceId !== req.user.resourceId) {
-    throw errors.forbidden('No puedes reponer una ausencia de otro profesional')
+    throw errors.forbidden('No puede reponer una ausencia de otro profesional')
   }
   await asegurarJurisdiccion(req, ausencia.resourceId)
 

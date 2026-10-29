@@ -242,8 +242,8 @@ export async function bulkCreate(req, res) {
         subject: '[VIU · FOCA | SGRC] Bienvenido(a) al sistema · Credenciales de acceso',
         html: plantillaEmail(
           `Bienvenido(a), ${usuario.name.split(' ')[0]}`,
-          `Te damos la bienvenida al <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong> de la Fundación Oftalmológica del Caribe.<br><br>
-          Tu cuenta ya está activa. Usa las siguientes credenciales para iniciar sesión:<br><br>
+          `Le damos la bienvenida al <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong> de la Fundación Oftalmológica del Caribe.<br><br>
+          Su cuenta ya está activa. Use las siguientes credenciales para iniciar sesión:<br><br>
           <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:8px 0">
             <tr>
               <td style="padding:10px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px 8px 0 0;font-size:13px;color:#475569;width:130px">📧 Usuario / Email</td>
@@ -255,25 +255,25 @@ export async function bulkCreate(req, res) {
             </tr>
           </table>
           <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 12px;margin:14px 0;border-radius:0 6px 6px 0;font-size:13px;color:#78350f">
-            ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En tu primer ingreso el sistema te pedirá cambiarla por una propia que solo tú conozcas.
+            ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En su primer ingreso el sistema le pedirá cambiarla por una propia que solo usted conozca.
           </div>
-          Si tienes problemas para acceder, contacta a tu coordinador o al supervisor del sistema.<br><br>
+          Si tiene problemas para acceder, comuníquese con su coordinador o con el supervisor del sistema.<br><br>
           ¡Gracias por ser parte del equipo COFCA!`,
           origin,
           'Iniciar sesión ahora'
         ),
         text: `Bienvenido a SGRC — Fundación Oftalmológica del Caribe
 
-Tu cuenta ya está activa. Credenciales:
+Su cuenta ya está activa. Credenciales:
 
   Usuario / Email:         ${usuario.email}
   Contraseña provisional:  ${passProv}
 
-⚠️ IMPORTANTE: esta contraseña es PROVISIONAL. En tu primer ingreso el sistema te pedirá cambiarla por una propia.
+⚠️ IMPORTANTE: esta contraseña es PROVISIONAL. En su primer ingreso el sistema le pedirá cambiarla por una propia.
 
-Ingresa en: ${origin}
+Ingrese en: ${origin}
 
-Si tienes problemas para acceder, contacta a tu coordinador o supervisor.`,
+Si tiene problemas para acceder, comuníquese con su coordinador o supervisor.`,
       })
 
       await registrarAuditoria({
@@ -403,7 +403,7 @@ export async function list(req, res) {
 export async function create(req, res) {
   const data = crearUsuarioSchema.parse(req.body)
   if (data.role === 'recurso' && !data.resourceType) {
-    throw errors.badRequest('Para rol "recurso" debes indicar el tipo (auxiliar, técnico, optómetra, oftalmólogo, anestesiólogo, asesor_servicios).')
+    throw errors.badRequest('Para rol "recurso" debe indicar el tipo (auxiliar, técnico, optómetra, oftalmólogo, anestesiólogo, asesor_servicios).')
   }
   // Sep-2026 · correo repetido, avisado ANTES de tocar nada. El índice único de
   // `usuarios.email` ya lo impedía, pero el error llegaba a la pantalla como
@@ -417,7 +417,7 @@ export async function create(req, res) {
   if (yaExiste) {
     throw errors.badRequest(
       `El correo ${emailNormalizado} ya está registrado a nombre de ${yaExiste.name}` +
-      `${yaExiste.active ? '' : ' (usuario inactivo)'}. Usa otro correo o edita el usuario existente.`
+      `${yaExiste.active ? '' : ' (usuario inactivo)'}. Use otro correo o edite el usuario existente.`
     )
   }
 
@@ -434,7 +434,7 @@ export async function create(req, res) {
     if (iguales.length > 0) {
       throw errors.conflict(
         `Ya existe ${iguales.length === 1 ? 'un recurso' : `${iguales.length} recursos`} con el nombre "${data.name.trim()}". ` +
-        'Si es otra persona distinta, confirma para crearlo de todas formas.',
+        'Si es otra persona distinta, confirme para crearlo de todas formas.',
         { code: 'nombre_duplicado', existentes: iguales },
       )
     }
@@ -639,7 +639,7 @@ export async function remove(req, res) {
   if (!usuario) throw errors.notFound('Usuario no encontrado')
 
   if (usuario.id === req.user.id) {
-    throw errors.badRequest('No puedes eliminar tu propia cuenta')
+    throw errors.badRequest('No puede eliminar su propia cuenta')
   }
 
   if (hard) {
@@ -719,7 +719,7 @@ export async function reenviarCredenciales(req, res) {
   if (!usuario) throw errors.notFound('Usuario no encontrado')
 
   if (usuario.id === req.user.id) {
-    throw errors.badRequest('Usa "Mi perfil → Cambiar contraseña" para tu propia cuenta')
+    throw errors.badRequest('Use "Mi perfil → Cambiar contraseña" para su propia cuenta')
   }
 
   if (usuario.role === 'supervisor' && req.user.id !== usuario.id) {
@@ -745,8 +745,8 @@ export async function reenviarCredenciales(req, res) {
     subject: '[VIU · FOCA | SGRC] Reenvío de credenciales de acceso',
     html: plantillaEmail(
       `¡Hola de nuevo, ${usuario.name.split(' ')[0]}!`,
-      `El supervisor reenvió tus credenciales del <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong>.<br><br>
-      Tu acceso fue reestablecido. Usa estas credenciales para iniciar sesión:<br><br>
+      `El supervisor reenvió sus credenciales del <strong>Sistema de Gestión de Recursos Clínicos (SGRC)</strong>.<br><br>
+      Su acceso fue reestablecido. Use estas credenciales para iniciar sesión:<br><br>
       <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:8px 0">
         <tr>
           <td style="padding:10px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px 8px 0 0;font-size:13px;color:#475569;width:130px">📧 Usuario / Email</td>
@@ -758,7 +758,7 @@ export async function reenviarCredenciales(req, res) {
         </tr>
       </table>
       <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 12px;margin:14px 0;border-radius:0 6px 6px 0;font-size:13px;color:#78350f">
-        ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En tu primer ingreso el sistema te pedirá cambiarla por una propia.
+        ⚠️ <strong>Importante:</strong> esta contraseña es <strong>provisional</strong>. En su primer ingreso el sistema le pedirá cambiarla por una propia.
       </div>`,
       origin,
       'Iniciar sesión ahora'
@@ -767,14 +767,14 @@ export async function reenviarCredenciales(req, res) {
 
 Hola ${usuario.name},
 
-El supervisor reenvió tus credenciales:
+El supervisor reenvió sus credenciales:
 
   Usuario / Email:         ${usuario.email}
   Contraseña provisional:  ${PASSWORD_PROVISIONAL_COMUN}
 
-⚠️ Esta contraseña es PROVISIONAL. En tu primer ingreso te pedirá cambiarla.
+⚠️ Esta contraseña es PROVISIONAL. En su primer ingreso se le pedirá cambiarla.
 
-Ingresa en: ${origin}`,
+Ingrese en: ${origin}`,
   })
 
   await registrarAuditoria({

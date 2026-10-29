@@ -70,7 +70,7 @@ export function assertSedePermitida(user, sedeId, nombreSede = null) {
   if (puedeEnSede(user, sedeId)) return
   const donde = nombreSede ? `la sede ${nombreSede}` : 'esa sede'
   throw errors.forbidden(
-    `No estás vinculado a ${donde}, así que no puedes modificar su programación. ` +
-    'Si deberías tener acceso, pide al supervisor que revise tus sedes asignadas.'
+    `No está vinculado a ${donde}, así que no puede modificar su programación. ` +
+    'Si debería tener acceso, pida al supervisor que revise sus sedes asignadas.'
   )
 }

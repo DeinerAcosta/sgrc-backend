@@ -377,7 +377,7 @@ export async function remove(req, res) {
       `No se puede eliminar a ${recurso.name}: tiene historial en el sistema ` +
       `(${deps.asignaciones} asignación(es), ${deps.ausencias} ausencia(s), ` +
       `${deps.backoffice} tarea(s) de backoffice, ${deps.solicitudes} solicitud(es)). ` +
-      'Desactívalo en su lugar: deja de aparecer para programar y conserva los informes.',
+      'Desactívelo en su lugar: deja de aparecer para programar y conserva los informes.',
       { code: 'tiene_historial', ...deps },
     )
   }
@@ -417,7 +417,7 @@ export async function create(req, res) {
     if (iguales.length > 0) {
       throw errors.conflict(
         `Ya existe ${iguales.length === 1 ? 'un recurso' : `${iguales.length} recursos`} con el nombre "${data.name.trim()}". ` +
-        'Si es otra persona distinta, confirma para crearlo de todas formas.',
+        'Si es otra persona distinta, confirme para crearlo de todas formas.',
         { code: 'nombre_duplicado', existentes: iguales },
       )
     }
