@@ -108,7 +108,10 @@ const rechazarSchema = z.object({
 
 export async function list(req, res) {
   const { status: estado, resource_id: recurso_id, site_id: sede_id, desde, hasta, family: familia, include_rejected: incluir_rechazadas } = req.query
-  const where = {}
+  // Oct-2026 · Las listas de trabajo (Gestión de ausencias, Mis ausencias) no
+  // muestran el histórico del Excel: son ausencias ya gestionadas por Agendas y
+  // caerían en "Por gestionar". El histórico se ve en el tablero de Reprogramaciones.
+  const where = { source: 'sgrc' }
   if (estado) where.status = estado
 
   // ---- Scoping por rol (ago-2026, hardening tras Fase 2 verify) ----

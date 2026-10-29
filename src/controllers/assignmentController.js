@@ -726,6 +726,7 @@ export async function sugerirReemplazos(req, res) {
     if (fecha) {
       const aus = await prisma.absence.findMany({
         where: {
+          source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
           resourceId: { in: ids },
           status: { in: ['pendiente', 'confirmada'] },
           startDate: { lte: fecha },
@@ -778,6 +779,7 @@ export async function sugerirReemplazos(req, res) {
           // Solo confirmadas: es lo que el servidor acepta al asignar
           // (turnosCaidosPorAusenciaDelMedico).
           where: {
+            source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
             resourceId: { in: medicos }, status: 'confirmada', startDate: { lte: fecha }, endDate: { gte: fecha },
             resource: { is: { type: { in: [...TIPOS_QUE_LIBERAN_AUXILIAR] } } },   // RN-24
           },

@@ -113,6 +113,7 @@ export async function jobResumenCoordinador() {
   const ausenciasPorRecurso = new Map()
   for (const a of await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: 'confirmada',
       startDate: { lte: semana.endDate },
       endDate: { gte: semana.startDate },

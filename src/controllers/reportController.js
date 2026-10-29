@@ -482,6 +482,7 @@ export async function dataIndicadoresAsesores({ site_id: sede_id, week_id: seman
     }),
     prisma.absence.findMany({
       where: {
+        source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
         resourceId: { in: ids }, status: 'confirmada',
         startDate: { lte: semana.endDate }, endDate: { gte: sumarDiasUTC(semana.endDate, -89) },
       },
@@ -760,7 +761,7 @@ export async function dataAusentismo({ desde, hasta, site_id: sede_id, resource_
   const sedeIds = aLista(sede_id)
   const tipos = aLista(tipo_recurso)
 
-  const where = { status: 'confirmada' }
+  const where = { source: 'sgrc', status: 'confirmada' }   // sin el histórico del Excel de reprogramaciones
   if (desde) where.startDate = { gte: new Date(desde) }
   if (hasta) where.startDate = { ...(where.startDate ?? {}), lte: new Date(hasta) }
   if (tipos) where.resource = { type: { in: tipos } }
@@ -880,7 +881,7 @@ export async function dataImpacto({ site_id: sede_id, resource_type: tipo_recurs
   // confirmadas de la historia por mucho que se acotara el rango en pantalla.
   // El criterio de fechas es el mismo que usa dataAusentismo, para que los dos
   // informes de ausencias no se contradigan.
-  const where = { status: 'confirmada' }
+  const where = { source: 'sgrc', status: 'confirmada' }   // sin el histórico del Excel de reprogramaciones
   if (desde) where.startDate = { gte: new Date(desde) }
   if (hasta) where.startDate = { ...(where.startDate ?? {}), lte: new Date(hasta) }
   if (tipos) where.resource = { type: { in: tipos } }
@@ -941,7 +942,7 @@ export async function dataAusentismoImpacto({ desde, hasta, site_id: sede_id, re
   const sedeIds = aLista(sede_id)
   const tipos = aLista(tipo_recurso)
 
-  const where = { status: 'confirmada' }
+  const where = { source: 'sgrc', status: 'confirmada' }   // sin el histórico del Excel de reprogramaciones
   if (desde) where.startDate = { gte: new Date(desde) }
   if (hasta) where.startDate = { ...(where.startDate ?? {}), lte: new Date(hasta) }
   if (tipos) where.resource = { type: { in: tipos } }
@@ -1302,6 +1303,7 @@ async function impactadosDeSemana(semana, dia = null) {
   if (!rangoInicio || !rangoFin) return 0
   const ausencias = await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: 'confirmada',
       startDate: { lte: rangoFin },
       endDate: { gte: rangoInicio },
@@ -1375,6 +1377,7 @@ async function computeDashboard({ weekId: semanaId, day: dia } = {}) {
     semanaBase
       ? prisma.absence.findMany({
           where: {
+            source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
             status: 'confirmada',
             startDate: { lte: rangoFin },
             endDate: { gte: rangoIni },
@@ -1502,6 +1505,7 @@ export async function metricasDeSemanas(semanas) {
     prisma.room.count({ where: { active: true, specialty: { not: 'asesoria' } } }),
     prisma.absence.findMany({
       where: {
+        source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
         status: 'confirmada',
         startDate: { lte: maxFin },
         endDate: { gte: minInicio },

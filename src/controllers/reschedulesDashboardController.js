@@ -163,6 +163,7 @@ async function dataReprogramacionesDashboard(query = {}) {
       resource: { select: { id: true, name: true, type: true } },
       reasonRef: { select: { code: true, name: true, family: true } },
       makeups: { select: { id: true, status: true, requestedAt: true, approvedAt: true } },
+      site: { select: { name: true } },
     },
   })
 
@@ -170,13 +171,15 @@ async function dataReprogramacionesDashboard(query = {}) {
   // Solo cargamos mapaSedes si vamos a filtrar por sede. Antes se cargaba
   // siempre por un guard tautológico (verify Fase 4 flag DoS-wasted-scan).
   const mapaSedes = sedeIdsFiltro ? await mapaSedesPorRecurso() : null
-  const perteneceASede = (recursoId) => {
+  const perteneceASede = (recursoId, ausencia) => {
     if (!sedeIdsFiltro) return true
+    // Histórico del Excel: la sede viene en la ausencia, no en los turnos.
+    if (ausencia?.siteId) return sedeIdsFiltro.includes(ausencia.siteId)
     const info = mapaSedes.get(recursoId)
     if (!info) return false
     return sedeIdsFiltro.some((sid) => info.sedeIds.has(sid))
   }
-  const ausF = sedeIdsFiltro ? ausencias.filter((a) => perteneceASede(a.resourceId)) : ausencias
+  const ausF = sedeIdsFiltro ? ausencias.filter((a) => perteneceASede(a.resourceId, a)) : ausencias
 
   // Sep-2026 · los "días perdidos" son días HÁBILES (sin domingos ni festivos),
   // igual que en Ausentismo e impacto. Antes este tablero contaba días
@@ -195,7 +198,9 @@ async function dataReprogramacionesDashboard(query = {}) {
   }) : []
   const cubiertosDe = new Map()
   for (const c of cubren) cubiertosDe.set(c.coveredAbsenceId, (cubiertosDe.get(c.coveredAbsenceId) ?? 0) + (c.patientCapacity ?? 0))
-  const conReposicion = (a) => a.makeups?.some((r) => r.status === 'aprobada' || r.status === 'realizada') ?? false
+  // Histórico del Excel: con fecha de cobertura, sus pacientes se atendieron
+  // (lo cubrió otro profesional o lo repuso el mismo).
+  const conReposicion = (a) => !!a.coverDate || (a.makeups?.some((r) => r.status === 'aprobada' || r.status === 'realizada') ?? false)
   const coberturaDe = new Map(ausF.map((a) => [a.id, {
     total: pacientesDelCaso(a),
     ...coberturaDeAusencia({ total: pacientesDelCaso(a), cubiertos: cubiertosDe.get(a.id) ?? 0, reposicion: conReposicion(a) }),
@@ -395,7 +400,8 @@ async function calcularDatosFOCA({ ausencias, reposiciones, coberturaDe, cubren 
   for (const a of ausencias) {
     const ini = a.startDate.toISOString().slice(0, 10)
     const fin = (a.endDate ?? a.startDate).toISOString().slice(0, 10)
-    const sedes = new Set(turnosDelAusente
+    // Histórico del Excel: la sede de la agenda viene en la ausencia.
+    const sedes = a.site?.name ? new Set([a.site.name]) : new Set(turnosDelAusente
       .filter((t) => t.resourceId === a.resourceId)
       .filter((t) => { const f = fechaDeTurno(t.week.startDate, t.weekday); return f && f >= ini && f <= fin })
       .map((t) => t.room.site.name))
@@ -419,6 +425,10 @@ async function calcularDatosFOCA({ ausencias, reposiciones, coberturaDe, cubren 
     const fecha = fechaDeTurno(c.week.startDate, c.weekday)
     const inicio = inicioDe.get(c.coveredAbsenceId)
     if (fecha && inicio) sla[bucketSla(diasEntreFechas(inicio, fecha))]++
+  }
+  // Histórico del Excel: el día en que se atendió a los pacientes.
+  for (const a of ausencias) {
+    if (a.coverDate) sla[bucketSla(diasEntreFechas(a.startDate, a.coverDate))]++
   }
   for (const r of reposiciones) {
     if (!r.absence?.startDate || !r.targetDate) continue

@@ -28,6 +28,7 @@
     "otorrino:oftalmologo": "node scripts/otorrino-como-oftalmologo.js",
     "limpiar:firmas": "node scripts/eliminar-firmas.js",
     "corregir:fechas-ausencia": "node scripts/corregir-fechas-ausencia.js",
+    "importar:reprogramaciones": "node scripts/importar-reprogramaciones.js",
     "datos:prueba": "node scripts/datos-prueba.js",
     "datos:asesores": "node scripts/datos-asesores.js",
     "recalcular:programadas": "node scripts/recalcular-programadas.js",

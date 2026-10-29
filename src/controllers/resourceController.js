@@ -218,6 +218,7 @@ export async function list(req, res) {
   const laborables = diasLaborables(semana.startDate, festivosSemana.map((f) => f.date))
   const ausenciasSemana = await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: 'confirmada',
       resourceId: { in: recursos.map((r) => r.id) },
       startDate: { lte: semana.endDate },

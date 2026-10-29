@@ -645,6 +645,7 @@ async function turnosCaidosPorAusenciaDelMedico(tx, weekId, weekday, inicioSeman
   // anestesiólogo y otorrino. Es la misma regla de liberarAuxiliaresSiAplica.
   const ausencias = await tx.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: 'confirmada', startDate: { lte: new Date(fecha) }, endDate: { gte: new Date(fecha) },
       resource: { is: { type: { in: [...TIPOS_QUE_LIBERAN_AUXILIAR] } } },
     },

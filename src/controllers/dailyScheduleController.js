@@ -63,6 +63,7 @@ export async function get(req, res) {
   const recursoIds = [...new Set(asignaciones.flatMap((a) => [a.resourceId, a.assistantId]).filter(Boolean))]
   const ausencias = await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       resourceId: { in: recursoIds },
       startDate: { lte: endOfDay(dia) },
       endDate: { gte: startOfDay(dia) },

@@ -13,6 +13,7 @@ export const TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN = ['enfermedad', 'licencia_remun
 // Date | string ISO en cualquiera de los dos extremos).
 export function whereAusenciasIncapacidadEnRango(desde, hasta) {
   return {
+    source: 'sgrc',   // sin el histórico del Excel de reprogramaciones
     status: 'confirmada',
     type: { in: TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN },
     startDate: { lte: new Date(hasta) },

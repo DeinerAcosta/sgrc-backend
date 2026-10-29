@@ -576,6 +576,7 @@ export async function ausentesSemanaAnterior(req, res) {
 
   const ausencias = await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: 'confirmada',
       startDate: { lte: finAnterior },
       endDate: { gte: inicioAnterior },
@@ -797,6 +798,7 @@ export async function ausenciasDeLaSemana(req, res) {
   // estado para que la grilla las distinga.
   const ausencias = await prisma.absence.findMany({
     where: {
+      source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
       status: { in: ['pendiente', 'confirmada'] },
       startDate: { lte: semana.endDate },
       endDate: { gte: semana.startDate },

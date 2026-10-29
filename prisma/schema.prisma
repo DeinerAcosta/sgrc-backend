@@ -276,6 +276,7 @@ model Site {
   weekClosures          WeekSiteClosure[]
   resourceRequests      ResourceRequest[]
   blocks                SiteBlock[]
+  absences              Absence[]
 
   @@index([city])
   @@index([active])
@@ -578,13 +579,13 @@ model Absence {
   // cadena termina cuando el reprogramador marca su caso como resuelto.
   // Sin clave foránea, igual que reportedBy/confirmedBy: el histórico no se
   // acopla al borrado de usuarios.
-  reschedulerId         String?        @map("reprogramador_id")
-  assignedBy            String?        @map("asignado_por")
-  assignedAt            DateTime?      @map("asignado_en")
+  reschedulerId    String?   @map("reprogramador_id")
+  assignedBy       String?   @map("asignado_por")
+  assignedAt       DateTime? @map("asignado_en")
   // NULL = sin asignar · 'asignada' · 'resuelta'
-  rescheduleStatus      String?        @map("estado_reprogramacion") @db.VarChar(20)
-  rescheduleNotes       String?        @map("notas_reprogramacion") @db.Text
-  rescheduleDoneAt      DateTime?      @map("reprogramacion_resuelta_en")
+  rescheduleStatus String?   @map("estado_reprogramacion") @db.VarChar(20)
+  rescheduleNotes  String?   @map("notas_reprogramacion") @db.Text
+  rescheduleDoneAt DateTime? @map("reprogramacion_resuelta_en")
 
   // Oct-2026 · Lo que de verdad hace quien recibe el encargo: llamar. Hector:
   // "el reprogramador solamente mira a que profesional le asignaron y que el
@@ -593,9 +594,9 @@ model Absence {
   //
   // El total de llamados NO se guarda: es la suma de los dos. Guardarlo
   // aparte permitiria que los tres numeros dejaran de cuadrar.
-  patientsReached       Int?           @map("pacientes_contestaron")
-  patientsNoAnswer      Int?           @map("pacientes_no_contestaron")
-  callLogAt             DateTime?      @map("llamadas_registradas_en")
+  patientsReached  Int?      @map("pacientes_contestaron")
+  patientsNoAnswer Int?      @map("pacientes_no_contestaron")
+  callLogAt        DateTime? @map("llamadas_registradas_en")
 
   // Oct-2026 · El numero REAL de pacientes de esa agenda, puesto por quien
   // llama. Hector: "como siempre muestra un promedio de pacientes, en el cual
@@ -606,19 +607,36 @@ model Absence {
   // sistema desde la capacidad de la agenda, y es el que alimenta informes y
   // costos. Guardar los dos deja ver cuanto se desvia la estimacion de la
   // realidad, que es un dato util por si solo. NULL = nadie lo ha corregido.
-  patientsConfirmed     Int?           @map("pacientes_confirmados")
+  patientsConfirmed Int? @map("pacientes_confirmados")
 
   // Oct-2026 · Autorización de datos personales (lib/datosPersonales.js). La
   // da el profesional al registrar su propia ausencia. NULL = no se pidió.
-  dataConsentAt         DateTime?      @map("datos_autorizados_en")
-  dataConsentVersion    String?        @map("datos_autorizacion_version") @db.VarChar(40)
-  dataConsentIp         String?        @map("datos_autorizacion_ip") @db.VarChar(45)
+  dataConsentAt      DateTime? @map("datos_autorizados_en")
+  dataConsentVersion String?   @map("datos_autorizacion_version") @db.VarChar(40)
+  dataConsentIp      String?   @map("datos_autorizacion_ip") @db.VarChar(45)
 
   // Oct-2026 · 3739 · Remunerada o no, lo asigna Agendas (lib/remuneracion.js).
   // NULL = se deduce del tipo. La licencia remunerada lo es siempre.
-  isPaid                Boolean?       @map("es_remunerada")
+  isPaid Boolean? @map("es_remunerada")
+
+  // Oct-2026 · Histórico de reprogramaciones (enero-octubre 2026) cargado del
+  // Excel de Agendas con scripts/importar-reprogramaciones.js. Esas ausencias
+  // no tienen turnos en el Programador: la sede, la agenda y quién cubrió
+  // vienen del Excel y el tablero los lee de aquí.
+  //   source        'sgrc' (registrada en el sistema) | 'historico' (Excel)
+  //   importKey     una por fila del Excel, para volver a correr sin duplicar
+  //   coverDate     día en que se atendió a los pacientes (repuesta si existe)
+  //   selfMakeup    true = la repuso el mismo profesional (REPONE = SI)
+  source        String    @default("sgrc") @map("origen") @db.VarChar(20)
+  importKey     String?   @unique @map("clave_importacion") @db.VarChar(64)
+  siteId        String?   @map("sede_id")
+  agendaName    String?   @map("agenda") @db.VarChar(150)
+  coveredByName String?   @map("cubierta_por") @db.VarChar(150)
+  coverDate     DateTime? @map("fecha_cobertura") @db.Date
+  selfMakeup    Boolean?  @map("repone_mismo")
 
   resource                    Resource               @relation(fields: [resourceId], references: [id])
+  site                        Site?                  @relation(fields: [siteId], references: [id], onDelete: SetNull)
   reasonRef                   AbsenceReason?         @relation(fields: [reasonId], references: [id], onDelete: SetNull)
   replacementAssignments      Assignment[]           @relation("AsignacionesReemplazo")
   sourceBackofficeAssignments BackofficeAssignment[]
@@ -630,6 +648,7 @@ model Absence {
   @@index([reasonId])
   // La bandeja del reprogramador filtra por "lo mío sin resolver".
   @@index([reschedulerId])
+  @@index([source])
   @@map("ausencias")
 }
 
@@ -881,4 +900,3 @@ model AuditEntry {
   @@index([createdAt])
   @@map("auditoria")
 }
-
