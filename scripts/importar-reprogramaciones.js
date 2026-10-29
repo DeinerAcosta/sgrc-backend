@@ -146,7 +146,11 @@ async function importar() {
         continue
       }
       recurso = r.recurso
-      if (tipoExcel && tipoExcel !== recurso.type) tipoDistinto.set(recurso.name, { excel: tipoExcel, sgrc: recurso.type })
+      if (tipoExcel) {
+        const t = tipoDistinto.get(recurso.name) ?? { sgrc: recurso.type, votos: {} }
+        t.votos[tipoExcel] = (t.votos[tipoExcel] ?? 0) + 1
+        tipoDistinto.set(recurso.name, t)
+      }
       if (enElSgrc(recurso.id, fecha)) { cont.enSgrc++; continue }
     }
 
@@ -258,9 +262,13 @@ NO SE CARGAN — fecha futura (${futuras.length}); regístrelas en el SGRC si si
   for (const { r, sub } of subsACompletar) console.log(`  · ${r.name} (${r.type}) → ${sub}`)
   console.log(`\nSiguen SIN subespecialidad (activos, sin filas en el Excel): ${sinSubYSinDatos.length}`)
   for (const r of sinSubYSinDatos) console.log(`  · ${r.name} (${r.type})`)
-  if (tipoDistinto.size) {
+  // Solo si la MAYORÍA de sus filas dice otro tipo: una fila mal escrita no cuenta.
+  const distintos = [...tipoDistinto.entries()]
+    .map(([n, t]) => [n, t.sgrc, Object.entries(t.votos).sort((a, b) => b[1] - a[1])[0]])
+    .filter(([, sgrc, [excel]]) => excel !== sgrc)
+  if (distintos.length) {
     console.log('\nREVISAR — el Excel y el SGRC no coinciden en el tipo (no se cambia nada):')
-    for (const [n, t] of tipoDistinto) console.log(`  · ${n}: Excel ${t.excel}, SGRC ${t.sgrc}`)
+    for (const [n, sgrc, [excel, filas]] of distintos) console.log(`  · ${n}: Excel ${excel} (${filas} filas), SGRC ${sgrc}`)
   }
 
   if (!APLICAR) {
