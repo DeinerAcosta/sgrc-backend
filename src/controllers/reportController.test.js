@@ -371,6 +371,37 @@ describe('dataProductividad — filtros, left-join a recursos activos y promedio
       'Dr. Zuluaga',     // sin actividad — al final
     ])
   })
+
+  it('Nov-2026 — la auxiliar suma las horas de los turnos donde va como auxiliar, con su sub-horario y sin contar doble', async () => {
+    prismaMock.week.findMany.mockResolvedValue([{ id: 's1', startDate: new Date('2026-06-01T00:00:00Z'), endDate: new Date('2026-06-07T00:00:00Z') }])
+    prismaMock.resource.findMany.mockResolvedValue([{ id: 'ax', name: 'Aux. Gómez', type: 'auxiliar' }])
+    prismaMock.holiday.findMany.mockResolvedValue([])
+    prismaMock.absence.findMany.mockResolvedValue([])
+    const turno = (over) => ({
+      resourceId: 'r1', weekId: 's1', weekday: 'lunes', startTime: '07:00', endTime: '13:00', patientCapacity: 20,
+      resource: { type: 'oftalmologo' }, assistant: { type: 'auxiliar' }, assistant2: null,
+      room: { siteId: 'st2', site: { name: 'Sede 2' } },
+      execution: { patientsSeen: 18, shiftStatus: 'completa' },
+      ...over,
+    })
+    prismaMock.assignment.findMany.mockResolvedValue([
+      // Lunes: hereda 07-13 del médico (6h − 1h de almuerzo = 5h)
+      turno({ assistantId: 'ax' }),
+      // Lunes: otro consultorio a la misma hora, ya cubierta → no suma
+      turno({ resourceId: 'r2', assistantId: 'ax' }),
+      // Martes: como auxiliar 2 solo 07-09, sin ejecución registrada
+      turno({ weekday: 'martes', assistant2Id: 'ax', assistant2StartTime: '07:00', assistant2EndTime: '09:00', execution: null }),
+    ])
+
+    const [aux] = await dataProductividad({ desde: '2026-06-01', hasta: '2026-06-07' })
+    expect(aux.resource).toBe('Aux. Gómez')
+    expect(aux.h_prog).toBe(7)   // 5 del lunes + 2 del martes
+    expect(aux.h_ejec).toBe(5)   // el martes no tiene ejecución
+    // Los pacientes son del médico
+    expect(aux.pac_prog).toBe(0)
+    expect(aux.pac_at).toBe(0)
+    expect(aux.pct_cumplimiento).toBeNull()
+  })
 })
 
 describe('elegirSemanasComparativo — Históricos de semanas (22-oct)', () => {

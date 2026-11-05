@@ -136,6 +136,7 @@ async function mapaSedesPorRecurso(rango = {}) {
     select: {
       resourceId: true,
       assistantId: true,
+      assistant2Id: true,
       room: { select: { siteId: true, site: { select: { name: true } } } },
     },
   })
@@ -149,6 +150,7 @@ async function mapaSedesPorRecurso(rango = {}) {
   for (const a of asigs) {
     add(a.resourceId, a.room.siteId, a.room.site.name)
     add(a.assistantId, a.room.siteId, a.room.site.name)
+    add(a.assistant2Id, a.room.siteId, a.room.site.name)
   }
   return mapa
 }
@@ -591,7 +593,15 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
             startTime: true,
             endTime: true,
             patientCapacity: true,
+            assistantId: true,
+            assistantStartTime: true,
+            assistantEndTime: true,
+            assistant2Id: true,
+            assistant2StartTime: true,
+            assistant2EndTime: true,
             resource: { select: { type: true, multiRoom: true } },
+            assistant: { select: { type: true } },
+            assistant2: { select: { type: true } },
             execution: { select: { patientsSeen: true, shiftStatus: true } },
           },
         })
@@ -629,8 +639,36 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   for (const s of await prisma.week.findMany({ where: { id: { in: semanaIds } }, select: { id: true, startDate: true } })) {
     semanaStartDate.set(s.id, s.startDate)
   }
+  // Nov-2026 · Las AUXILIARES no son el recurso principal del turno: van en
+  // auxiliar/auxiliar2 del turno del médico. Antes solo se leía resourceId, así
+  // que todas las auxiliares salían con 0h aunque tuvieran la semana llena (la
+  // sede sí salía, porque mapaSedesPorRecurso sí mira el auxiliar). Cada turno
+  // aporta una "participación" por persona: el titular con el horario del turno
+  // y cada auxiliar con su sub-horario (null = hereda el del médico).
+  const participaciones = []
   for (const a of asigs) {
-    const k = a.resourceId
+    participaciones.push({ ...a, _rid: a.resourceId, _tipo: a.resource.type, _multiRoom: !!a.resource.multiRoom, _titular: true })
+    for (const [rid, ini, fin, rec] of [
+      [a.assistantId, a.assistantStartTime, a.assistantEndTime, a.assistant],
+      [a.assistant2Id, a.assistant2StartTime, a.assistant2EndTime, a.assistant2],
+    ]) {
+      if (!rid || rid === a.resourceId) continue
+      participaciones.push({
+        ...a,
+        startTime: ini || a.startTime,
+        endTime: fin || a.endTime,
+        _rid: rid,
+        _tipo: rec?.type ?? 'auxiliar',
+        // Una auxiliar puede acompañar dos consultorios a la vez: se unen las
+        // franjas igual que en el médico multi-consultorio para no contar doble.
+        _multiRoom: true,
+        _titular: false,
+      })
+    }
+  }
+
+  for (const a of participaciones) {
+    const k = a._rid
     if (!agregados.has(k)) {
       agregados.set(k, {
         h_prog: 0, h_ejec: 0, pac_prog: 0, pac_at: 0,
@@ -638,22 +676,24 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
         mesesActivos: new Set(),
         // Sep-2026 · franjas guardadas por semana para poder UNIRLAS en los
         // médicos multi-consultorio (ver el ajuste después del bucle).
-        _tipo: a.resource.type,
-        _multiRoom: !!a.resource.multiRoom,
+        _tipo: a._tipo,
+        _multiRoom: a._multiRoom,
         _prog: new Map(),
         _ejec: new Map(),
       })
     }
     const agg = agregados.get(k)
+    if (a._multiRoom) agg._multiRoom = true
     // Horas EFECTIVAS (descontando almuerzo): es lo que realmente trabajó.
     // Si la franja se ejecutó completa, ejecutadas = programadas (también netas).
-    const h = horasEfectivasFranja(a.startTime, a.endTime, a.resource.type)
+    const h = horasEfectivasFranja(a.startTime, a.endTime, a._tipo)
     if (!agg._prog.has(a.weekId)) agg._prog.set(a.weekId, [])
     agg._prog.get(a.weekId).push(a)
     agg.h_prog += h
     // PROYECTOS-3255 #2.1: asesor_servicios NO atiende pacientes con cita, no
     // se acumulan sus pacientes en el indicador (aunque el campo BD legacy contenga valores).
-    if (a.resource.type !== 'asesor_servicios') {
+    // Los pacientes del turno son del médico: la auxiliar no los suma.
+    if (a._titular && a._tipo !== 'asesor_servicios') {
       agg.pac_prog += a.patientCapacity ?? 0
     }
     // Sep-2026 · una jornada marcada `no_ejecutada` NO suma horas ejecutadas.
@@ -666,7 +706,7 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
       agg.h_ejec += h
       if (!agg._ejec.has(a.weekId)) agg._ejec.set(a.weekId, [])
       agg._ejec.get(a.weekId).push(a)
-      if (a.resource.type !== 'asesor_servicios') {
+      if (a._titular && a._tipo !== 'asesor_servicios') {
         agg.pac_at += a.execution.patientsSeen
       }
     }
