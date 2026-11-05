@@ -898,11 +898,33 @@ async function armarGridSemana(weekId, siteId) {
  * Descarga la programación semanal de la sede como PDF o Excel.
  */
 export async function exportarSemana(req, res) {
-  const { week_id: weekId, site_id: siteId, format = 'pdf' } = req.query
+  const { week_id: weekId, site_id: siteId, format = 'pdf', day } = req.query
+  if (day && !DIAS.includes(day)) throw errors.badRequest('Día inválido')
   const { semana, sede, grid } = await armarGridSemana(weekId, siteId)
 
   const fechaIni = semana.startDate.toISOString().slice(0, 10)
   const fechaFin = semana.endDate.toISOString().slice(0, 10)
+
+  // Nov-2026 · Hector: "que pueda descargar un día completo también". Con
+  // `day` sale la lista de ese día (un turno por fila), no la grilla semanal.
+  if (day) {
+    const fecha = new Date(semana.startDate)
+    fecha.setUTCDate(fecha.getUTCDate() + DIAS.indexOf(day))
+    const fechaDia = fecha.toISOString().slice(0, 10)
+    const filas = filasDelDia(grid, day)
+    const fileDia = `horarios_${sede.name.replace(/[^\w]/g, '_')}_${fechaDia}`
+    if (format === 'xlsx') {
+      const buffer = await generarXLSXDia(sede, day, fechaDia, filas)
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      res.setHeader('Content-Disposition', `attachment; filename="${fileDia}.xlsx"`)
+      return res.send(buffer)
+    }
+    const buffer = await generarPDFDia(sede, day, fechaDia, filas)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${fileDia}.pdf"`)
+    return res.send(buffer)
+  }
+
   const fileBase = `horarios_${sede.name.replace(/[^\w]/g, '_')}_${fechaIni}`
 
   if (format === 'xlsx') {
@@ -925,8 +947,124 @@ function celdaText(a) {
   ]
   if (a.assistant?.name) partes.push(`Aux: ${a.assistant.name}`)
   if (a.assistant2?.name) partes.push(`Aux2: ${a.assistant2.name}`)
-  partes.push(`${a.patientsCapacity} pac.`)
+  // Nov-2026 · Decía `patientsCapacity` (no existe) y salía "undefined pac.".
+  partes.push(`${a.patientCapacity} pac.`)
   return partes.join('\n')
+}
+
+const DIA_NOMBRE = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' }
+
+/** Auxiliar con su sub-horario si cubre solo parte del turno. */
+const auxConHorario = (nombre, ini, fin) => (nombre ? `${nombre}${ini && fin ? ` (${ini}–${fin})` : ''}` : '')
+
+/** Un turno por fila, en el orden de los consultorios y por hora de inicio. */
+function filasDelDia(grid, day) {
+  return grid.flatMap((row) => row.dias[day].map((a) => ({
+    consultorio: row.room.name,
+    especialidad: row.room.specialty ?? '',
+    profesional: a.resource?.name ?? '—',
+    horario: `${a.startTime}–${a.endTime}`,
+    auxiliar: auxConHorario(a.assistant?.name, a.assistantStartTime, a.assistantEndTime),
+    auxiliar2: auxConHorario(a.assistant2?.name, a.assistant2StartTime, a.assistant2EndTime),
+    pacientes: a.resource?.type === 'asesor_servicios' ? '' : a.patientCapacity,
+  })))
+}
+
+const COLS_DIA = [
+  { key: 'consultorio', titulo: 'Consultorio', ancho: 150 },
+  { key: 'profesional', titulo: 'Profesional', ancho: 170 },
+  { key: 'horario', titulo: 'Horario', ancho: 80 },
+  { key: 'auxiliar', titulo: 'Auxiliar', ancho: 170 },
+  { key: 'auxiliar2', titulo: 'Auxiliar 2', ancho: 125 },
+  { key: 'pacientes', titulo: 'Pac.', ancho: 40 },
+]
+
+function generarPDFDia(sede, day, fechaDia, filas) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' })
+      const chunks = []
+      doc.on('data', (c) => chunks.push(c))
+      doc.on('end', () => resolve(Buffer.concat(chunks)))
+      doc.on('error', reject)
+
+      doc.fillColor('#1B2A6C').fontSize(16).font('Helvetica-Bold').text('SGRC · Horario del día', 25, 25)
+      doc.fillColor('#374151').fontSize(11).font('Helvetica')
+        .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
+      doc.text(`${DIA_NOMBRE[day]} ${fechaDia}`, 25, 63)
+      doc.fillColor('#6B7280').fontSize(8)
+        .text(`Generado: ${new Date().toLocaleString('es-CO')}`, 25, 78)
+
+      const startX = 25
+      const encabezado = (y) => {
+        let x = startX
+        for (const c of COLS_DIA) {
+          doc.rect(x, y, c.ancho, 20).fill('#1B2A6C')
+          doc.fillColor('white').fontSize(9).font('Helvetica-Bold').text(c.titulo, x + 4, y + 6, { width: c.ancho - 8 })
+          x += c.ancho
+        }
+        return y + 20
+      }
+
+      let y = encabezado(100)
+      if (filas.length === 0) {
+        doc.fillColor('#6B7280').fontSize(10).font('Helvetica').text('No hay turnos programados este día.', startX, y + 10)
+      }
+      filas.forEach((f, idx) => {
+        doc.fontSize(8).font('Helvetica')
+        const alto = Math.max(18, ...COLS_DIA.map((c) => doc.heightOfString(String(f[c.key] ?? ''), { width: c.ancho - 8 }) + 8))
+        if (y + alto > doc.page.height - 30) {
+          doc.addPage()
+          y = encabezado(30)
+        }
+        const bg = idx % 2 === 0 ? '#F9FAFB' : '#FFFFFF'
+        let x = startX
+        for (const c of COLS_DIA) {
+          doc.rect(x, y, c.ancho, alto).fill(bg).strokeColor('#E5E7EB').lineWidth(0.5).stroke()
+          doc.fillColor('#111827').fontSize(8).font(c.key === 'consultorio' ? 'Helvetica-Bold' : 'Helvetica')
+            .text(String(f[c.key] ?? ''), x + 4, y + 4, { width: c.ancho - 8 })
+          x += c.ancho
+        }
+        y += alto
+      })
+
+      doc.end()
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
+async function generarXLSXDia(sede, day, fechaDia, filas) {
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'SGRC'
+  const ws = wb.addWorksheet(DIA_NOMBRE[day])
+
+  ws.mergeCells('A1:F1')
+  ws.getCell('A1').value = `Horario del día — ${sede.name}${sede.city ? ' · ' + sede.city : ''}`
+  ws.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FF1B2A6C' } }
+  ws.mergeCells('A2:F2')
+  ws.getCell('A2').value = `${DIA_NOMBRE[day]} ${fechaDia}`
+  ws.getCell('A2').font = { size: 10 }
+
+  ws.addRow([])
+  const borde = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } }
+  ws.addRow(COLS_DIA.map((c) => c.titulo)).eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B2A6C' } }
+    cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    cell.border = borde
+  })
+  for (const f of filas) {
+    ws.addRow(COLS_DIA.map((c) => f[c.key])).eachCell((cell) => {
+      cell.alignment = { wrapText: true, vertical: 'top' }
+      cell.border = borde
+      cell.font = { size: 10 }
+    })
+  }
+
+  ;[24, 30, 14, 32, 26, 8].forEach((w, i) => { ws.getColumn(i + 1).width = w })
+  return Buffer.from(await wb.xlsx.writeBuffer())
 }
 
 function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {

@@ -243,9 +243,12 @@ export async function estadoPorSede(req, res) {
  */
 export async function copiar(req, res) {
   const { startDate: fechaInicio, siteId: sedeId, sedeIds } = req.body
+  // Nov-2026 · Sin las canceladas: antes se copiaban también y revivían como
+  // activas en la semana destino. Con el selector de semanas (se puede copiar
+  // de cualquiera, no solo la anterior) el origen suele traer más canceladas.
   const origen = await prisma.week.findUnique({
     where: { id: req.params.id },
-    include: { assignments: true },
+    include: { assignments: { where: { status: { not: 'cancelada' } } } },
   })
   if (!origen) throw errors.notFound()
 

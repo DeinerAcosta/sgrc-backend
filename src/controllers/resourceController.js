@@ -8,6 +8,7 @@ import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUn
 import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 import { resolverSubespecialidad, nombresDelCatalogo, exigeSubespecialidad } from '../lib/subespecialidades.js'
 import { diasLaborables, ausenciaEnSemana, horasDisponibles } from '../lib/disponibilidadSemana.js'
+import { horarioEfectivoAuxEnAsig } from '../lib/timeSlots.js'
 
 const TIPOS = TIPOS_RECURSO
 
@@ -164,8 +165,12 @@ export async function list(req, res) {
     : []
   const liderByIdTop = new Map(lideresTop.map((u) => [u.id, u.name]))
 
-  // Enriquecer con horas de la semana ACTUAL (la que contiene hoy)
-  const semana = await getSemanaActual()
+  // Enriquecer con horas de la semana ACTUAL (la que contiene hoy). Nov-2026 ·
+  // con `week_id`, las de ESA semana: el modal de asignación las pide de la
+  // semana que se está programando, que no siempre es la de hoy.
+  const semana = (req.query.week_id
+    ? await prisma.week.findUnique({ where: { id: req.query.week_id } })
+    : null) ?? await getSemanaActual()
 
   if (!semana) {
     return res.json(recursos.map((r) => ({
@@ -182,7 +187,10 @@ export async function list(req, res) {
     // `weekday` es indispensable para agrupar por día en la unión multi-sala
     // (bug real detectado sep-2026: sin este campo, todas las franjas caían en
     // `undefined` y colapsaban L-V en un solo día, sub-contando).
-    select: { resourceId: true, assistantId: true, weekday: true, startTime: true, endTime: true, status: true },
+    select: {
+      resourceId: true, assistantId: true, assistant2Id: true, weekday: true, startTime: true, endTime: true, status: true,
+      assistantStartTime: true, assistantEndTime: true, assistant2StartTime: true, assistant2EndTime: true,
+    },
   })
 
   // Jornada laboral semanal global (Ley 2101 Colombia). Editable desde "Metas del sistema".
@@ -236,7 +244,14 @@ export async function list(req, res) {
   }
 
   const enriquecidos = recursos.map((r) => {
-    const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
+    // Nov-2026 · También como auxiliar 2, y con el sub-horario de la auxiliar
+    // (antes contaba el turno entero del médico aunque ella cubriera 2 horas).
+    const propias = asignaciones
+      .filter((a) => a.resourceId === r.id || a.assistantId === r.id || a.assistant2Id === r.id)
+      .map((a) => {
+        const ef = horarioEfectivoAuxEnAsig(a, r.id)
+        return { ...a, startTime: ef.ini, endTime: ef.fin }
+      })
     // Horas EFECTIVAS (descontando almuerzo por franja). Es lo que se compara
     // contra el tope contractual semanal (Ley 2101). Una franja 08:00–17:00
     // son 9h brutas pero 8h efectivas (1h almuerzo) — y son las 8h las que
