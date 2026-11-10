@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit'
 import ExcelJS from 'exceljs'
+import { fechaHora } from '../lib/fechas.js'
 
 /**
  * Servicio de exportación de informes — HU-D-07.
@@ -55,7 +56,7 @@ export function generarPDF(tipo, filas, filtros = {}) {
       doc.fillColor('#1A1A17').fontSize(14).font('Helvetica-Bold')
         .text(TITULOS[tipo] ?? tipo, 40, 82)
       doc.fillColor(COLOR_GRIS).fontSize(8).font('Helvetica')
-        .text(`Generado: ${new Date().toLocaleString('es-CO')}`, 40, 102)
+        .text(`Generado: ${fechaHora(new Date())}`, 40, 102)
       if (Object.keys(filtros).length) {
         doc.text(`Filtros: ${JSON.stringify(filtros)}`, 40, 113)
       }
@@ -152,7 +153,7 @@ export async function generarExcel(tipo, filas, filtros = {}) {
   const resumen = wb.addWorksheet('Resumen')
   resumen.columns = [{ width: 24 }, { width: 50 }]
   resumen.addRow(['Informe', TITULOS[tipo] ?? tipo])
-  resumen.addRow(['Generado', new Date().toLocaleString('es-CO')])
+  resumen.addRow(['Generado', fechaHora(new Date())])
   resumen.addRow(['Total de registros', filas?.length ?? 0])
   resumen.addRow(['Filtros aplicados', JSON.stringify(filtros)])
   resumen.addRow(['Sistema', 'SGRC — Clínica Oftalmológica Internacional'])

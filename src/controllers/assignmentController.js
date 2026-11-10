@@ -6,6 +6,7 @@ import { errors } from '../lib/errors.js'
 import { crearAsignacion, editarAsignacion, ROLES_EDITAN_CERRADA, pacientesPorReprogramar } from '../services/assignmentService.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
+import { fechaHora } from '../lib/fechas.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
 import { SIN_TOPE_DIARIO } from '../lib/timeSlots.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
@@ -993,7 +994,7 @@ function generarPDFDia(sede, day, fechaDia, filas) {
         .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
       doc.text(`${DIA_NOMBRE[day]} ${fechaDia}`, 25, 63)
       doc.fillColor('#6B7280').fontSize(8)
-        .text(`Generado: ${new Date().toLocaleString('es-CO')}`, 25, 78)
+        .text(`Generado: ${fechaHora(new Date())}`, 25, 78)
 
       const startX = 25
       const encabezado = (y) => {
@@ -1082,7 +1083,7 @@ function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {
         .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
       doc.text(`Semana: ${fechaIni} → ${fechaFin}`, 25, 63)
       doc.fillColor('#6B7280').fontSize(8)
-        .text(`Generado: ${new Date().toLocaleString('es-CO')}`, 25, 78)
+        .text(`Generado: ${fechaHora(new Date())}`, 25, 78)
 
       // Tabla: Consultorio | LUN | MAR | MIÉ | JUE | VIE | SÁB | DOM
       const startX = 25
