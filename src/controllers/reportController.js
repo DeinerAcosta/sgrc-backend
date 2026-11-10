@@ -551,6 +551,26 @@ function sumarDiasUTC(d, n) {
   return x
 }
 
+const aHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const fechaISO = (d) => new Date(d).toISOString().slice(0, 10)
+
+/**
+ * Nov-2026 · Lo que la persona de verdad cubrió de su franja un día dado,
+ * quitando sus ausencias confirmadas. Ausencia de día completo → nada; parcial
+ * con horas → se recorta ese tramo (puede partir la franja en dos).
+ */
+export function franjasSinAusencia(ini, fin, fecha, ausencias = []) {
+  let tramos = [[hhmmAMinutos(ini), hhmmAMinutos(fin)]]
+  for (const au of ausencias) {
+    if (fecha < fechaISO(au.startDate) || fecha > fechaISO(au.endDate)) continue
+    if (!(au.isPartial && au.absenceStartTime && au.absenceEndTime)) return []
+    const ai = hhmmAMinutos(au.absenceStartTime)
+    const af = hhmmAMinutos(au.absenceEndTime)
+    tramos = tramos.flatMap(([i, f]) => [[i, Math.min(f, ai)], [Math.max(i, af), f]].filter(([x, y]) => y > x))
+  }
+  return tramos.map(([i, f]) => [aHHMM(i), aHHMM(f)])
+}
+
 export async function dataProductividad({ site_id: sede_id, resource_type: tipo_recurso, desde, hasta } = {}) {
   const sedeIds = aLista(sede_id)
   const tipos = aLista(tipo_recurso)
@@ -626,19 +646,34 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   }
 
   // PROYECTOS-3255 #3.3: para el promedio dividimos por semanas / meses en los
-  // que el recurso REALMENTE tuvo asignaciones (no por toda la ventana). Si
-  // dividimos por la ventana completa (12 semanas por defecto), un recurso que
-  // solo trabajo 2 de las 12 semanas con 22h c/u apareceria con "prom_semanal=3.7h"
-  // en vez de "22h", ocultando su carga real durante las semanas activas.
-  //
-  // Trackeamos:
-  //   semanasActivas = Set<weekId>  — semanas ISO en que hay al menos 1 asignacion no cancelada
-  //   mesesActivos   = Set<YYYY-MM> — meses calendario derivados de las startDate de las semanas
+  // que el recurso REALMENTE trabajó (no por toda la ventana). Si dividimos por
+  // la ventana completa (12 semanas por defecto), un recurso que solo trabajo 2
+  // de las 12 semanas con 22h c/u apareceria con "prom_semanal=3.7h" en vez de
+  // "22h", ocultando su carga real. Las semanas salen de agg._ejec (Nov-2026).
   const agregados = new Map()
   const semanaStartDate = new Map()   // weekId → startDate (para mapear mes)
-  for (const s of await prisma.week.findMany({ where: { id: { in: semanaIds } }, select: { id: true, startDate: true } })) {
-    semanaStartDate.set(s.id, s.startDate)
+  const semanasRango = await prisma.week.findMany({ where: { id: { in: semanaIds } }, select: { id: true, startDate: true, endDate: true } })
+  for (const s of semanasRango) semanaStartDate.set(s.id, s.startDate)
+
+  // Nov-2026 · Confirmar la ausencia de una auxiliar NO marca el turno del
+  // médico como no ejecutado (él sí atendió, PROYECTOS-3485). Entonces la
+  // ejecución del turno no dice nada de ella: sus horas ejecutadas se recortan
+  // con sus propias ausencias confirmadas de ese día.
+  const auxIds = [...new Set(asigs.flatMap((a) => [a.assistantId, a.assistant2Id]).filter(Boolean))]
+  const ausenciasAux = new Map()
+  if (auxIds.length && semanasRango.length) {
+    const ini = new Date(Math.min(...semanasRango.map((w) => new Date(w.startDate).getTime())))
+    const fin = new Date(Math.max(...semanasRango.map((w) => new Date(w.endDate ?? w.startDate).getTime())))
+    const filas = await prisma.absence.findMany({
+      where: { source: 'sgrc', status: 'confirmada', resourceId: { in: auxIds }, startDate: { lte: fin }, endDate: { gte: ini } },
+      select: { resourceId: true, startDate: true, endDate: true, isPartial: true, absenceStartTime: true, absenceEndTime: true },
+    })
+    for (const au of filas ?? []) {
+      if (!ausenciasAux.has(au.resourceId)) ausenciasAux.set(au.resourceId, [])
+      ausenciasAux.get(au.resourceId).push(au)
+    }
   }
+  const semanaPorId = new Map(semanasRango.map((w) => [w.id, w]))
   // Nov-2026 · Las AUXILIARES no son el recurso principal del turno: van en
   // auxiliar/auxiliar2 del turno del médico. Antes solo se leía resourceId, así
   // que todas las auxiliares salían con 0h aunque tuvieran la semana llena (la
@@ -672,8 +707,6 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
     if (!agregados.has(k)) {
       agregados.set(k, {
         h_prog: 0, h_ejec: 0, pac_prog: 0, pac_at: 0,
-        semanasActivas: new Set(),
-        mesesActivos: new Set(),
         // Sep-2026 · franjas guardadas por semana para poder UNIRLAS en los
         // médicos multi-consultorio (ver el ajuste después del bucle).
         _tipo: a._tipo,
@@ -703,20 +736,19 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
     // con registro". `parcial` sigue sumando completo: el sistema no captura
     // cuántas horas se cubrieron, así que queda como dato pendiente de definir.
     if (a.execution && a.execution.shiftStatus !== 'no_ejecutada') {
-      agg.h_ejec += h
-      if (!agg._ejec.has(a.weekId)) agg._ejec.set(a.weekId, [])
-      agg._ejec.get(a.weekId).push(a)
+      const fecha = a._titular ? null : fechaDelDia(semanaPorId.get(a.weekId), a.weekday)
+      const piezas = a._titular || !fecha
+        ? [a]
+        : franjasSinAusencia(a.startTime, a.endTime, fechaISO(fecha), ausenciasAux.get(a._rid))
+            .map(([ini, fin]) => ({ ...a, startTime: ini, endTime: fin }))
+      for (const p of piezas) {
+        agg.h_ejec += horasEfectivasFranja(p.startTime, p.endTime, a._tipo)
+        if (!agg._ejec.has(a.weekId)) agg._ejec.set(a.weekId, [])
+        agg._ejec.get(a.weekId).push(p)
+      }
       if (a._titular && a._tipo !== 'asesor_servicios') {
         agg.pac_at += a.execution.patientsSeen
       }
-    }
-    // Nota: usamos startDate de la SEMANA (no de la asignacion, que solo tiene weekday)
-    // para determinar el mes. El mes de una semana es el mes de su lunes en la practica.
-    agg.semanasActivas.add(a.weekId)
-    const startDate = semanaStartDate.get(a.weekId)
-    if (startDate) {
-      const mes = `${startDate.getUTCFullYear()}-${String(startDate.getUTCMonth() + 1).padStart(2, '0')}`
-      agg.mesesActivos.add(mes)
     }
   }
 
@@ -739,15 +771,18 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
 
   // Left-join en memoria: una fila POR CADA recurso activo, tenga o no asignaciones.
   const filas = recursos.map((r) => {
-    const agg = agregados.get(r.id) ?? {
-      h_prog: 0, h_ejec: 0, pac_prog: 0, pac_at: 0,
-      semanasActivas: new Set(), mesesActivos: new Set(),
-    }
+    const agg = agregados.get(r.id) ?? { h_prog: 0, h_ejec: 0, pac_prog: 0, pac_at: 0, _ejec: new Map() }
     const info = mapaSedes.get(r.id)
-    // Divisor >=1 para no dividir por 0 en recursos sin actividad; el h_ejec=0
-    // hace que el resultado sea 0 igual.
-    const nSemActivas = Math.max(1, agg.semanasActivas.size)
-    const nMesesActivos = Math.max(1, agg.mesesActivos.size)
+    // Nov-2026 · El promedio es de horas EJECUTADAS, así que se divide por las
+    // semanas (y meses) en que tuvo algo ejecutado. Antes contaban las semanas
+    // con solo programación: la semana en curso, o una sin ejecución
+    // registrada, bajaban el promedio sin que la persona trabajara menos.
+    // El mes de una semana es el de su lunes. Divisor >=1 para no dividir por 0.
+    const semanasEjec = [...agg._ejec.keys()]
+    const mesesEjec = new Set(semanasEjec.map((w) => semanaStartDate.get(w)).filter(Boolean)
+      .map((d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`))
+    const nSemActivas = Math.max(1, semanasEjec.length)
+    const nMesesActivos = Math.max(1, mesesEjec.size)
     return {
       resource: r.name,
       type: r.type,
@@ -755,7 +790,7 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
       _sedeIds: info?.sedeIds ?? new Set(),  // interno — usado por el filtro de sede
       h_prog: Math.round(agg.h_prog * 10) / 10,
       h_ejec: Math.round(agg.h_ejec * 10) / 10,
-      // PROYECTOS-3255 #3.3: promedios SOBRE h_ejec / semanas o meses ACTIVOS del recurso.
+      // PROYECTOS-3255 #3.3: promedios SOBRE h_ejec / semanas o meses con ejecución.
       // Se emiten como 0 (no null) para recursos sin actividad — coherente con h_ejec=0.
       // El orden de las keys respeta la posicion de cfg.cols en ReportPage.
       prom_h_semanal: Math.round((agg.h_ejec / nSemActivas) * 10) / 10,

@@ -402,6 +402,58 @@ describe('dataProductividad — filtros, left-join a recursos activos y promedio
     expect(aux.pac_at).toBe(0)
     expect(aux.pct_cumplimiento).toBeNull()
   })
+
+  it('Nov-2026 — a la auxiliar no le cuentan como ejecutadas las horas en que tuvo ausencia confirmada (el médico sí atendió)', async () => {
+    prismaMock.week.findMany.mockResolvedValue([{ id: 's1', startDate: new Date('2026-06-01T00:00:00Z'), endDate: new Date('2026-06-07T00:00:00Z') }])
+    prismaMock.resource.findMany.mockResolvedValue([{ id: 'ax', name: 'Aux. Gómez', type: 'auxiliar' }])
+    prismaMock.holiday.findMany.mockResolvedValue([])
+    // Solo la consulta de ausencias de auxiliares (la de incapacidades no filtra por resourceId)
+    prismaMock.absence.findMany.mockImplementation(({ where }) => Promise.resolve(where.resourceId ? [
+      // Lunes 1-jun: día completo
+      { resourceId: 'ax', startDate: new Date('2026-06-01T00:00:00Z'), endDate: new Date('2026-06-01T00:00:00Z'), isPartial: false },
+      // Martes 2-jun: solo 07:00–09:00
+      { resourceId: 'ax', startDate: new Date('2026-06-02T00:00:00Z'), endDate: new Date('2026-06-02T00:00:00Z'), isPartial: true, absenceStartTime: '07:00', absenceEndTime: '09:00' },
+    ] : []))
+    const turno = (over) => ({
+      resourceId: 'r1', weekId: 's1', startTime: '07:00', endTime: '13:00', patientCapacity: 20, assistantId: 'ax',
+      resource: { type: 'oftalmologo' }, assistant: { type: 'auxiliar' }, assistant2: null,
+      room: { siteId: 'st2', site: { name: 'Sede 2' } },
+      execution: { patientsSeen: 18, shiftStatus: 'completa' },
+      ...over,
+    })
+    prismaMock.assignment.findMany.mockResolvedValue([
+      turno({ weekday: 'lunes' }),      // ausente todo el día → 0
+      turno({ weekday: 'martes' }),     // cubre 09–13 → 4h (sin almuerzo, menos de 6h)
+      turno({ weekday: 'miercoles' }),  // completo → 5h
+    ])
+
+    const [aux] = await dataProductividad({ desde: '2026-06-01', hasta: '2026-06-07' })
+    expect(aux.h_prog).toBe(15)
+    expect(aux.h_ejec).toBe(9)
+    expect(aux.prom_h_semanal).toBe(9)
+  })
+
+  it('Nov-2026 — el promedio semanal divide por las semanas con ejecución, no por las que solo tienen programación', async () => {
+    prismaMock.week.findMany.mockResolvedValue([
+      { id: 's1', startDate: new Date('2026-06-01T00:00:00Z'), endDate: new Date('2026-06-07T00:00:00Z') },
+      { id: 's2', startDate: new Date('2026-06-08T00:00:00Z'), endDate: new Date('2026-06-14T00:00:00Z') },
+    ])
+    prismaMock.resource.findMany.mockResolvedValue([{ id: 'r1', name: 'Dra. Pérez', type: 'oftalmologo' }])
+    prismaMock.holiday.findMany.mockResolvedValue([])
+    prismaMock.absence.findMany.mockResolvedValue([])
+    const turno = (weekId, execution) => ({
+      resourceId: 'r1', weekId, weekday: 'lunes', startTime: '08:00', endTime: '17:00', patientCapacity: 30,
+      resource: { type: 'oftalmologo' }, room: { siteId: 'st2', site: { name: 'Sede 2' } }, execution,
+    })
+    prismaMock.assignment.findMany.mockResolvedValue([
+      turno('s1', { patientsSeen: 30, shiftStatus: 'completa' }),
+      turno('s2', null),   // semana en curso, aún sin ejecución
+    ])
+
+    const [r] = await dataProductividad({ desde: '2026-06-01', hasta: '2026-06-14' })
+    expect(r.h_ejec).toBe(8.5)   // 9h − 30 min de almuerzo
+    expect(r.prom_h_semanal).toBe(8.5)   // 8.5 / 1 semana con ejecución (antes 8.5 / 2)
+  })
 })
 
 describe('elegirSemanasComparativo — Históricos de semanas (22-oct)', () => {
