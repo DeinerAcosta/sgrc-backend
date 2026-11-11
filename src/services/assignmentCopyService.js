@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { prisma } from '../lib/prisma.js'
 import { validarLote } from './batchValidationService.js'
 import { calcularCapacidad } from './assignmentService.js'
@@ -5,6 +6,8 @@ import { horasEfectivasFranja } from '../lib/workHours.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { sedesDeUsuario } from '../lib/siteScope.js'
 import { fechaDeTurno, bloqueoQueCubre, cargarBloqueos, mensajeBloqueo } from '../lib/bloqueosSede.js'
+import { idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { SELECT_AUXILIARES } from '../lib/auxiliaresTurno.js'
 
 /**
  * COPIA VALIDADA DE ASIGNACIONES
@@ -43,10 +46,8 @@ async function cargarEstado({ semanaIds, recursoIds, consultorioIds }, client) {
       where: { weekId: { in: semanaIds }, status: { not: 'cancelada' } },
       select: {
         weekId: true, weekday: true, roomId: true,
-        resourceId: true, assistantId: true, assistant2Id: true,
-        startTime: true, endTime: true,
-        assistantStartTime: true, assistantEndTime: true,
-        assistant2StartTime: true, assistant2EndTime: true,
+        resourceId: true, startTime: true, endTime: true,
+        assistants: SELECT_AUXILIARES,
       },
     }),
     client.resource.findMany({
@@ -87,7 +88,7 @@ function idsNecesarios(candidatas, asignacionesExistentes = []) {
   const recursoIds = new Set()
   const consultorioIds = new Set()
   for (const c of [...candidatas, ...asignacionesExistentes]) {
-    for (const r of [c.resourceId, c.assistantId, c.assistant2Id]) if (r) recursoIds.add(r)
+    for (const r of [c.resourceId, ...idsAuxiliaresDe(c)]) if (r) recursoIds.add(r)
     if (c.roomId) consultorioIds.add(c.roomId)
   }
   return { recursoIds: [...recursoIds], consultorioIds: [...consultorioIds] }
@@ -97,7 +98,7 @@ function idsNecesarios(candidatas, asignacionesExistentes = []) {
 function horasSemanalesPrevias(asignaciones, recursos) {
   const acc = new Map()
   for (const a of asignaciones) {
-    for (const rid of [a.resourceId, a.assistantId, a.assistant2Id]) {
+    for (const rid of new Set([a.resourceId, ...idsAuxiliaresDe(a)])) {
       if (!rid) continue
       const r = recursos.get(rid)
       if (!r) continue
@@ -111,7 +112,8 @@ function horasSemanalesPrevias(asignaciones, recursos) {
 /**
  * Valida e inserta un lote de asignaciones.
  *
- * @param {Array}  candidatas  Asignaciones a crear (mismo shape que la tabla).
+ * @param {Array}  candidatas  Asignaciones a crear (mismo shape que la tabla, con
+ *                             `assistants: [{ resourceId, startTime, endTime }]`).
  * @param {object} opciones
  * @param {string} opciones.userRol
  * @param {object} [opciones.client]  Cliente Prisma o transacción.
@@ -128,7 +130,7 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
   // recursos y consultorios entran en juego (los de los conflictos potenciales).
   const previas = await client.assignment.findMany({
     where: { weekId: { in: semanaIds }, status: { not: 'cancelada' } },
-    select: { resourceId: true, assistantId: true, assistant2Id: true, roomId: true },
+    select: { resourceId: true, roomId: true, assistants: SELECT_AUXILIARES },
   })
   const { recursoIds, consultorioIds } = idsNecesarios(candidatas, previas)
 
@@ -171,17 +173,14 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
     sedesPermitidas: sedesDeUsuario({ role: userRol, sites: userSedes ?? [] }),
   })
 
+  // Nov-2026 · createMany no crea relaciones: el id del turno se genera aquí
+  // para poder insertar sus auxiliares en un segundo createMany.
   const filas = aceptadas.map((a) => {
     const recurso = estado.resources.get(a.resourceId)
     return {
+      id: randomUUID(),
       weekId: a.weekId,
       resourceId: a.resourceId,
-      assistantId: a.assistantId ?? null,
-      assistant2Id: a.assistant2Id ?? null,
-      assistantStartTime: a.assistantStartTime ?? null,
-      assistantEndTime: a.assistantEndTime ?? null,
-      assistant2StartTime: a.assistant2StartTime ?? null,
-      assistant2EndTime: a.assistant2EndTime ?? null,
       roomId: a.roomId,
       weekday: a.weekday,
       startTime: a.startTime,
@@ -196,8 +195,25 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
     }
   })
 
+  // Las auxiliares de cada turno copiado, con sus horas tal cual vienen del
+  // origen (null = hereda) y en el mismo orden.
+  const filasAux = aceptadas.flatMap((a, i) => (a.assistants ?? []).map((x, pos) => ({
+    assignmentId: filas[i].id,
+    resourceId: x.resourceId,
+    startTime: x.startTime ?? null,
+    endTime: x.endTime ?? null,
+    position: pos,
+  })))
+
   if (filas.length > 0) {
-    await client.assignment.createMany({ data: filas })
+    // Los dos createMany juntos: un turno copiado sin sus auxiliares sería una
+    // copia infiel. Si ya llega una transacción (copiar semana) se usa esa.
+    const insertar = async (db) => {
+      await db.assignment.createMany({ data: filas })
+      if (filasAux.length > 0) await db.assignmentAssistant.createMany({ data: filasAux })
+    }
+    if (typeof client.$transaction === 'function') await client.$transaction(insertar)
+    else await insertar(client)
   }
   const omitidas = [...omitidasPorBloqueo, ...omitidasLote]
 
@@ -211,6 +227,6 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
       reason: o.reason,
       message: o.message,
     })),
-    created: filas,
+    created: filas.map((fila) => ({ ...fila, assistants: filasAux.filter((x) => x.assignmentId === fila.id) })),
   }
 }

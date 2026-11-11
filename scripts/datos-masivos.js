@@ -162,7 +162,7 @@ async function limpiar() {
   const idsS = (await prisma.assignment.findMany({
     where: {
       OR: [
-        { resourceId: { in: idsR } }, { assistantId: { in: idsR } }, { assistant2Id: { in: idsR } },
+        { resourceId: { in: idsR } }, { assistants: { some: { resourceId: { in: idsR } } } },
         // Reemplazos que alguien cargó a mano sobre un caso de prueba: también son de prueba.
         { coveredAbsenceId: { in: idsA } },
       ],
@@ -643,7 +643,9 @@ async function crear() {
       data: {
         weekId: semana.id, resourceId: idDeRecurso.get(t.recurso), roomId: t.sala.id,
         weekday: t.dia, startTime: t.ini, endTime: t.fin, patientCapacity: t.pacientes,
-        status: 'activa', assistantId: t.auxiliar ? idDeRecurso.get(t.auxiliar) : null,
+        status: 'activa',
+        // Nov-2026 · Las auxiliares van en la lista del turno (asignacion_auxiliares).
+        ...(t.auxiliar ? { assistants: { create: [{ resourceId: idDeRecurso.get(t.auxiliar), position: 0 }] } } : {}),
       },
     })
   }

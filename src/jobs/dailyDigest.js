@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js'
 import { enviarEmail, plantillaEmail } from '../services/emailService.js'
 import { emailsRecursoActivados } from '../services/notificationService.js'
+import { textoAuxiliares } from '../lib/auxiliaresTurno.js'
 
 const DOW = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado']
 
@@ -43,7 +44,12 @@ export async function jobResumenDiario(fechaOverride = null) {
         include: {
           room: { select: { name: true, specialty: true } },
           resource: { include: { user: true } },
-          assistant: { include: { user: true } },
+          // Nov-2026 · Todas las auxiliares del turno, cada una con su usuario
+          // para mandarle su jornada.
+          assistants: {
+            orderBy: { position: 'asc' },
+            include: { resource: { select: { id: true, name: true, type: true, user: true } } },
+          },
         },
         orderBy: { startTime: 'asc' },
       })
@@ -63,12 +69,12 @@ export async function jobResumenDiario(fechaOverride = null) {
           horario: `${a.startTime}–${a.endTime}`,
           room: a.room?.name ?? '—',
           resource: a.resource?.name ?? '—',
-          assistant: a.assistant?.name ?? '—',
+          assistant: textoAuxiliares(a) || '—',
           pacientes: a.patientCapacity ?? 0,
         }
         filasSede.push(fila)
         acumular(a.resource?.user, fila)
-        if (a.assistantId) acumular(a.assistant?.user, fila)
+        for (const x of a.assistants) acumular(x.resource?.user, fila)
       }
 
       // Si el switch de emails-a-recursos está en off (cuadre de personal),

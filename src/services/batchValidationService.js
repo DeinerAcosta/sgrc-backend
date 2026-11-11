@@ -3,6 +3,8 @@ import {
   solapan,
   solapaConAux,
   horarioEfectivoAuxEnAsig,
+  auxiliaresDe,
+  participaEn,
 } from '../lib/timeSlots.js'
 import {
   hhmmAMinutos,
@@ -43,7 +45,7 @@ import {
  *   2. Recurso inactivo o inexistente / consultorio inexistente
  *   3. RN-08 · el recurso ya está ocupado en esa franja ese día
  *   4. RN-09 · el recurso no puede estar en dos ciudades el mismo día
- *   5. RN-08 · la auxiliar (y la segunda) ya están ocupadas
+ *   5. RN-08 · alguna de las auxiliares del turno ya está ocupada
  *   6. RN-13 · tope diario en horas efectivas
  *
  * El tope SEMANAL no bloquea: marca la asignación como horas extras, igual que
@@ -71,9 +73,9 @@ const clave = (a) => `${a.weekId}|${a.weekday}`
  * @param {object} estado
  * @param {Array}  estado.asignaciones  Asignaciones NO canceladas ya existentes
  *                                      en las semanas destino. Cada una necesita
- *                                      semanaId, diaSemana, horaInicio, horaFin,
- *                                      recursoId, auxiliarId, auxiliar2Id y sus
- *                                      sub-horarios.
+ *                                      weekId, weekday, startTime, endTime,
+ *                                      resourceId y `assistants` (la lista de
+ *                                      auxiliares con sus sub-horarios).
  * @param {Map}    estado.recursos      recursoId → { id, nombre, activo, tipo,
  *                                      multiConsultorio, horasMaxDia,
  *                                      horasMaxSemana, intervaloMinutos }
@@ -108,10 +110,7 @@ export function crearValidadorLote({
   const delDia = (c) => porDia.get(clave(c)) ?? []
 
   /** Asignaciones del día en las que `recursoId` participa, como sea. */
-  const dondeParticipa = (c, recursoId) =>
-    delDia(c).filter(
-      (a) => a.resourceId === recursoId || a.assistantId === recursoId || a.assistant2Id === recursoId
-    )
+  const dondeParticipa = (c, recursoId) => delDia(c).filter((a) => participaEn(a, recursoId))
 
   function validar(c) {
     const consultorio = consultorios.get(c.roomId)
@@ -166,7 +165,7 @@ export function crearValidadorLote({
     if (!recurso.multiRoom) {
       const choque = mismoDia.find(
         (a) =>
-          (a.resourceId === c.resourceId || a.assistantId === c.resourceId || a.assistant2Id === c.resourceId) &&
+          participaEn(a, c.resourceId) &&
           solapan(a, c.startTime, c.endTime)
       )
       if (choque) {
@@ -194,18 +193,20 @@ export function crearValidadorLote({
       }
     }
 
-    // ---- 5. RN-08 para auxiliares ----
+    // ---- 5. RN-08 para cada auxiliar del turno ----
     // Excepción: si el choque es con el MISMO doctor multi-consultorio, la aux
     // le está asistiendo mientras rota entre salas — no es conflicto.
+    // Nov-2026 · La lista entera (antes aux1 y aux2), con los mismos mensajes
+    // que crearAsignacion: "Conflicto de auxiliar" y "#N" desde la segunda.
     const revisarAux = (auxId, subIni, subFin, etiqueta) => {
       if (!auxId) return null
       const choque = mismoDia.find(
         (a) =>
-          (a.assistantId === auxId || a.assistant2Id === auxId || a.resourceId === auxId) &&
-          solapaConAux(a, auxId, subIni, subFin)
+          participaEn(a, auxId) &&
+          solapaConAux(a, auxId, subIni, subFin) &&
+          !(a.resourceId === c.resourceId && recurso.multiRoom)
       )
       if (!choque) return null
-      if (choque.resourceId === c.resourceId && recurso.multiRoom) return null
 
       const aux = recursos.get(auxId)
       const ef = horarioEfectivoAuxEnAsig(choque, auxId)
@@ -218,22 +219,14 @@ export function crearValidadorLote({
       }
     }
 
-    if (consultorio.requiresAssistant) {
-      const r = revisarAux(
-        c.assistantId,
-        c.assistantStartTime || c.startTime,
-        c.assistantEndTime || c.endTime,
-        'Conflicto de auxiliar'
-      )
+    // La primera solo donde el consultorio requiere auxiliar (en los demás es
+    // opcional y no bloquea); de la segunda en adelante, siempre. Mismo
+    // criterio que validarChoquesAuxiliares en assignmentService.
+    for (const [i, x] of auxiliaresDe(c).entries()) {
+      if (i === 0 && !consultorio.requiresAssistant) continue
+      const r = revisarAux(x.resourceId, x.ini, x.fin, i === 0 ? 'Conflicto de auxiliar' : `Conflicto de auxiliar #${i + 1}`)
       if (r) return r
     }
-    const r2 = revisarAux(
-      c.assistant2Id,
-      c.assistant2StartTime || c.startTime,
-      c.assistant2EndTime || c.endTime,
-      'Conflicto de auxiliar #2'
-    )
-    if (r2) return r2
 
     // ---- 6. RN-13 · tope diario en horas efectivas ----
     if (!SIN_TOPE_DIARIO.has(recurso.type)) {

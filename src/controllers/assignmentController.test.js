@@ -24,7 +24,7 @@ const FRANJA = { type: 'oftalmologo', day: 'lunes', start_time: '14:00', end_tim
 
 const recurso = (id, nombre) => ({ id, name: nombre, type: 'oftalmologo', active: true })
 const asig = (recursoId, horaInicio, horaFin, sedeId = 'sedeA') => ({
-  resourceId: recursoId, assistantId: null, startTime: horaInicio, endTime: horaFin, room: { siteId: sedeId },
+  resourceId: recursoId, assistants: [], startTime: horaInicio, endTime: horaFin, room: { siteId: sedeId },
 })
 
 beforeEach(() => {
@@ -77,7 +77,8 @@ describe('sugerirReemplazos — disponibilidad real', () => {
   it('también descarta a quien está ocupado como AUXILIAR en la franja', async () => {
     prismaMock.resource.findMany.mockResolvedValue([recurso('r1', 'Dra. Pérez')])
     prismaMock.assignment.findMany.mockResolvedValue([
-      { resourceId: 'otro', assistantId: 'r1', startTime: '15:00', endTime: '19:00', room: { siteId: 'sedeA' } },
+      // Nov-2026 · En cualquier posición de la lista: aquí es la 3ª auxiliar.
+      { resourceId: 'otro', assistants: [{ resourceId: 'a1', position: 0 }, { resourceId: 'a2', position: 1 }, { resourceId: 'r1', position: 2 }], startTime: '15:00', endTime: '19:00', room: { siteId: 'sedeA' } },
     ])
     expect(await ejecutar(FRANJA)).toEqual([])
   })
@@ -117,7 +118,7 @@ describe('sugerirReemplazos — coste en consultas', () => {
 // solo salga quien de verdad se puede asignar.
 describe('sugerirReemplazos — solo ofrece a quien se puede asignar', () => {
   const enCiudad = (recursoId, ini, fin, ciudad) => ({
-    resourceId: recursoId, assistantId: null, startTime: ini, endTime: fin,
+    resourceId: recursoId, assistants: [], startTime: ini, endTime: fin,
     room: { siteId: 'x', site: { name: 'Sede ' + ciudad, city: ciudad } },
   })
 

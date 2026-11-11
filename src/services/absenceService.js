@@ -1,6 +1,7 @@
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { parteAfectada } from '../lib/tramos.js'
 import { TIPOS_QUE_IMPACTAN_PACIENTES, TIPOS_QUE_LIBERAN_AUXILIAR} from '../lib/resourceTypes.js'
+import { whereParticipa } from '../lib/auxiliaresTurno.js'
 
 /**
  * Lógica de cálculo de impacto de ausencias y liberación de auxiliares.
@@ -170,7 +171,7 @@ export async function calcularImpacto(tx, ausencia) {
       ? await tx.assignment.findMany({
           where: {
             weekId: semana.id,
-            OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
+            ...whereParticipa(ausencia.resourceId),
             weekday: dia,
             status: { not: 'cancelada' },
           },
@@ -250,7 +251,8 @@ export async function liberarAuxiliaresSiAplica(tx, ausencia, fechas) {
       where: {
         weekId: semana.id,
         resourceId: ausencia.resourceId,
-        assistantId: { not: null },
+        // Nov-2026 · Con al menos una auxiliar (antes: auxiliar_id no nulo).
+        assistants: { some: {} },
         weekday: dia,
         status: 'activa',
       },

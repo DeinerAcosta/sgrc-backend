@@ -127,7 +127,7 @@ async function main() {
             weekId: semana.id,
             weekday: dia,
             status: { not: 'cancelada' },
-            OR: [{ resourceId: a.resourceId }, { assistantId: a.resourceId }],
+            OR: [{ resourceId: a.resourceId }, { assistants: { some: { resourceId: a.resourceId } } }],
           },
           include: { room: { select: { specialty: true } } },
         })

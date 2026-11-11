@@ -42,7 +42,7 @@ async function turnosDelDia(resourceId, fecha) {
   return prisma.assignment.findMany({
     where: {
       weekId: semana.id, weekday: DIAS[enUtc(fecha).getUTCDay()], status: { not: 'cancelada' },
-      OR: [{ resourceId }, { assistantId: resourceId }],
+      OR: [{ resourceId }, { assistants: { some: { resourceId } } }],
     },
     select: { id: true },
   })

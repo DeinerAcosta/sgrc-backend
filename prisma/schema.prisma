@@ -364,15 +364,14 @@ model Resource {
   createdAt          DateTime    @default(now()) @map("created_at")
   updatedAt          DateTime    @updatedAt @map("updated_at")
 
-  user                    User?
-  assignmentsAsLead       Assignment[]           @relation("RecursoPrincipal")
-  assignmentsAsAssistant  Assignment[]           @relation("RecursoAuxiliar")
-  assignmentsAsAssistant2 Assignment[]           @relation("RecursoAuxiliar2")
-  absences                Absence[]
-  backofficeAssignments   BackofficeAssignment[]
-  loanRequests            ResourceRequest[]      @relation("SolicitudRecursoRecurso")
-  matrixDays              AssistantMatrixDay[]          @relation("MatrizAuxiliar")
-  matrixAsProfessional    AssistantMatrixProfessional[] @relation("MatrizProfesional")
+  user                   User?
+  assignmentsAsLead      Assignment[]                  @relation("RecursoPrincipal")
+  assistantInAssignments AssignmentAssistant[]         @relation("AuxiliarDeTurno")
+  absences               Absence[]
+  backofficeAssignments  BackofficeAssignment[]
+  loanRequests           ResourceRequest[]             @relation("SolicitudRecursoRecurso")
+  matrixDays             AssistantMatrixDay[]          @relation("MatrizAuxiliar")
+  matrixAsProfessional   AssistantMatrixProfessional[] @relation("MatrizProfesional")
 
   @@index([type])
   @@index([active])
@@ -427,18 +426,6 @@ model Assignment {
   id                  String           @id @default(uuid())
   weekId              String           @map("semana_id")
   resourceId          String           @map("recurso_id")
-  assistantId         String?          @map("auxiliar_id")
-  // Sub-horario opcional para la auxiliar (si null hereda del doctor).
-  // Útil cuando la aux cubre solo PARTE del turno del doctor (ej. Doc 11-15,
-  // Aux1 solo 11-13 porque después va a otro consultorio).
-  assistantStartTime  String?          @map("auxiliar_hora_inicio") @db.VarChar(5)
-  assistantEndTime    String?          @map("auxiliar_hora_fin") @db.VarChar(5)
-  // Segundo auxiliar opcional — para consultorios complejos donde el doctor
-  // necesita 2 auxiliares simultáneas (cirugías, exámenes complejos, etc.)
-  // O para completar la cobertura cuando la aux1 termina antes que el doctor.
-  assistant2Id        String?          @map("auxiliar2_id")
-  assistant2StartTime String?          @map("auxiliar2_hora_inicio") @db.VarChar(5)
-  assistant2EndTime   String?          @map("auxiliar2_hora_fin") @db.VarChar(5)
   roomId              String           @map("consultorio_id")
   weekday             DiaSemana        @map("dia_semana")
   startTime           String           @map("hora_inicio") @db.VarChar(5)
@@ -467,21 +454,47 @@ model Assignment {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  week           Week       @relation(fields: [weekId], references: [id])
-  resource       Resource   @relation("RecursoPrincipal", fields: [resourceId], references: [id])
-  assistant      Resource?  @relation("RecursoAuxiliar", fields: [assistantId], references: [id])
-  assistant2     Resource?  @relation("RecursoAuxiliar2", fields: [assistant2Id], references: [id])
-  room           Room       @relation(fields: [roomId], references: [id])
-  coveredAbsence Absence?   @relation("AsignacionesReemplazo", fields: [coveredAbsenceId], references: [id])
-  authorizer     User?      @relation("AutorizacionesFinDeSemana", fields: [authorizedById], references: [id])
+  week           Week                  @relation(fields: [weekId], references: [id])
+  resource       Resource              @relation("RecursoPrincipal", fields: [resourceId], references: [id])
+  room           Room                  @relation(fields: [roomId], references: [id])
+  coveredAbsence Absence?              @relation("AsignacionesReemplazo", fields: [coveredAbsenceId], references: [id])
+  authorizer     User?                 @relation("AutorizacionesFinDeSemana", fields: [authorizedById], references: [id])
   execution      Execution?
+  // Nov-2026 · Hector: un turno lleva las auxiliares que hagan falta, en
+  // secuencia hasta cubrir el horario del médico (o solapadas). Antes eran
+  // dos columnas fijas (auxiliar_id / auxiliar2_id); ahora es una lista. Se
+  // lee SIEMPRE ordenada por `position`.
+  assistants     AssignmentAssistant[]
 
   // Índices críticos para validación de conflictos (Especificación §6.2)
   @@index([resourceId, weekday, startTime])
-  @@index([assistantId, weekday, startTime])
   @@index([roomId, weekday])
   @@index([weekId])
   @@map("asignaciones")
+}
+
+/// Nov-2026 · Hector: las auxiliares de un turno, tantas como hagan falta.
+/// Reemplaza las columnas fijas auxiliar_id / auxiliar2_id de `asignaciones`
+/// (migración 20261111150000_auxiliares_por_turno, que copió las existentes:
+/// la 1ª quedó en orden 0 y la 2ª en orden 1).
+model AssignmentAssistant {
+  id           String  @id @default(uuid())
+  assignmentId String  @map("asignacion_id")
+  resourceId   String  @map("recurso_id")
+  // Sub-horario de esta auxiliar dentro del turno. NULL = hereda el horario
+  // del turno. Si cualquiera de las dos difiere del turno se guardan AMBAS
+  // (con una sola en null la auxiliar se "estiraba" al validar conflictos).
+  startTime    String? @map("hora_inicio") @db.VarChar(5)
+  endTime      String? @map("hora_fin") @db.VarChar(5)
+  // Orden en el turno (0 = la primera). Es también el orden en que se muestra.
+  position     Int     @default(0) @map("orden")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  resource   Resource   @relation("AuxiliarDeTurno", fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, resourceId])
+  @@index([resourceId])
+  @@map("asignacion_auxiliares")
 }
 
 // ============ EJECUCIÓN ============

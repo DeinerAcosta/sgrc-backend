@@ -119,8 +119,8 @@ async function limpiar() {
     where: {
       OR: [
         { resourceId: { in: idsPru } },
-        { assistantId: { in: idsPru } },
-        { assistant2Id: { in: idsPru } },
+        // Nov-2026 · Como auxiliar en cualquier posición (asignacion_auxiliares).
+        { assistants: { some: { resourceId: { in: idsPru } } } },
       ],
     },
   })
@@ -302,9 +302,10 @@ async function crear() {
     return !ag.franjas.some(([a, b]) => !(fin <= a || ini >= b))
   }) ?? null
 
-  const asignar = (recurso, room, weekday, startTime, endTime, extra = {}) => {
+  // `extra.sinAuxiliar` = turno sin auxiliar (antes se pasaba assistantId).
+  const asignar = (recurso, room, weekday, startTime, endTime, { sinAuxiliar = false, ...extra } = {}) => {
     const ciudad = ciudadDeSede.get(room.siteId)
-    const aux = 'assistantId' in extra ? null : auxLibre(weekday, startTime, endTime, ciudad)
+    const aux = sinAuxiliar ? null : auxLibre(weekday, startTime, endTime, ciudad)
     if (aux) {
       const k = aux.id + '|' + weekday
       if (!agendaAux.has(k)) agendaAux.set(k, { ciudad, franjas: [] })
@@ -320,7 +321,8 @@ async function crear() {
       endTime,
       patientCapacity: capacidad(startTime, endTime, recurso.slotMinutes),
       status: 'activa',
-      assistantId: aux?.id ?? null,
+      // Nov-2026 · Las auxiliares van en la lista del turno.
+      ...(aux ? { assistants: { create: [{ resourceId: aux.id, position: 0 }] } } : {}),
       ...extra,
     },
     select: { id: true },
@@ -439,7 +441,7 @@ async function crear() {
       status: 'activa',
       isReplacement: true,
       coveredAbsenceId: a3.id,
-      assistantId: auxiliares[1]?.id ?? null,
+      ...(auxiliares[1] ? { assistants: { create: [{ resourceId: auxiliares[1].id, position: 0 }] } } : {}),
     },
   })
 

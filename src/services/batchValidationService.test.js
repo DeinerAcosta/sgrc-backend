@@ -21,21 +21,31 @@ const recursos = new Map([
   ['baja',  { id: 'baja',  name: 'Ex Empleado', active: false,type: 'auxiliar',         multiRoom: false, maxHoursPerDay: 10, maxHoursPerWeek: 44,   slotMinutes: 15 }],
 ])
 
-const asig = (over = {}) => ({
-  weekId: SEMANA,
-  weekday: 'lunes',
-  roomId: 'c1',
-  resourceId: 'dra',
-  assistantId: null,
-  assistant2Id: null,
-  assistantStartTime: null,
-  assistantEndTime: null,
-  assistant2StartTime: null,
-  assistant2EndTime: null,
-  startTime: '08:00',
-  endTime: '12:00',
-  ...over,
-})
+// Nov-2026 · Las auxiliares del turno son una lista (`assistants`). Los tests
+// siguen escribiéndose con assistantId/assistant2Id por legibilidad; aquí se
+// convierten a la lista, igual que hace listaAuxiliaresDelBody con el body.
+// `assistants` explícito manda.
+const asig = (over = {}) => {
+  const {
+    assistantId = null, assistantStartTime = null, assistantEndTime = null,
+    assistant2Id = null, assistant2StartTime = null, assistant2EndTime = null,
+    ...resto
+  } = over
+  const assistants = [
+    assistantId && { resourceId: assistantId, startTime: assistantStartTime, endTime: assistantEndTime, position: 0 },
+    assistant2Id && { resourceId: assistant2Id, startTime: assistant2StartTime, endTime: assistant2EndTime, position: 1 },
+  ].filter(Boolean)
+  return {
+    weekId: SEMANA,
+    weekday: 'lunes',
+    roomId: 'c1',
+    resourceId: 'dra',
+    startTime: '08:00',
+    endTime: '12:00',
+    assistants,
+    ...resto,
+  }
+}
 
 const estado = (over = {}) => ({
   assignments: [],
@@ -182,6 +192,46 @@ describe('RN-08 · auxiliares', () => {
     )
     expect(omitidas[0].reason).toBe(MOTIVOS.AUXILIAR_OCUPADO)
     expect(omitidas[0].message).toContain('#2')
+  })
+
+  it('Nov-2026 · tres auxiliares en secuencia: choca solo la tercera y el mensaje dice #3', () => {
+    ;[['aux3', { id: 'aux3', name: 'Caro Aux', active: true, type: 'auxiliar', multiRoom: false, maxHoursPerDay: 10, maxHoursPerWeek: 44, slotMinutes: 15 }]]
+      .forEach(([k, v]) => recursos.set(k, v))
+    // Caro está de 11 a 12 en otra sala; en la candidata entra de 11 a 13.
+    const existente = asig({ roomId: 'c2', resourceId: 'multi', startTime: '11:00', endTime: '12:00', assistantId: 'aux3' })
+    const candidata = asig({
+      startTime: '07:00', endTime: '13:00',
+      assistants: [
+        { resourceId: 'aux1', startTime: '07:00', endTime: '09:00', position: 0 },
+        { resourceId: 'aux2', startTime: '09:00', endTime: '11:00', position: 1 },
+        { resourceId: 'aux3', startTime: '11:00', endTime: '13:00', position: 2 },
+      ],
+    })
+    const { skipped: omitidas } = validarLote([candidata], estado({ assignments: [existente] }))
+    expect(omitidas[0].reason).toBe(MOTIVOS.AUXILIAR_OCUPADO)
+    expect(omitidas[0].message).toContain('Conflicto de auxiliar #3')
+    expect(omitidas[0].message).toContain('Caro Aux')
+    expect(omitidas[0].message).toContain('de 11:00 a 12:00')
+    recursos.delete('aux3')
+  })
+
+  it('Nov-2026 · tres auxiliares en secuencia sin choques entran, y la 3ª queda ocupada para la siguiente', () => {
+    recursos.set('aux3', { id: 'aux3', name: 'Caro Aux', active: true, type: 'auxiliar', multiRoom: false, maxHoursPerDay: 10, maxHoursPerWeek: 44, slotMinutes: 15 })
+    const primera = asig({
+      startTime: '07:00', endTime: '13:00',
+      assistants: [
+        { resourceId: 'aux1', startTime: '07:00', endTime: '09:00', position: 0 },
+        { resourceId: 'aux2', startTime: '09:00', endTime: '11:00', position: 1 },
+        { resourceId: 'aux3', startTime: '11:00', endTime: '13:00', position: 2 },
+      ],
+    })
+    // Otra sala, otra doctora, con Caro de 12 a 13: choca con la 3ª de la primera.
+    const segunda = asig({ roomId: 'c2', resourceId: 'multi', startTime: '12:00', endTime: '13:00', assistantId: 'aux3' })
+    const { aceptadas, skipped: omitidas } = validarLote([primera, segunda], estado())
+    expect(aceptadas).toHaveLength(1)
+    expect(omitidas[0].reason).toBe(MOTIVOS.AUXILIAR_OCUPADO)
+    expect(omitidas[0].message).toContain('de 11:00 a 13:00')
+    recursos.delete('aux3')
   })
 
   it('no exige auxiliar libre si el consultorio no la requiere', () => {

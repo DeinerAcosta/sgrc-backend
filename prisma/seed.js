@@ -394,7 +394,8 @@ async function main() {
         asigs.push({
           weekId: semanaId,
           resourceId: recurso.id,
-          assistantId: aux?.id,
+          // Nov-2026 · Las auxiliares van en la lista del turno (asignacion_auxiliares).
+          ...(aux ? { assistants: { create: [{ resourceId: aux.id, position: 0 }] } } : {}),
           roomId: cons.id,
           weekday: dia,
           startTime: hi,
@@ -410,7 +411,7 @@ async function main() {
           asigs.push({
             weekId: semanaId,
             resourceId: rec2.id,
-            assistantId: aux2.id,
+            assistants: { create: [{ resourceId: aux2.id, position: 0 }] },
             roomId: cons.id,
             weekday: dia,
             startTime: '14:00',
@@ -544,7 +545,7 @@ async function main() {
         // El recurso puede aparecer como titular O como auxiliar (RN-18)
         const asigsDia = await prisma.assignment.findMany({
           where: {
-            OR: [{ resourceId: a.resource.id }, { assistantId: a.resource.id }],
+            OR: [{ resourceId: a.resource.id }, { assistants: { some: { resourceId: a.resource.id } } }],
             weekday: dia,
             status: { not: 'cancelada' },
           },
@@ -565,7 +566,7 @@ async function main() {
       //
       // El bucle de arriba es una COPIA del cálculo real (services/absenceService
       // → calcularImpacto) que se quedó atrás: cuenta las asignaciones donde el
-      // recurso figura como `assistantId`, o sea las del médico al que acompaña.
+      // recurso figura como auxiliar, o sea las del médico al que acompaña.
       // Así una auxiliar terminaba con 414 pacientes y 62 millones de costo de
       // oportunidad, que son los del doctor, no suyos.
       //

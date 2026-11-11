@@ -542,7 +542,7 @@ async function main() {
     // Lo que confirmar va a tocar, para devolverlo.
     const original = await prisma.absence.findUnique({ where: { id: a.id } })
     const turnosDia = await prisma.assignment.findMany({
-      where: { weekId: fr.week_id, OR: [{ resourceId: original.resourceId }, { assistantId: original.resourceId }] },
+      where: { weekId: fr.week_id, OR: [{ resourceId: original.resourceId }, { assistants: { some: { resourceId: original.resourceId } } }] },
       select: { id: true, status: true },
     })
     const ejecAntes = await prisma.execution.findMany({ where: { assignmentId: { in: turnosDia.map((t) => t.id) } } })

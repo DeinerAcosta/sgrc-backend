@@ -44,7 +44,7 @@ export const ESPECIALIDADES_EXIGEN_APOYO = new Set([
   'oftalmologia', 'anestesiologia', 'otorrinolaringologia',
 ])
 
-/** Admiten apoyo (auxiliar_id / auxiliar2_id). Optometria y asesoria no. */
+/** Admiten apoyo (las auxiliares del turno, asignacion_auxiliares). Optometria y asesoria no. */
 export const ESPECIALIDADES_PERMITEN_APOYO = new Set([
   ...ESPECIALIDADES_EXIGEN_APOYO, 'diagnostico',
 ])
@@ -56,8 +56,42 @@ export const minutosAhhmm = (m) =>
 export const solapan = (a, hi, hf) => !(hf <= a.startTime || hi >= a.endTime)
 
 /**
+ * Las auxiliares de un turno con su hora EFECTIVA, en orden.
+ *
+ * Nov-2026 · Hector: un turno lleva las auxiliares que hagan falta (antes eran
+ * dos columnas fijas, auxiliar_id y auxiliar2_id). Cada una puede traer su
+ * sub-horario; null significa "hereda el horario del turno". Este es el único
+ * sitio que resuelve esa herencia: el resto del código pide aquí la lista.
+ *
+ * Lee `a.assistants` (filas de asignacion_auxiliares, con resourceId,
+ * startTime, endTime y position). Ordena por position aunque la consulta no lo
+ * haya pedido, para que "la primera" signifique siempre lo mismo.
+ *
+ * @returns {Array<{ resourceId: string, ini: string, fin: string, position: number }>}
+ */
+export function auxiliaresDe(a) {
+  const lista = Array.isArray(a?.assistants) ? a.assistants : []
+  return lista
+    .filter((x) => x?.resourceId)
+    .map((x, i) => ({
+      resourceId: x.resourceId,
+      ini: x.startTime || a.startTime,
+      fin: x.endTime || a.endTime,
+      position: x.position ?? i,
+    }))
+    .sort((x, y) => x.position - y.position)
+}
+
+/** Ids de las auxiliares del turno, en orden. */
+export const idsAuxiliaresDe = (a) => auxiliaresDe(a).map((x) => x.resourceId)
+
+/** ¿`recursoId` está en el turno `a`, como profesional o como cualquiera de sus auxiliares? */
+export const participaEn = (a, recursoId) =>
+  !!recursoId && (a.resourceId === recursoId || idsAuxiliaresDe(a).includes(recursoId))
+
+/**
  * Rango horario EFECTIVO en el que `auxId` está activo dentro de la asignación
- * `a`. Si figura como auxiliarId/auxiliar2Id y tiene sub-horario, se respeta;
+ * `a`. Si figura como auxiliar del turno y tiene sub-horario, se respeta;
  * null significa "hereda del doctor". Si es el recurso principal, su horario es
  * el del doctor.
  *
@@ -65,12 +99,8 @@ export const solapan = (a, hi, hf) => !(hf <= a.startTime || hi >= a.endTime)
  * inexistentes (aux 07-09 vs aux 09-15 con el mismo doctor 07-15).
  */
 export function horarioEfectivoAuxEnAsig(a, auxId) {
-  if (a.assistantId === auxId) {
-    return { ini: a.assistantStartTime || a.startTime, fin: a.assistantEndTime || a.endTime }
-  }
-  if (a.assistant2Id === auxId) {
-    return { ini: a.assistant2StartTime || a.startTime, fin: a.assistant2EndTime || a.endTime }
-  }
+  const suya = auxiliaresDe(a).find((x) => x.resourceId === auxId)
+  if (suya) return { ini: suya.ini, fin: suya.fin }
   return { ini: a.startTime, fin: a.endTime }
 }
 

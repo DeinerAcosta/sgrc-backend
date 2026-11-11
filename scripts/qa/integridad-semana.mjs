@@ -52,7 +52,9 @@ const turnos = await prisma.assignment.findMany({
   where: { weekId: semana.id, status: { not: 'cancelada' }, room: { active: true } },
   select: {
     id: true, weekday: true, startTime: true, endTime: true,
-    resourceId: true, assistantId: true, assistant2Id: true, coveredAbsenceId: true,
+    resourceId: true, coveredAbsenceId: true,
+    // Nov-2026 · Las auxiliares del turno son una lista (asignacion_auxiliares).
+    assistants: { select: { resourceId: true }, orderBy: { position: 'asc' } },
     resource: { select: { name: true, multiRoom: true } },
     room: { select: { name: true, site: { select: { name: true, city: true } } } },
   },
@@ -115,8 +117,7 @@ const agregar = (persona, t, rol) => {
 }
 for (const t of turnos) {
   agregar(t.resourceId, t, 'profesional')
-  agregar(t.assistantId, t, 'auxiliar')
-  agregar(t.assistant2Id, t, 'auxiliar')
+  for (const x of t.assistants) agregar(x.resourceId, t, 'auxiliar')
 }
 
 const problemas = []

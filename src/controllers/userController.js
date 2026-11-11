@@ -9,6 +9,7 @@ import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { invalidarUsuarioEnCache } from '../middleware/auth.js'
 import { TIPOS_RECURSO, TIPOS_RECURSO_SET, ESQUEMAS_PAGO_SET, normalizarEsquemaYTope, puedeMultiConsultorio, TIPOS_CON_SUBESPECIALIDAD, TIPOS_SIN_COORDINADOR_LIDER} from '../lib/resourceTypes.js'
 import { resolverSubespecialidad } from '../lib/subespecialidades.js'
+import { whereParticipa } from '../lib/auxiliaresTurno.js'
 
 // 22-oct · Faltaba 'reprogramador': crear o editar un usuario con ese rol
 // respondía "Datos inválidos" (lo vio Hector en producción).
@@ -658,7 +659,7 @@ export async function remove(req, res) {
       if (recursoId) {
         // Borrar recurso solo si no tiene asignaciones/ausencias
         const tieneAsig = await prisma.assignment.count({
-          where: { OR: [{ resourceId: recursoId }, { assistantId: recursoId }] },
+          where: whereParticipa(recursoId),
         })
         const tieneAus = await prisma.absence.count({ where: { resourceId: recursoId } })
         if (tieneAsig === 0 && tieneAus === 0) {

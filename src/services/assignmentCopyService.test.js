@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const prismaMock = {
   assignment: { findMany: vi.fn(), createMany: vi.fn() },
+  assignmentAssistant: { createMany: vi.fn() },
   resource: { findMany: vi.fn() },
   room: { findMany: vi.fn() },
   weekSiteClosure: { findMany: vi.fn() },
@@ -29,8 +30,7 @@ const candidata = (over = {}) => ({
   weekday: 'lunes',
   roomId: 'c1',
   resourceId: 'dra',
-  assistantId: null,
-  assistant2Id: null,
+  assistants: [],
   startTime: '08:00',
   endTime: '12:00',
   ...over,
@@ -221,15 +221,25 @@ describe('campos que se guardan', () => {
     expect(prismaMock.assignment.createMany.mock.calls[0][0].data[0].patientCapacity).toBe(9)
   })
 
-  it('arrastra los sub-horarios de las auxiliares', async () => {
+  it('arrastra TODAS las auxiliares con sus sub-horarios, en orden y colgadas del turno nuevo (Nov-2026)', async () => {
     montar()
-    await copiarAsignacionesValidadas([candidata({
-      assistantId: 'aux', assistantStartTime: '08:00', assistantEndTime: '10:00',
+    RECURSOS.push({ id: 'aux2', name: 'Beto Aux', active: true, type: 'auxiliar', multiRoom: false, maxHoursPerDay: 10, maxHoursPerWeek: 44, slotMinutes: 15 })
+    const r = await copiarAsignacionesValidadas([candidata({
+      assistants: [
+        { resourceId: 'aux', startTime: '08:00', endTime: '10:00' },
+        { resourceId: 'aux2', startTime: null, endTime: null },
+      ],
     })], { userRol: 'coordinador', userSedes: ['sedeA', 'sedeB'] })
+    RECURSOS.pop()
     const fila = prismaMock.assignment.createMany.mock.calls[0][0].data[0]
-    expect(fila.assistantId).toBe('aux')
-    expect(fila.assistantStartTime).toBe('08:00')
-    expect(fila.assistantEndTime).toBe('10:00')
+    expect(fila.id).toBeTruthy()
+    expect(fila).not.toHaveProperty('assistantId')
+    const aux = prismaMock.assignmentAssistant.createMany.mock.calls[0][0].data
+    expect(aux).toEqual([
+      { assignmentId: fila.id, resourceId: 'aux', startTime: '08:00', endTime: '10:00', position: 0 },
+      { assignmentId: fila.id, resourceId: 'aux2', startTime: null, endTime: null, position: 1 },
+    ])
+    expect(r.created[0].assistants).toHaveLength(2)
   })
 
   it('marca las horas nocturnas', async () => {

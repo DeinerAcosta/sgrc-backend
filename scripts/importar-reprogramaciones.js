@@ -332,7 +332,7 @@ async function deshacer() {
   const borradas = await prisma.absence.deleteMany({ where: { source: 'historico' } })
   let quitados = 0
   for (const r of creados) {
-    const usos = await prisma.absence.count({ where: { resourceId: r.id } }) + await prisma.assignment.count({ where: { OR: [{ resourceId: r.id }, { assistantId: r.id }] } })
+    const usos = await prisma.absence.count({ where: { resourceId: r.id } }) + await prisma.assignment.count({ where: { OR: [{ resourceId: r.id }, { assistants: { some: { resourceId: r.id } } }] } })
     if (!usos) { await prisma.resource.delete({ where: { id: r.id } }); quitados++ }
   }
   await registrarAuditoria({ userId: null, action: 'deshacer_historico_reprogramaciones', entity: 'ausencias', entityId: 'historico-2026', newValue: { ausencias: borradas.count, profesionales: quitados } })

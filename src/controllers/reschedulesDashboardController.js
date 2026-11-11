@@ -9,6 +9,8 @@
 // Rango default: últimos 3 meses. Se puede sobreescribir.
 
 import { prisma } from '../lib/prisma.js'
+import { idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { SELECT_AUXILIARES } from '../lib/auxiliaresTurno.js'
 import { cargarFestivosDelRango, esDomingoOFestivo } from '../lib/calendario.js'
 import { withCache, keyDeQuery } from '../lib/cache.js'
 import { tiposProfesionalesPermitidos } from '../lib/resourceTypes.js'
@@ -84,7 +86,7 @@ async function mapaSedesPorRecurso() {
     where: { status: { not: 'cancelada' } },
     select: {
       resourceId: true,
-      assistantId: true,
+      assistants: SELECT_AUXILIARES,
       room: { select: { siteId: true, site: { select: { name: true } } } },
     },
   })
@@ -97,7 +99,7 @@ async function mapaSedesPorRecurso() {
   }
   for (const a of asigs) {
     add(a.resourceId, a.room.siteId, a.room.site.name)
-    add(a.assistantId, a.room.siteId, a.room.site.name)
+    for (const rid of idsAuxiliaresDe(a)) add(rid, a.room.siteId, a.room.site.name)
   }
   return mapa
 }

@@ -379,18 +379,21 @@ describe('dataProductividad — filtros, left-join a recursos activos y promedio
     prismaMock.absence.findMany.mockResolvedValue([])
     const turno = (over) => ({
       resourceId: 'r1', weekId: 's1', weekday: 'lunes', startTime: '07:00', endTime: '13:00', patientCapacity: 20,
-      resource: { type: 'oftalmologo' }, assistant: { type: 'auxiliar' }, assistant2: null,
+      resource: { type: 'oftalmologo' },
       room: { siteId: 'st2', site: { name: 'Sede 2' } },
       execution: { patientsSeen: 18, shiftStatus: 'completa' },
       ...over,
     })
+    // Nov-2026 · Las auxiliares del turno son una lista (asignacion_auxiliares).
+    const enLista = (resourceId, position = 0, startTime = null, endTime = null) =>
+      ({ resourceId, startTime, endTime, position, resource: { type: 'auxiliar' } })
     prismaMock.assignment.findMany.mockResolvedValue([
       // Lunes: hereda 07-13 del médico (6h − 1h de almuerzo = 5h)
-      turno({ assistantId: 'ax' }),
+      turno({ assistants: [enLista('ax')] }),
       // Lunes: otro consultorio a la misma hora, ya cubierta → no suma
-      turno({ resourceId: 'r2', assistantId: 'ax' }),
-      // Martes: como auxiliar 2 solo 07-09, sin ejecución registrada
-      turno({ weekday: 'martes', assistant2Id: 'ax', assistant2StartTime: '07:00', assistant2EndTime: '09:00', execution: null }),
+      turno({ resourceId: 'r2', assistants: [enLista('ax')] }),
+      // Martes: como 3ª auxiliar solo 07-09, sin ejecución registrada
+      turno({ weekday: 'martes', assistants: [enLista('o1'), enLista('o2', 1), enLista('ax', 2, '07:00', '09:00')], execution: null }),
     ])
 
     const [aux] = await dataProductividad({ desde: '2026-06-01', hasta: '2026-06-07' })
@@ -415,8 +418,9 @@ describe('dataProductividad — filtros, left-join a recursos activos y promedio
       { resourceId: 'ax', startDate: new Date('2026-06-02T00:00:00Z'), endDate: new Date('2026-06-02T00:00:00Z'), isPartial: true, absenceStartTime: '07:00', absenceEndTime: '09:00' },
     ] : []))
     const turno = (over) => ({
-      resourceId: 'r1', weekId: 's1', startTime: '07:00', endTime: '13:00', patientCapacity: 20, assistantId: 'ax',
-      resource: { type: 'oftalmologo' }, assistant: { type: 'auxiliar' }, assistant2: null,
+      resourceId: 'r1', weekId: 's1', startTime: '07:00', endTime: '13:00', patientCapacity: 20,
+      assistants: [{ resourceId: 'ax', startTime: null, endTime: null, position: 0, resource: { type: 'auxiliar' } }],
+      resource: { type: 'oftalmologo' },
       room: { siteId: 'st2', site: { name: 'Sede 2' } },
       execution: { patientsSeen: 18, shiftStatus: 'completa' },
       ...over,

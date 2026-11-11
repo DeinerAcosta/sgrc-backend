@@ -1,6 +1,8 @@
 import { startOfDay, endOfDay, parseISO } from 'date-fns'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
+import { auxiliaresDe, idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { INCLUDE_AUXILIARES } from '../lib/auxiliaresTurno.js'
 
 const DOW = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado']
 
@@ -48,7 +50,7 @@ export async function get(req, res) {
       include: {
         room: { select: { id: true, name: true, specialty: true } },
         resource: { select: { id: true, name: true, type: true, specialty: true } },
-        assistant: { select: { id: true, name: true } },
+        assistants: INCLUDE_AUXILIARES,
       },
       orderBy: [{ startTime: 'asc' }, { room: { name: 'asc' } }],
     })
@@ -60,7 +62,7 @@ export async function get(req, res) {
   }
 
   // Ausencias confirmadas que afectan a estas personas ese día
-  const recursoIds = [...new Set(asignaciones.flatMap((a) => [a.resourceId, a.assistantId]).filter(Boolean))]
+  const recursoIds = [...new Set(asignaciones.flatMap((a) => [a.resourceId, ...idsAuxiliaresDe(a)]).filter(Boolean))]
   const ausencias = await prisma.absence.findMany({
     where: {
       source: 'sgrc',   // Oct-2026 · Sin el histórico del Excel: solo lo registrado en el SGRC.
@@ -87,18 +89,34 @@ export async function get(req, res) {
   // Anotar cada asignación con su estado de cobertura
   const items = asignaciones.map((a) => {
     const ausR = ausenciaDelTurno(a.resourceId, a)
-    const ausA = a.assistantId ? ausenciaDelTurno(a.assistantId, a) : null
+    const fmtAus = (x) => (x ? { type: x.type, parcial: x.isPartial, desde: x.absenceStartTime, hasta: x.absenceEndTime } : null)
+    // Nov-2026 · Cada auxiliar del turno contra SU horario en él (su
+    // sub-horario si cubre solo una parte), no contra el del médico.
+    const auxiliares = auxiliaresDe(a).map((x) => {
+      const fila = a.assistants.find((y) => y.resourceId === x.resourceId)
+      return {
+        resource_id: x.resourceId,
+        start_time: fila?.startTime ?? null,
+        end_time: fila?.endTime ?? null,
+        position: x.position,
+        resource: fila?.resource ?? null,
+        ausencia: fmtAus(ausenciaDelTurno(x.resourceId, { startTime: x.ini, endTime: x.fin })),
+      }
+    })
+    // La primera auxiliar ausente (compatibilidad: antes solo había una).
+    const ausA = auxiliares.find((x) => x.ausencia)
     return {
       id: a.id,
       start_time: a.startTime,
       end_time: a.endTime,
       room: a.room,
       resource: a.resource,
-      assistant: a.assistant,
+      assistants: auxiliares,
+      assistant: auxiliares[0]?.resource ?? null,
       patient_capacity: a.patientCapacity,
       is_overtime: a.isOvertime,
       ausencia_recurso: ausR ? { type: ausR.type, parcial: ausR.isPartial, desde: ausR.absenceStartTime, hasta: ausR.absenceEndTime } : null,
-      ausencia_auxiliar: ausA ? { type: ausA.type, parcial: ausA.isPartial, desde: ausA.absenceStartTime, hasta: ausA.absenceEndTime } : null,
+      ausencia_auxiliar: ausA ? { ...ausA.ausencia, resource_id: ausA.resource_id } : null,
     }
   })
 

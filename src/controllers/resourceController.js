@@ -8,7 +8,8 @@ import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUn
 import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 import { resolverSubespecialidad, nombresDelCatalogo, exigeSubespecialidad } from '../lib/subespecialidades.js'
 import { diasLaborables, ausenciaEnSemana, horasDisponibles } from '../lib/disponibilidadSemana.js'
-import { horarioEfectivoAuxEnAsig } from '../lib/timeSlots.js'
+import { horarioEfectivoAuxEnAsig, participaEn, idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { SELECT_AUXILIARES, whereParticipa, serializarAsignacion } from '../lib/auxiliaresTurno.js'
 
 const TIPOS = TIPOS_RECURSO
 
@@ -137,8 +138,8 @@ export async function list(req, res) {
         { user: { is: { sites: { some: { siteId: sede_id } } } } },
         { leadCoordinatorId: { in: coordsDeLaSede } },
         { assignmentsAsLead: turnoEnLaSede },
-        { assignmentsAsAssistant: turnoEnLaSede },
-        { assignmentsAsAssistant2: turnoEnLaSede },
+        // Nov-2026 · Como auxiliar, en cualquier posición del turno.
+        { assistantInAssignments: { some: { assignment: { room: { siteId: sede_id }, status: { not: 'cancelada' } } } } },
       ],
     }]
   }
@@ -188,8 +189,8 @@ export async function list(req, res) {
     // (bug real detectado sep-2026: sin este campo, todas las franjas caían en
     // `undefined` y colapsaban L-V en un solo día, sub-contando).
     select: {
-      resourceId: true, assistantId: true, assistant2Id: true, weekday: true, startTime: true, endTime: true, status: true,
-      assistantStartTime: true, assistantEndTime: true, assistant2StartTime: true, assistant2EndTime: true,
+      resourceId: true, weekday: true, startTime: true, endTime: true, status: true,
+      assistants: SELECT_AUXILIARES,
     },
   })
 
@@ -214,10 +215,10 @@ export async function list(req, res) {
   }).length
   const factorEfectivo = (DIAS_LABORABLES_SEMANA - festivosLaborables) / DIAS_LABORABLES_SEMANA
 
-  // Auxiliares "liberadas" por RN-24: las que aparecen como auxiliarId
-  // en alguna asignación con estado 'sin_cobertura'.
+  // Auxiliares "liberadas" por RN-24: las que van como auxiliar (en cualquier
+  // posición) en alguna asignación con estado 'sin_cobertura'.
   const liberadas = new Set(
-    asignaciones.filter((a) => a.status === 'sin_cobertura' && a.assistantId).map((a) => a.assistantId)
+    asignaciones.filter((a) => a.status === 'sin_cobertura').flatMap((a) => idsAuxiliaresDe(a))
   )
 
   // Ausencias confirmadas de la semana: el tope se mide contra lo que el recurso
@@ -244,10 +245,11 @@ export async function list(req, res) {
   }
 
   const enriquecidos = recursos.map((r) => {
-    // Nov-2026 · También como auxiliar 2, y con el sub-horario de la auxiliar
-    // (antes contaba el turno entero del médico aunque ella cubriera 2 horas).
+    // Nov-2026 · Como auxiliar en cualquier posición de la lista, y con su
+    // sub-horario (antes contaba el turno entero del médico aunque ella
+    // cubriera 2 horas).
     const propias = asignaciones
-      .filter((a) => a.resourceId === r.id || a.assistantId === r.id || a.assistant2Id === r.id)
+      .filter((a) => participaEn(a, r.id))
       .map((a) => {
         const ef = horarioEfectivoAuxEnAsig(a, r.id)
         return { ...a, startTime: ef.ini, endTime: ef.fin }
@@ -325,16 +327,16 @@ export async function getById(req, res) {
  * habria reventado contra la llave foranea en vez de avisar.
  */
 async function dependenciasDeRecurso(id) {
-  const [titular, aux1, aux2, ausencias, backoffice, solicitudes] = await Promise.all([
+  const [titular, comoAuxiliar, ausencias, backoffice, solicitudes] = await Promise.all([
     prisma.assignment.count({ where: { resourceId: id } }),
-    prisma.assignment.count({ where: { assistantId: id } }),
-    prisma.assignment.count({ where: { assistant2Id: id } }),
+    // Nov-2026 · Turnos donde va como auxiliar (asignacion_auxiliares).
+    prisma.assignmentAssistant.count({ where: { resourceId: id } }),
     prisma.absence.count({ where: { resourceId: id } }),
     prisma.backofficeAssignment.count({ where: { assistantId: id } }),
     prisma.resourceRequest.count({ where: { resourceId: id } }),
   ])
   const detalle = {
-    asignaciones: titular + aux1 + aux2,
+    asignaciones: titular + comoAuxiliar,
     ausencias,
     backoffice,
     solicitudes,
@@ -516,14 +518,19 @@ export async function horario(req, res) {
   const asignaciones = await prisma.assignment.findMany({
     where: {
       weekId: semana_id || undefined,
-      OR: [{ resourceId: req.params.id }, { assistantId: req.params.id }],
+      ...whereParticipa(req.params.id),
       status: { not: 'cancelada' },
     },
     include: {
       room: { include: { site: true } },
       resource: true,
-      assistant: true,
-      assistant2: true,
+      assistants: {
+        orderBy: { position: 'asc' },
+        select: {
+          resourceId: true, startTime: true, endTime: true, position: true,
+          resource: { select: { id: true, name: true, type: true, leadCoordinatorId: true } },
+        },
+      },
     },
     orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
   })
@@ -537,9 +544,12 @@ export async function horario(req, res) {
   // oftalmólogos rotativos sin líder), usamos el líder del AUX (en la vista
   // del recurso, el aux suele ser el usuario logueado y sí tiene líder). Así
   // siempre se muestra un coord útil en vez de "sin coordinador".
+  // Nov-2026 · Con varias auxiliares, la que se está mirando; si no, la 1ª.
+  const auxDeReferencia = (a) =>
+    (a.assistants.find((x) => x.resourceId === req.params.id) ?? a.assistants[0])?.resource ?? null
   const liderIds = [...new Set([
     ...asignaciones.map((a) => a.resource?.leadCoordinatorId),
-    ...asignaciones.map((a) => a.assistant?.leadCoordinatorId),
+    ...asignaciones.map((a) => auxDeReferencia(a)?.leadCoordinatorId),
   ].filter(Boolean))]
   const lideres = liderIds.length > 0
     ? await prisma.user.findMany({
@@ -551,10 +561,10 @@ export async function horario(req, res) {
 
   const out = asignaciones.map((a) => {
     const liderTitular = liderById.get(a.resource?.leadCoordinatorId) ?? null
-    const liderAux = liderById.get(a.assistant?.leadCoordinatorId) ?? null
+    const liderAux = liderById.get(auxDeReferencia(a)?.leadCoordinatorId) ?? null
     const coord = liderTitular ?? liderAux ?? null
     return {
-      ...a,
+      ...serializarAsignacion(a),
       resource: a.resource
         ? { ...a.resource, leadCoordinator: coord }
         : a.resource,
@@ -602,7 +612,7 @@ export async function productividad(req, res) {
     ? await prisma.assignment.findMany({
         where: {
           weekId: { in: semanas.map((s) => s.id) },
-          OR: [{ resourceId: recursoId }, { assistantId: recursoId }],
+          ...whereParticipa(recursoId),
           status: { not: 'cancelada' },
         },
         select: {
@@ -698,11 +708,12 @@ export async function productividad(req, res) {
 /** GET /auxiliares/liberadas — auxiliares liberadas por ausencia confirmada de su médico */
 export async function liberadas(req, res) {
   // Auxiliares cuyo médico tiene una asignación marcada 'sin_cobertura'
-  const asignacionesSinCobertura = await prisma.assignment.findMany({
-    where: { status: 'sin_cobertura', assistantId: { not: null } },
-    select: { assistantId: true },
+  // Nov-2026 · Todas las auxiliares de esos turnos, no solo la primera.
+  const filas = await prisma.assignmentAssistant.findMany({
+    where: { assignment: { status: 'sin_cobertura' } },
+    select: { resourceId: true },
   })
-  const idsLiberadas = [...new Set(asignacionesSinCobertura.map((a) => a.assistantId))]
+  const idsLiberadas = [...new Set(filas.map((a) => a.resourceId))]
 
   const liberadas = await prisma.resource.findMany({
     where: { id: { in: idsLiberadas }, active: true },

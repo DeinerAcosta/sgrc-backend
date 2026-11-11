@@ -38,20 +38,22 @@ try {
         { notes: { startsWith: 'Generado automáticamente — ausencia confirmada' } },
         { notes: { startsWith: 'Sobreescrito automáticamente — ausencia confirmada' } },
       ],
-      assignment: { is: { OR: [{ assistantId: { not: null } }, { assistant2Id: { not: null } }] } },
+      // Nov-2026 · Turnos con al menos una auxiliar (lista asignacion_auxiliares).
+      assignment: { is: { assistants: { some: {} } } },
     },
     select: {
       id: true, notes: true, locked: true,
       assignment: {
         select: {
-          id: true, weekday: true, startTime: true, endTime: true, resourceId: true, assistantId: true, assistant2Id: true,
+          id: true, weekday: true, startTime: true, endTime: true, resourceId: true,
+          assistants: { select: { resourceId: true } },
           week: { select: { startDate: true } },
           resource: { select: { name: true } }, room: { select: { name: true, site: { select: { name: true } } } },
         },
       },
     },
   })
-  const recursos = [...new Set(ejecuciones.flatMap((e) => [e.assignment.resourceId, e.assignment.assistantId, e.assignment.assistant2Id]).filter(Boolean))]
+  const recursos = [...new Set(ejecuciones.flatMap((e) => [e.assignment.resourceId, ...e.assignment.assistants.map((x) => x.resourceId)]).filter(Boolean))]
   const ausencias = await prisma.absence.findMany({
     where: { status: 'confirmada', resourceId: { in: recursos } },
     select: { resourceId: true, startDate: true, endDate: true },
@@ -61,7 +63,7 @@ try {
     const a = e.assignment
     const fecha = fechaDeTurno(a.week.startDate, a.weekday)
     if (!fecha || ausenteEse(ausencias, a.resourceId, fecha)) return false   // el médico sí faltó: está bien
-    return [a.assistantId, a.assistant2Id].some((aux) => aux && ausenteEse(ausencias, aux, fecha))
+    return a.assistants.some((x) => ausenteEse(ausencias, x.resourceId, fecha))
   })
   const generadas = falsas.filter((e) => e.notes.startsWith('Generado') && !e.locked)
   const sobreescritas = falsas.filter((e) => e.notes.startsWith('Sobreescrito'))

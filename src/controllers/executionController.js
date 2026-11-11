@@ -3,6 +3,8 @@ import { format } from 'date-fns'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
+import { idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { INCLUDE_AUXILIARES, SELECT_AUXILIARES, whereEsAuxiliar, serializarAsignacion } from '../lib/auxiliaresTurno.js'
 
 // =============================================================================
 // AISLAMIENTO POR SEDE — fix incidente jun-2026
@@ -170,11 +172,11 @@ export async function pendientesDelDia(req, res) {
     include: {
       room: true,
       resource: true,
-      assistant: true,
+      assistants: INCLUDE_AUXILIARES,
       execution: true,
     },
   })
-  res.json(asigs)
+  res.json(asigs.map(serializarAsignacion))
 }
 
 /**
@@ -197,22 +199,18 @@ export async function misPendientesDelDia(req, res) {
       // Asesores no atienden pacientes: si el principal es asesor, el aux
       // vinculado tampoco debería ver esa asignación en Mi ejecución.
       resource: { type: { not: 'asesor_servicios' } },
-      // Aux: aparece como aux1 o aux2 en la asignación (bug histórico: el sistema
-      // usa auxiliarId como principal; auxiliar2Id existe pero rara vez se popula).
-      OR: [
-        { assistantId: recursoId },
-        { assistant2Id: recursoId },
-      ],
+      // Aux: aparece en cualquier posición de la lista de auxiliares del turno.
+      ...whereEsAuxiliar(recursoId),
     },
     include: {
       room: true,
       resource: true,
-      assistant: true,
+      assistants: INCLUDE_AUXILIARES,
       execution: true,
     },
     orderBy: { startTime: 'asc' },
   })
-  res.json(asigs)
+  res.json(asigs.map(serializarAsignacion))
 }
 
 export async function get(req, res) {
@@ -237,9 +235,9 @@ export async function create(req, res) {
   if (recursoIdActor) {
     const dueño = await prisma.assignment.findUnique({
       where: { id: data.assignmentId },
-      select: { assistantId: true, assistant2Id: true },
+      select: { assistants: SELECT_AUXILIARES },
     })
-    if (!dueño || (dueño.assistantId !== recursoIdActor && dueño.assistant2Id !== recursoIdActor)) {
+    if (!dueño || !idsAuxiliaresDe(dueño).includes(recursoIdActor)) {
       throw errors.forbidden('No es el auxiliar asignado — no puede registrar esta ejecución')
     }
   }
@@ -328,6 +326,7 @@ export async function saveDay(req, res) {
     include: {
       week: true,
       room: { select: { siteId: true } },
+      assistants: SELECT_AUXILIARES,
     },
   })
   const asigMap = Object.fromEntries(asigs.map((a) => [a.id, a]))
@@ -345,12 +344,12 @@ export async function saveDay(req, res) {
   }
 
   // AISLAMIENTO POR AUXILIAR: si el actor es rol recurso, validar que TODAS
-  // las asignaciones del batch le pertenezcan como aux (aux1 o aux2). Rechazo
-  // total en bloque — misma política que sedes. Requiere include auxiliarId +
-  // auxiliar2Id, que ya vienen por default en findMany sin select restrictivo.
+  // las asignaciones del batch le pertenezcan como aux (en cualquier posición
+  // de la lista). Rechazo total en bloque — misma política que sedes. Por eso
+  // la consulta de arriba trae `assistants`.
   const recursoIdBatch = await recursoIdDelUsuario(req)
   if (recursoIdBatch) {
-    const ajenas = asigs.filter((a) => a.assistantId !== recursoIdBatch && a.assistant2Id !== recursoIdBatch)
+    const ajenas = asigs.filter((a) => !idsAuxiliaresDe(a).includes(recursoIdBatch))
     if (ajenas.length > 0) {
       throw errors.forbidden(`El batch incluye ${ajenas.length} asignación(es) que no le corresponden como auxiliar. Operación rechazada.`)
     }

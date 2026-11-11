@@ -50,7 +50,7 @@ async function eliminarRecursoCompleto(recurso) {
   // 1. Asignaciones donde es principal/aux/aux2 — DELETE cascadea a ejecuciones.
   const asigsBorradas = await prisma.assignment.deleteMany({
     where: {
-      OR: [{ resourceId: id }, { assistantId: id }, { assistant2Id: id }],
+      OR: [{ resourceId: id }, { assistants: { some: { resourceId: id } } }],
     },
   })
   // 2. Ausencias del recurso.
@@ -84,7 +84,7 @@ async function main() {
     }
     // Contar primero
     const asigs = await prisma.assignment.count({
-      where: { OR: [{ resourceId: r.id }, { assistantId: r.id }, { assistant2Id: r.id }] },
+      where: { OR: [{ resourceId: r.id }, { assistants: { some: { resourceId: r.id } } }] },
     })
     const ausencias = await prisma.absence.count({ where: { resourceId: r.id } })
     console.log(`  🗑️  ${r.name} (${r.id.slice(0,8)})`)

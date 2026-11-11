@@ -4,7 +4,8 @@ import { errors } from '../lib/errors.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../lib/resourceTypes.js'
 import { DIAS_MATRIZ, validarFranjas, estadoAuxiliarEnTurno } from '../lib/matrizAuxiliares.js'
-import { horarioEfectivoAuxEnAsig } from '../lib/timeSlots.js'
+import { horarioEfectivoAuxEnAsig, participaEn } from '../lib/timeSlots.js'
+import { SELECT_AUXILIARES, whereParticipa } from '../lib/auxiliaresTurno.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
 
 /**
@@ -195,11 +196,11 @@ export async function shift(req, res) {
         weekday: q.weekday,
         status: { not: 'cancelada' },
         ...(q.exclude_assignment_id ? { id: { not: q.exclude_assignment_id } } : {}),
-        OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }, { assistant2Id: { in: ids } }],
+        ...whereParticipa(ids),
       },
       select: {
-        resourceId: true, assistantId: true, assistant2Id: true, startTime: true, endTime: true,
-        assistantStartTime: true, assistantEndTime: true, assistant2StartTime: true, assistant2EndTime: true,
+        resourceId: true, startTime: true, endTime: true,
+        assistants: SELECT_AUXILIARES,
         room: { select: { name: true, site: { select: { name: true } } } },
       },
     }),
@@ -221,7 +222,7 @@ export async function shift(req, res) {
 
   const items = ids.map((id) => {
     const franjas = turnos
-      .filter((t) => t.resourceId === id || t.assistantId === id || t.assistant2Id === id)
+      .filter((t) => participaEn(t, id))
       .map((t) => {
         const ef = horarioEfectivoAuxEnAsig(t, id)
         return { ini: ef.ini, fin: ef.fin, consultorio: t.room?.name ?? null, sede: t.room?.site?.name ?? null }
@@ -241,6 +242,10 @@ export async function shift(req, res) {
       horasDia: Math.round(horasDia * 10) / 10,
       horario: franjas,
       sedes: [...new Set(franjas.map((f) => f.sede).filter(Boolean))],
+      // Nov-2026 · Sus franjas de ese día en la Matriz (la malla fija), para
+      // que el Programador proponga el sub-horario con el que entra al turno.
+      // Vacío si no tiene celda ese día.
+      franjasMatriz: Array.isArray(celda?.ranges) ? celda.ranges.map((r) => ({ ini: r.ini, fin: r.fin })) : [],
     }
   })
   res.json(items)

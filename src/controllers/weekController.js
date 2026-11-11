@@ -5,6 +5,7 @@ import { differenceInDays, addDays } from 'date-fns'
 import { lunesDeLaSemana, domingoDeLaSemana } from '../lib/semana.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.js'
+import { SELECT_AUXILIARES, INCLUDE_AUXILIARES, serializarAsignacion } from '../lib/auxiliaresTurno.js'
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../services/absenceService.js'
 import { parteAfectada } from '../lib/tramos.js'
@@ -248,7 +249,7 @@ export async function copiar(req, res) {
   // de cualquiera, no solo la anterior) el origen suele traer más canceladas.
   const origen = await prisma.week.findUnique({
     where: { id: req.params.id },
-    include: { assignments: { where: { status: { not: 'cancelada' } } } },
+    include: { assignments: { where: { status: { not: 'cancelada' } }, include: { assistants: SELECT_AUXILIARES } } },
   })
   if (!origen) throw errors.notFound()
 
@@ -330,14 +331,10 @@ export async function copiar(req, res) {
 
   // Se copian también los sub-horarios de las auxiliares: sin ellos la copia no
   // es fiel y el validador vería a la aux ocupada el horario entero del doctor.
+  // Nov-2026 · Todas las auxiliares del turno (la lista), no solo dos.
   const asigsACopiar = asigsACopiarFiltradas.map((a) => ({
     resourceId: a.resourceId,
-    assistantId: a.assistantId,
-    assistant2Id: a.assistant2Id,
-    assistantStartTime: a.assistantStartTime,
-    assistantEndTime: a.assistantEndTime,
-    assistant2StartTime: a.assistant2StartTime,
-    assistant2EndTime: a.assistant2EndTime,
+    assistants: a.assistants.map((x) => ({ resourceId: x.resourceId, startTime: x.startTime, endTime: x.endTime })),
     roomId: a.roomId,
     weekday: a.weekday,
     startTime: a.startTime,
@@ -415,10 +412,11 @@ export async function copiar(req, res) {
 
     const refrescada = await prisma.week.findUnique({
       where: { id: existente.id },
-      include: { assignments: true },
+      include: { assignments: { include: { assistants: INCLUDE_AUXILIARES } } },
     })
     return res.json({
       ...refrescada,
+      assignments: refrescada.assignments.map(serializarAsignacion),
       replaced: reemplazadas,
       copied: resultadoCopia.copied,
       skipped: resultadoCopia.skipped,
@@ -441,11 +439,12 @@ export async function copiar(req, res) {
 
   const conAsignaciones = await prisma.week.findUnique({
     where: { id: nueva.id },
-    include: { assignments: true },
+    include: { assignments: { include: { assistants: INCLUDE_AUXILIARES } } },
   })
 
   res.status(201).json({
     ...conAsignaciones,
+    assignments: conAsignaciones.assignments.map(serializarAsignacion),
     replaced: 0,
     copied: copia.copied,
     skipped: copia.skipped,

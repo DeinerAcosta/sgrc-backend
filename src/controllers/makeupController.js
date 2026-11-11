@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { fechaSolo } from '../lib/fechas.js'
+import { whereParticipa } from '../lib/auxiliaresTurno.js'
 import {
   notificar,
   notificarCoordinadoresDeSede,
@@ -31,7 +32,7 @@ function recursoAlcanceCoord(misSedes, coordUserId) {
   const or = [
     { user: { is: { sites: { some: { siteId: { in: misSedes } } } } } },
     { assignmentsAsLead:      { some: { room: { siteId: { in: misSedes } } } } },
-    { assignmentsAsAssistant: { some: { room: { siteId: { in: misSedes } } } } },
+    { assistantInAssignments: { some: { assignment: { room: { siteId: { in: misSedes } } } } } },
   ]
   if (coordUserId) or.push({ leadCoordinatorId: coordUserId })
   return { OR: or }
@@ -66,7 +67,7 @@ async function sedesDelRecurso(recursoId) {
   if (!recursoId) return []
   const asigs = await prisma.assignment.findMany({
     where: {
-      OR: [{ resourceId: recursoId }, { assistantId: recursoId }],
+      ...whereParticipa(recursoId),
       status: { not: 'cancelada' },
     },
     include: { room: { select: { siteId: true } } },
@@ -245,7 +246,7 @@ export async function crear(req, res) {
   // Sedes donde el recurso tiene asignaciones — para notificar a los coords correctos.
   const asigs = await prisma.assignment.findMany({
     where: {
-      OR: [{ resourceId: ausencia.resourceId }, { assistantId: ausencia.resourceId }],
+      ...whereParticipa(ausencia.resourceId),
       status: { not: 'cancelada' },
     },
     include: { room: { select: { siteId: true } } },

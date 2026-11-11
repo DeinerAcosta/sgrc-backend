@@ -1,4 +1,6 @@
 import { prisma } from '../lib/prisma.js'
+import { participaEn } from '../lib/timeSlots.js'
+import { SELECT_AUXILIARES } from '../lib/auxiliaresTurno.js'
 import { notificar } from '../services/notificationService.js'
 import { getSemanaActual } from '../lib/week.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
@@ -95,7 +97,7 @@ export async function jobResumenCoordinador() {
   const asignaciones = await prisma.assignment.findMany({
     where: { weekId: semana.id, status: { not: 'cancelada' } },
     select: {
-      resourceId: true, assistantId: true, startTime: true, endTime: true,
+      resourceId: true, startTime: true, endTime: true, assistants: SELECT_AUXILIARES,
       room: { select: { siteId: true } },
     },
   })
@@ -141,7 +143,7 @@ export async function jobResumenCoordinador() {
     if (aus.todaLaSemana || !(tope > 0)) { saltadosAusencia++; continue }
     evaluados++
 
-    const propias = asignaciones.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
+    const propias = asignaciones.filter((a) => participaEn(a, r.id))
     const horas = propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
     const pct = Math.round((horas / tope) * 100)
     if (horas > 0 && pct >= UMBRAL) continue

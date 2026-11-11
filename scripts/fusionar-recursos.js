@@ -24,8 +24,8 @@
  * (revisadas una por una; no basta con asignaciones y ausencias):
  *
  *   · Assignment.resourceId      — titular de la franja
- *   · Assignment.assistantId     — auxiliar 1
- *   · Assignment.assistant2Id    — auxiliar 2
+ *   · AssignmentAssistant.resourceId — auxiliar del turno, en cualquier posición
+ *     (Nov-2026: antes eran las columnas auxiliar_id y auxiliar2_id)
  *   · Absence.resourceId         — las reposiciones cuelgan de la ausencia, viajan solas
  *   · BackofficeAssignment.assistantId
  *   · ResourceRequest.resourceId
@@ -63,16 +63,15 @@ const norm = (s) => String(s).trim().toLowerCase().replace(/\s+/g, ' ')
 
 /** Cuenta todo lo que apunta a un recurso. Las seis referencias del schema. */
 async function dependencias(id) {
-  const [titular, aux1, aux2, ausencias, backoffice, solicitudes] = await Promise.all([
+  const [titular, auxiliar, ausencias, backoffice, solicitudes] = await Promise.all([
     prisma.assignment.count({ where: { resourceId: id } }),
-    prisma.assignment.count({ where: { assistantId: id } }),
-    prisma.assignment.count({ where: { assistant2Id: id } }),
+    prisma.assignmentAssistant.count({ where: { resourceId: id } }),
     prisma.absence.count({ where: { resourceId: id } }),
     prisma.backofficeAssignment.count({ where: { assistantId: id } }),
     prisma.resourceRequest.count({ where: { resourceId: id } }),
   ])
-  const total = titular + aux1 + aux2 + ausencias + backoffice + solicitudes
-  return { titular, aux1, aux2, ausencias, backoffice, solicitudes, total }
+  const total = titular + auxiliar + ausencias + backoffice + solicitudes
+  return { titular, auxiliar, ausencias, backoffice, solicitudes, total }
 }
 
 async function main() {
@@ -102,7 +101,7 @@ async function main() {
     deps.set(c.id, d)
     console.log(`  id=${c.id}`)
     console.log(`     ${c.active ? 'activo  ' : 'inactivo'}  usuario=${c.user ? c.user.email : 'NINGUNO'}  creado ${c.createdAt.toISOString().slice(0, 16).replace('T', ' ')}`)
-    console.log(`     titular=${d.titular} aux1=${d.aux1} aux2=${d.aux2} ausencias=${d.ausencias} backoffice=${d.backoffice} solicitudes=${d.solicitudes}  (total ${d.total})`)
+    console.log(`     titular=${d.titular} auxiliar=${d.auxiliar} ausencias=${d.ausencias} backoffice=${d.backoffice} solicitudes=${d.solicitudes}  (total ${d.total})`)
   }
 
   // A quien se conserva: el que tiene usuario, salvo que se indique otro.
@@ -136,8 +135,7 @@ async function main() {
   }, {})
   console.log(`\nSE MOVERAN al recurso que se conserva:`)
   console.log(`   asignaciones como titular : ${mover.titular}`)
-  console.log(`   asignaciones como aux 1   : ${mover.aux1}`)
-  console.log(`   asignaciones como aux 2   : ${mover.aux2}`)
+  console.log(`   asignaciones como auxiliar: ${mover.auxiliar}`)
   console.log(`   ausencias (y sus reposiciones): ${mover.ausencias}`)
   console.log(`   tareas de backoffice      : ${mover.backoffice}`)
   console.log(`   solicitudes de recurso    : ${mover.solicitudes}`)
@@ -163,8 +161,25 @@ async function main() {
   const ids = aFusionar.map((c) => c.id)
   await prisma.$transaction(async (tx) => {
     await tx.assignment.updateMany({ where: { resourceId: { in: ids } }, data: { resourceId: destino.id } })
-    await tx.assignment.updateMany({ where: { assistantId: { in: ids } }, data: { assistantId: destino.id } })
-    await tx.assignment.updateMany({ where: { assistant2Id: { in: ids } }, data: { assistant2Id: destino.id } })
+    // Auxiliares del turno. Un turno no admite a la misma persona dos veces: si
+    // el que se conserva (u otra copia) ya está en ese turno, la fila sobrante
+    // se borra en vez de moverse.
+    const filasAux = await tx.assignmentAssistant.findMany({
+      where: { resourceId: { in: [...ids, destino.id] } },
+      select: { id: true, assignmentId: true, resourceId: true },
+      orderBy: { position: 'asc' },
+    })
+    const turnoConDestino = new Set()
+    for (const x of filasAux) if (x.resourceId === destino.id) turnoConDestino.add(x.assignmentId)
+    for (const x of filasAux) {
+      if (x.resourceId === destino.id) continue
+      if (turnoConDestino.has(x.assignmentId)) {
+        await tx.assignmentAssistant.delete({ where: { id: x.id } })
+      } else {
+        await tx.assignmentAssistant.update({ where: { id: x.id }, data: { resourceId: destino.id } })
+        turnoConDestino.add(x.assignmentId)
+      }
+    }
     await tx.absence.updateMany({ where: { resourceId: { in: ids } }, data: { resourceId: destino.id } })
     await tx.backofficeAssignment.updateMany({ where: { assistantId: { in: ids } }, data: { assistantId: destino.id } })
     await tx.resourceRequest.updateMany({ where: { resourceId: { in: ids } }, data: { resourceId: destino.id } })

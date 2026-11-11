@@ -20,6 +20,8 @@ import {
   BASE_MINUTOS_SEMANA_TEORICA,
 } from '../lib/calendario.js'
 import { TIPOS_INCAPACIDAD_QUE_NO_PENALIZAN, whereAusenciasIncapacidadEnRango } from '../lib/absences.js'
+import { idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { INCLUDE_AUXILIARES, SELECT_AUXILIARES, whereParticipa } from '../lib/auxiliaresTurno.js'
 import { cargarBloqueos, diasBloqueados } from '../lib/bloqueosSede.js'
 
 /**
@@ -135,8 +137,7 @@ async function mapaSedesPorRecurso(rango = {}) {
     where: { weekId: { in: semanaIds }, status: { not: 'cancelada' } },
     select: {
       resourceId: true,
-      assistantId: true,
-      assistant2Id: true,
+      assistants: SELECT_AUXILIARES,
       room: { select: { siteId: true, site: { select: { name: true } } } },
     },
   })
@@ -149,8 +150,7 @@ async function mapaSedesPorRecurso(rango = {}) {
   }
   for (const a of asigs) {
     add(a.resourceId, a.room.siteId, a.room.site.name)
-    add(a.assistantId, a.room.siteId, a.room.site.name)
-    add(a.assistant2Id, a.room.siteId, a.room.site.name)
+    for (const rid of idsAuxiliaresDe(a)) add(rid, a.room.siteId, a.room.site.name)
   }
   return mapa
 }
@@ -613,15 +613,9 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
             startTime: true,
             endTime: true,
             patientCapacity: true,
-            assistantId: true,
-            assistantStartTime: true,
-            assistantEndTime: true,
-            assistant2Id: true,
-            assistant2StartTime: true,
-            assistant2EndTime: true,
+            // Nov-2026 · Todas las auxiliares del turno, con su sub-horario y tipo.
+            assistants: INCLUDE_AUXILIARES,
             resource: { select: { type: true, multiRoom: true } },
-            assistant: { select: { type: true } },
-            assistant2: { select: { type: true } },
             execution: { select: { patientsSeen: true, shiftStatus: true } },
           },
         })
@@ -659,7 +653,7 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   // médico como no ejecutado (él sí atendió, PROYECTOS-3485). Entonces la
   // ejecución del turno no dice nada de ella: sus horas ejecutadas se recortan
   // con sus propias ausencias confirmadas de ese día.
-  const auxIds = [...new Set(asigs.flatMap((a) => [a.assistantId, a.assistant2Id]).filter(Boolean))]
+  const auxIds = [...new Set(asigs.flatMap((a) => idsAuxiliaresDe(a)))]
   const ausenciasAux = new Map()
   if (auxIds.length && semanasRango.length) {
     const ini = new Date(Math.min(...semanasRango.map((w) => new Date(w.startDate).getTime())))
@@ -675,7 +669,7 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   }
   const semanaPorId = new Map(semanasRango.map((w) => [w.id, w]))
   // Nov-2026 · Las AUXILIARES no son el recurso principal del turno: van en
-  // auxiliar/auxiliar2 del turno del médico. Antes solo se leía resourceId, así
+  // la lista de auxiliares del turno del médico. Antes solo se leía resourceId, así
   // que todas las auxiliares salían con 0h aunque tuvieran la semana llena (la
   // sede sí salía, porque mapaSedesPorRecurso sí mira el auxiliar). Cada turno
   // aporta una "participación" por persona: el titular con el horario del turno
@@ -683,10 +677,7 @@ export async function dataProductividad({ site_id: sede_id, resource_type: tipo_
   const participaciones = []
   for (const a of asigs) {
     participaciones.push({ ...a, _rid: a.resourceId, _tipo: a.resource.type, _multiRoom: !!a.resource.multiRoom, _titular: true })
-    for (const [rid, ini, fin, rec] of [
-      [a.assistantId, a.assistantStartTime, a.assistantEndTime, a.assistant],
-      [a.assistant2Id, a.assistant2StartTime, a.assistant2EndTime, a.assistant2],
-    ]) {
+    for (const { resourceId: rid, startTime: ini, endTime: fin, resource: rec } of a.assistants ?? []) {
       if (!rid || rid === a.resourceId) continue
       participaciones.push({
         ...a,
@@ -910,7 +901,7 @@ export async function dataSubutilizacion({ site_id: sede_id, resource_type: tipo
   return recursos
     .filter((r) => recursoEnSedes(mapaSedes.get(r.id), sedeIds))
     .map((r) => {
-      const propias = asigs.filter((a) => a.resourceId === r.id || a.assistantId === r.id)
+      const propias = asigs.filter((a) => a.resourceId === r.id || idsAuxiliaresDe(a).includes(r.id))
       // FIX: para médicos multi-consultorio (cubren varias salas en paralelo)
       // las horas se cuentan por UNIÓN por día, no por suma. Antes una doctora
       // con 3 salas 7-13h aparecía con 257% — ahora aparece con su valor real.
@@ -1296,12 +1287,12 @@ async function sedesDeRecursos(recursoIds) {
 
   const asigs = await prisma.assignment.findMany({
     where: {
-      OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }],
+      ...whereParticipa(ids),
       status: { not: 'cancelada' },
     },
     select: {
       resourceId: true,
-      assistantId: true,
+      assistants: SELECT_AUXILIARES,
       room: { select: { site: { select: { name: true } } } },
     },
     orderBy: { createdAt: 'desc' },
@@ -1312,7 +1303,7 @@ async function sedesDeRecursos(recursoIds) {
     const nombre = a.room?.site?.name
     if (!nombre) continue
     // Recorremos de más reciente a más antigua: la primera que aparece gana.
-    for (const rid of [a.resourceId, a.assistantId]) {
+    for (const rid of [a.resourceId, ...idsAuxiliaresDe(a)]) {
       if (rid && ids.includes(rid) && !mapa.has(rid)) mapa.set(rid, nombre)
     }
   }

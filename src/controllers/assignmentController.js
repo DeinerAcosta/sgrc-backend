@@ -8,7 +8,8 @@ import { copiarAsignacionesValidadas } from '../services/assignmentCopyService.j
 import { programacionLibre } from '../lib/schedulingMode.js'
 import { fechaHora } from '../lib/fechas.js'
 import { horasEfectivasFranja } from '../lib/workHours.js'
-import { SIN_TOPE_DIARIO } from '../lib/timeSlots.js'
+import { SIN_TOPE_DIARIO, idsAuxiliaresDe } from '../lib/timeSlots.js'
+import { INCLUDE_AUXILIARES, SELECT_AUXILIARES, whereParticipa, serializarAsignacion, textoAuxiliares } from '../lib/auxiliaresTurno.js'
 import { assertSedePermitida } from '../lib/siteScope.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
 import { notificar } from '../services/notificationService.js'
@@ -23,19 +24,20 @@ const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'do
  *
  * Se copian TAMBIÉN los auxiliares y sus sub-horarios. Antes las tres rutas de
  * copia solo arrastraban `auxiliarId` y perdían el segundo auxiliar y los
- * sub-horarios, así que la copia no era fiel al original.
+ * sub-horarios, así que la copia no era fiel al original. El origen tiene que
+ * venir con `assistants` (SELECT_AUXILIARES).
  */
 const candidataDesde = (a, semanaId, diaSemana) => ({
   weekId: semanaId,
   weekday: diaSemana,
   roomId: a.roomId,
   resourceId: a.resourceId,
-  assistantId: a.assistantId ?? null,
-  assistant2Id: a.assistant2Id ?? null,
-  assistantStartTime: a.assistantStartTime ?? null,
-  assistantEndTime: a.assistantEndTime ?? null,
-  assistant2StartTime: a.assistant2StartTime ?? null,
-  assistant2EndTime: a.assistant2EndTime ?? null,
+  // Nov-2026 · Todas las auxiliares del turno, en orden y con sus horas tal
+  // cual (null = hereda), no solo las dos primeras.
+  assistants: (a.assistants ?? [])
+    .slice()
+    .sort((x, y) => (x.position ?? 0) - (y.position ?? 0))
+    .map((x, i) => ({ resourceId: x.resourceId, startTime: x.startTime ?? null, endTime: x.endTime ?? null, position: i })),
   startTime: a.startTime,
   endTime: a.endTime,
 })
@@ -57,8 +59,11 @@ const resumenAsignacion = (a, data = null) => ({
   site: a.room?.site?.name ?? null,
   resourceId: a.resourceId,
   resource: a.resource?.name ?? null,
-  assistantId: a.assistantId ?? null,
-  assistant2Id: a.assistant2Id ?? null,
+  // Nov-2026 · La lista completa; assistantId/assistant2Id se dejan porque las
+  // entradas viejas del log los tienen y así se leen igual.
+  assistants: Array.isArray(a.assistants) ? idsAuxiliaresDe(a) : undefined,
+  assistantId: Array.isArray(a.assistants) ? (idsAuxiliaresDe(a)[0] ?? null) : null,
+  assistant2Id: Array.isArray(a.assistants) ? (idsAuxiliaresDe(a)[1] ?? null) : null,
   patientCapacity: a.patientCapacity ?? null,
   ...(data?.isReplacement ? { isReplacement: true, coveredAbsenceId: data.coveredAbsenceId ?? null } : {}),
 })
@@ -91,6 +96,16 @@ const horaOpt = z.preprocess(emptyToUndef, z.string().regex(/^\d{2}:\d{2}$/).nul
 const crearSchema = z.object({
   weekId: z.string().uuid(),
   resourceId: z.string().uuid(),
+  // Nov-2026 · Hector: las auxiliares que hagan falta, en orden. El frontend
+  // manda assistants: [{ resource_id, start_time, end_time }] (horas vacías =
+  // heredan del turno). Al editar, la lista reemplaza a la que había.
+  assistants: z.array(z.object({
+    resourceId: z.string().uuid(),
+    startTime: horaOpt,
+    endTime: horaOpt,
+  })).max(20).optional(),
+  // Forma vieja (2 auxiliares fijas), aceptada por compatibilidad: si no viene
+  // `assistants`, se convierten a la lista (lib/auxiliaresTurno.js).
   assistantId: z.preprocess(emptyToUndef, z.string().uuid().optional().nullable()),
   // Sub-horario opcional para la auxiliar (si null hereda del doctor).
   assistantStartTime: horaOpt,
@@ -125,19 +140,15 @@ export async function list(req, res) {
   const { week_id: semana_id, site_id: sede_id, resource_id: recurso_id, day: dia } = req.query
   const where = { status: { not: 'cancelada' } }
   if (semana_id) where.weekId = semana_id
-  if (recurso_id) where.OR = [
-    { resourceId: recurso_id },
-    { assistantId: recurso_id },
-    { assistant2Id: recurso_id },
-  ]
+  // La persona en cualquier posición: profesional o cualquiera de sus auxiliares.
+  if (recurso_id) Object.assign(where, whereParticipa(recurso_id))
   if (dia) where.weekday = dia
 
   const list = await prisma.assignment.findMany({
     where,
     include: {
       resource: true,
-      assistant: true,
-      assistant2: true,
+      assistants: INCLUDE_AUXILIARES,
       room: { include: { site: true } },
     },
     orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
@@ -145,7 +156,7 @@ export async function list(req, res) {
 
   // Filtro post-query por sede (porque la relación es a través de consultorio)
   const filtradas = sede_id ? list.filter((a) => a.room.siteId === sede_id) : list
-  res.json(filtradas)
+  res.json(filtradas.map(serializarAsignacion))
 }
 
 export async function create(req, res) {
@@ -158,7 +169,7 @@ export async function create(req, res) {
     result.assignment = await prisma.assignment.update({
       where: { id: result.assignment.id },
       data: { contingency: true, patientCapacity: 0 },
-      include: { room: { select: { name: true, site: { select: { name: true } } } }, resource: { select: { name: true } } },
+      include: { room: { select: { name: true, site: { select: { name: true } } } }, resource: { select: { name: true } }, assistants: INCLUDE_AUXILIARES },
     })
     await registrarAuditoria({
       userId: req.user.id, action: 'contingencia_marcar', entity: 'asignaciones', entityId: result.assignment.id,
@@ -186,10 +197,10 @@ export async function create(req, res) {
     ipAddress: getIp(req),
   })
 
-  // HU-R-07: notificar al recurso (y a la auxiliar si aplica) de su nueva asignación
+  // HU-R-07: notificar al recurso (y a cada auxiliar del turno) de su nueva asignación
   const a = result.assignment
   const destinatarios = await prisma.user.findMany({
-    where: { resourceId: { in: [a.resourceId, a.assistantId].filter(Boolean) } },
+    where: { resourceId: { in: [a.resourceId, ...idsAuxiliaresDe(a)].filter(Boolean) } },
   })
   for (const u of destinatarios) {
     await notificar({
@@ -245,7 +256,7 @@ export async function create(req, res) {
     }
   }
 
-  res.status(201).json(result.assignment)
+  res.status(201).json(serializarAsignacion(result.assignment))
 }
 
 export async function update(req, res) {
@@ -266,10 +277,10 @@ export async function update(req, res) {
     ipAddress: getIp(req),
   })
 
-  // HU-R-07: notificar al recurso (y a la auxiliar si aplica) del cambio en su asignación
+  // HU-R-07: notificar al recurso (y a cada auxiliar del turno) del cambio en su asignación
   const a = result.assignment
   const destinatarios = await prisma.user.findMany({
-    where: { resourceId: { in: [a.resourceId, a.assistantId].filter(Boolean) } },
+    where: { resourceId: { in: [a.resourceId, ...idsAuxiliaresDe(a)].filter(Boolean) } },
   })
   for (const u of destinatarios) {
     await notificar({
@@ -283,7 +294,7 @@ export async function update(req, res) {
     })
   }
 
-  res.json(result.assignment)
+  res.json(serializarAsignacion(result.assignment))
 }
 
 const pacientesCapacidadSchema = z.object({
@@ -300,7 +311,7 @@ const pacientesCapacidadSchema = z.object({
  * - coordinador: solo puede editar asignaciones cuyo consultorio pertenezca
  *   a una de sus sedes (usuarios_sedes).
  * - recurso (aux): solo puede editar asignaciones donde él sea auxiliar
- *   (aux1 o aux2).
+ *   (en cualquier posición de la lista).
  * - supervisor / gerencia: acceso global sin restricción por fila.
  */
 export async function actualizarPacientesCapacidad(req, res) {
@@ -310,8 +321,7 @@ export async function actualizarPacientesCapacidad(req, res) {
   const asig = await prisma.assignment.findUnique({
     where: { id: req.params.id },
     select: {
-      assistantId: true,
-      assistant2Id: true,
+      assistants: SELECT_AUXILIARES,
       coveredAbsenceId: true,
       patientCapacity: true,
       weekId: true, weekday: true, startTime: true, endTime: true, roomId: true, resourceId: true,
@@ -339,7 +349,7 @@ export async function actualizarPacientesCapacidad(req, res) {
     if (!u?.resourceId) {
       throw errors.forbidden('Su usuario no está vinculado a un recurso. Comuníquese con el supervisor.')
     }
-    if (asig.assistantId !== u.resourceId && asig.assistant2Id !== u.resourceId) {
+    if (!idsAuxiliaresDe(asig).includes(u.resourceId)) {
       throw errors.forbidden('No es el auxiliar asignado — no puede editar los pacientes de esta asignación')
     }
   }
@@ -360,13 +370,14 @@ export async function actualizarPacientesCapacidad(req, res) {
   const actualizada = await prisma.assignment.update({
     where: { id: req.params.id },
     data: { patientCapacity: pacientesCapacidad },
+    include: { assistants: INCLUDE_AUXILIARES },
   })
   await registrarAuditoria({
     userId: req.user.id, action: 'asignacion_pacientes', entity: 'asignaciones', entityId: req.params.id,
     oldValue: { pacientes: asig.patientCapacity }, newValue: resumenAsignacion({ ...asig, patientCapacity: pacientesCapacidad }),
     ipAddress: getIp(req),
   })
-  res.json(actualizada)
+  res.json(serializarAsignacion(actualizada))
 }
 
 export async function remove(req, res) {
@@ -379,6 +390,7 @@ export async function remove(req, res) {
       week: true,
       resource: { select: { name: true } },
       room: { select: { name: true, siteId: true, site: { select: { name: true } } } },
+      assistants: SELECT_AUXILIARES,
     },
   })
   if (!a) throw errors.notFound()
@@ -419,13 +431,14 @@ export async function remove(req, res) {
     const updated = await prisma.assignment.update({
       where: { id: req.params.id },
       data: { status: 'cancelada' },
+      include: { assistants: INCLUDE_AUXILIARES },
     })
     await registrarAuditoria({
       ...auditoriaBorrado,
       action: 'asignacion_cancelar',
       reason: 'Tenía ejecución registrada (RN-17): se cancela en lugar de borrarse',
     })
-    return res.json({ ok: true, cancelled: true, assignment: updated })
+    return res.json({ ok: true, cancelled: true, assignment: serializarAsignacion(updated) })
   }
 
   await prisma.assignment.delete({ where: { id: req.params.id } })
@@ -495,7 +508,7 @@ export async function copiarAsignacionADias(req, res) {
 
   const origen = await prisma.assignment.findUnique({
     where: { id },
-    include: { room: true, week: true },
+    include: { room: true, week: true, assistants: SELECT_AUXILIARES },
   })
   if (!origen) throw errors.notFound('Asignación no encontrada')
 
@@ -557,6 +570,7 @@ export async function copiarConsultorio(req, res) {
       weekday: diaOrigen,
       status: { not: 'cancelada' },
     },
+    include: { assistants: SELECT_AUXILIARES },
   })
 
   if (origen.length === 0) {
@@ -587,7 +601,7 @@ export async function copiarDia(req, res) {
 
   const origen = await prisma.assignment.findMany({
     where,
-    include: { room: true },
+    include: { room: true, assistants: SELECT_AUXILIARES },
   })
 
   if (origen.length === 0) {
@@ -660,12 +674,11 @@ export async function sugerirReemplazos(req, res) {
       weekId: semana_id || undefined,
       weekday: dia,
       status: { not: 'cancelada' },
-      OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }, { assistant2Id: { in: ids } }],
+      ...whereParticipa(ids),
     },
     select: {
       resourceId: true,
-      assistantId: true,
-      assistant2Id: true,
+      assistants: SELECT_AUXILIARES,
       startTime: true,
       endTime: true,
       // Oct-2026 · Antes solo viajaba siteId, que alcanzaba para el booleano
@@ -689,7 +702,7 @@ export async function sugerirReemplazos(req, res) {
   const franjasPorRecurso = new Map(ids.map((id) => [id, []]))
   const sedesPorRecurso = new Map(ids.map((id) => [id, new Set()]))
   for (const a of ocupacion) {
-    for (const rid of [a.resourceId, a.assistantId, a.assistant2Id]) {
+    for (const rid of new Set([a.resourceId, ...idsAuxiliaresDe(a)])) {
       if (!rid || !franjasPorRecurso.has(rid)) continue
       franjasPorRecurso.get(rid).push(a)
       if (a.room?.siteId) sedesPorRecurso.get(rid).add(a.room.siteId)
@@ -754,7 +767,7 @@ export async function sugerirReemplazos(req, res) {
     if (SIN_TOPE_DIARIO.has(r.type) || r.multiRoom) return false
     // Un turno caído por la ausencia de su médico no suma horas ese día.
     const delDia = franjasPorRecurso.get(r.id)
-      .filter((a) => a.resourceId === r.id || a.assistantId === r.id)
+      .filter((a) => a.resourceId === r.id || idsAuxiliaresDe(a).includes(r.id))
       .filter((a) => !liberada(a))
     const horas = delDia.reduce((n, a) => n + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0) +
       horasEfectivasFranja(hora_inicio, hora_fin, r.type)
@@ -773,7 +786,7 @@ export async function sugerirReemplazos(req, res) {
     const fecha = semana && fechaDelDiaEnSemana(semana.startDate, dia)
     esMismoDia = !!fecha && diasDeAnticipacion(fecha.toISOString()) <= 0
     const medicos = [...new Set(ocupacion
-      .filter((a) => ids.includes(a.assistantId) || ids.includes(a.assistant2Id))
+      .filter((a) => idsAuxiliaresDe(a).some((x) => ids.includes(x)))
       .map((a) => a.resourceId))]
     const ausMedicos = fecha && medicos.length
       ? await prisma.absence.findMany({
@@ -793,12 +806,12 @@ export async function sugerirReemplazos(req, res) {
     const semanaEntera = await prisma.assignment.findMany({
       where: {
         weekId: semana_id, status: { not: 'cancelada' },
-        OR: [{ resourceId: { in: ids } }, { assistantId: { in: ids } }, { assistant2Id: { in: ids } }],
+        ...whereParticipa(ids),
       },
-      select: { resourceId: true, assistantId: true, assistant2Id: true, startTime: true, endTime: true },
+      select: { resourceId: true, assistants: SELECT_AUXILIARES, startTime: true, endTime: true },
     })
     for (const a of semanaEntera) {
-      for (const rid of new Set([a.resourceId, a.assistantId, a.assistant2Id])) {
+      for (const rid of new Set([a.resourceId, ...idsAuxiliaresDe(a)])) {
         if (!rid || !ids.includes(rid)) continue
         const r = candidatos.find((c) => c.id === rid)
         horasSemana.set(rid, (horasSemana.get(rid) ?? 0) + horasEfectivasFranja(a.startTime, a.endTime, r.type))
@@ -866,8 +879,7 @@ async function armarGridSemana(weekId, siteId) {
       where: { weekId, status: { not: 'cancelada' }, room: { siteId } },
       include: {
         resource: { select: { name: true, type: true } },
-        assistant: { select: { name: true } },
-        assistant2: { select: { name: true } },
+        assistants: INCLUDE_AUXILIARES,
         room: { select: { id: true, name: true, specialty: true } },
       },
       orderBy: [{ startTime: 'asc' }],
@@ -946,17 +958,15 @@ function celdaText(a) {
     a.resource?.name ?? '—',
     `${a.startTime}–${a.endTime}`,
   ]
-  if (a.assistant?.name) partes.push(`Aux: ${a.assistant.name}`)
-  if (a.assistant2?.name) partes.push(`Aux2: ${a.assistant2.name}`)
+  // Nov-2026 · Todas las auxiliares del turno, no solo las dos primeras.
+  const aux = textoAuxiliares(a, { conHorario: false })
+  if (aux) partes.push(`Aux: ${aux}`)
   // Nov-2026 · Decía `patientsCapacity` (no existe) y salía "undefined pac.".
   partes.push(`${a.patientCapacity} pac.`)
   return partes.join('\n')
 }
 
 const DIA_NOMBRE = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' }
-
-/** Auxiliar con su sub-horario si cubre solo parte del turno. */
-const auxConHorario = (nombre, ini, fin) => (nombre ? `${nombre}${ini && fin ? ` (${ini}–${fin})` : ''}` : '')
 
 /** Un turno por fila, en el orden de los consultorios y por hora de inicio. */
 function filasDelDia(grid, day) {
@@ -965,8 +975,9 @@ function filasDelDia(grid, day) {
     especialidad: row.room.specialty ?? '',
     profesional: a.resource?.name ?? '—',
     horario: `${a.startTime}–${a.endTime}`,
-    auxiliar: auxConHorario(a.assistant?.name, a.assistantStartTime, a.assistantEndTime),
-    auxiliar2: auxConHorario(a.assistant2?.name, a.assistant2StartTime, a.assistant2EndTime),
+    // Nov-2026 · Una sola columna con todas, cada una con su sub-horario si
+    // cubre solo parte del turno: "Ana (07:00–09:00), Luz (09:00–13:00)".
+    auxiliares: textoAuxiliares(a),
     pacientes: a.resource?.type === 'asesor_servicios' ? '' : a.patientCapacity,
   })))
 }
@@ -975,8 +986,7 @@ const COLS_DIA = [
   { key: 'consultorio', titulo: 'Consultorio', ancho: 150 },
   { key: 'profesional', titulo: 'Profesional', ancho: 170 },
   { key: 'horario', titulo: 'Horario', ancho: 80 },
-  { key: 'auxiliar', titulo: 'Auxiliar', ancho: 170 },
-  { key: 'auxiliar2', titulo: 'Auxiliar 2', ancho: 125 },
+  { key: 'auxiliares', titulo: 'Auxiliares', ancho: 295 },
   { key: 'pacientes', titulo: 'Pac.', ancho: 40 },
 ]
 
@@ -1041,10 +1051,10 @@ async function generarXLSXDia(sede, day, fechaDia, filas) {
   wb.creator = 'SGRC'
   const ws = wb.addWorksheet(DIA_NOMBRE[day])
 
-  ws.mergeCells('A1:F1')
+  ws.mergeCells('A1:E1')
   ws.getCell('A1').value = `Horario del día — ${sede.name}${sede.city ? ' · ' + sede.city : ''}`
   ws.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FF1B2A6C' } }
-  ws.mergeCells('A2:F2')
+  ws.mergeCells('A2:E2')
   ws.getCell('A2').value = `${DIA_NOMBRE[day]} ${fechaDia}`
   ws.getCell('A2').font = { size: 10 }
 
@@ -1064,7 +1074,7 @@ async function generarXLSXDia(sede, day, fechaDia, filas) {
     })
   }
 
-  ;[24, 30, 14, 32, 26, 8].forEach((w, i) => { ws.getColumn(i + 1).width = w })
+  ;[24, 30, 14, 58, 8].forEach((w, i) => { ws.getColumn(i + 1).width = w })
   return Buffer.from(await wb.xlsx.writeBuffer())
 }
 
@@ -1194,7 +1204,7 @@ const aprobarContingenciaSchema = z.object({
 async function turnoParaContingencia(req) {
   const a = await prisma.assignment.findUnique({
     where: { id: req.params.id },
-    include: { room: { select: { name: true, siteId: true, site: { select: { name: true } } } }, resource: { select: { name: true } } },
+    include: { room: { select: { name: true, siteId: true, site: { select: { name: true } } } }, resource: { select: { name: true } }, assistants: SELECT_AUXILIARES },
   })
   if (!a) throw errors.notFound('Asignación no encontrada')
   assertSedePermitida(req.user, a.room.siteId, a.room.site?.name)
@@ -1208,13 +1218,14 @@ export async function marcarContingencia(req, res) {
   const actualizada = await prisma.assignment.update({
     where: { id: a.id },
     data: { contingency: true, patientCapacity: 0 },
+    include: { assistants: INCLUDE_AUXILIARES },
   })
   await registrarAuditoria({
     userId: req.user.id, action: 'contingencia_marcar', entity: 'asignaciones', entityId: a.id,
     oldValue: { pacientes: a.patientCapacity }, newValue: { ...resumenAsignacion(a), contingencia: true },
     ipAddress: getIp(req),
   })
-  res.json(actualizada)
+  res.json(serializarAsignacion(actualizada))
 }
 
 export async function aprobarContingencia(req, res) {
@@ -1230,11 +1241,12 @@ export async function aprobarContingencia(req, res) {
   const actualizada = await prisma.assignment.update({
     where: { id: a.id },
     data: { contingency: false, patientCapacity },
+    include: { assistants: INCLUDE_AUXILIARES },
   })
   await registrarAuditoria({
     userId: req.user.id, action: 'contingencia_aprobar', entity: 'asignaciones', entityId: a.id,
     oldValue: { contingencia: true }, newValue: { ...resumenAsignacion({ ...a, patientCapacity }), contingencia: false },
     ipAddress: getIp(req),
   })
-  res.json(actualizada)
+  res.json(serializarAsignacion(actualizada))
 }
