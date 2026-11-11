@@ -48,6 +48,36 @@ export function validarFranjas(entrada) {
 }
 
 /**
+ * ESTADO DE UNA AUXILIAR PARA UN TURNO (nov-2026)
+ * ===============================================
+ *
+ * Al asignar en el Programador, la lista de auxiliares dice en qué está cada
+ * una el día y a la hora del turno. Definición de Hector:
+ *
+ *   ausente     tiene ausencia ese día (una por horas, solo si toca el turno)
+ *   asignado    ya tiene un turno que se cruza con este horario
+ *   disponible  tiene turnos ese día pero está libre a esta hora
+ *   sin_asignar no tiene nada ese día
+ *
+ * Ausente y asignado no se pueden elegir.
+ *
+ * @param {object}   p
+ * @param {object[]} p.ausencias  las del día: { isPartial, absenceStartTime, absenceEndTime }
+ * @param {object[]} p.franjas    su horario ese día: { ini, fin }
+ * @param {string}   p.ini        horario del turno que se asigna
+ * @param {string}   p.fin
+ */
+export function estadoAuxiliarEnTurno({ ausencias = [], franjas = [], ini, fin }) {
+  const cruza = (a, b, c, d) => a < d && c < b   // [a,b) con [c,d); tocarse no es cruce
+  const ausente = ausencias.some((x) =>
+    !x.isPartial || !x.absenceStartTime || !x.absenceEndTime || cruza(x.absenceStartTime, x.absenceEndTime, ini, fin))
+  if (ausente) return 'ausente'
+  if (franjas.some((f) => cruza(f.ini, f.fin, ini, fin))) return 'asignado'
+  if (franjas.length) return 'disponible'
+  return 'sin_asignar'
+}
+
+/**
  * Horas de un día de la malla.
  *
  * El hueco entre dos franjas ES el almuerzo, así que con varias franjas se

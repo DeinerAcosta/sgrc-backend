@@ -125,6 +125,9 @@ r.put('/backoffice-tasks/:id', requireRol('supervisor'), wrap(tareasBo.update))
 // del Excel). Hector: la editan gerencia, supervisor, coordinador y directivo.
 r.get('/assistant-matrix', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.get))
 r.put('/assistant-matrix/:assistantId/:weekday', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.saveCell))
+// Nov-2026 · Para el Programador: estado de cada auxiliar en el día y la hora
+// del turno que se asigna, y cuál sale preseleccionada según la Matriz.
+r.get('/assistant-matrix/shift', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.shift))
 
 // ============ FESTIVOS ============
 r.get('/holidays', wrap(fest.list))
