@@ -26,6 +26,7 @@ import * as inf from '../controllers/reportController.js'
 import * as notif from '../controllers/notificationController.js'
 import * as audit from '../controllers/auditController.js'
 import * as job from '../controllers/jobController.js'
+import * as matriz from '../controllers/assistantMatrixController.js'
 
 const r = Router()
 const wrap = asyncHandler
@@ -118,6 +119,12 @@ r.post('/backoffice-tasks/:id/approve', requireRol('supervisor'), wrap(tareasBo.
 r.post('/backoffice-tasks/:id/reject', requireRol('supervisor'), wrap(tareasBo.rechazarSolicitud))
 r.post('/backoffice-tasks', requireRol('supervisor'), wrap(tareasBo.create))
 r.put('/backoffice-tasks/:id', requireRol('supervisor'), wrap(tareasBo.update))
+
+// ============ MATRIZ DE ASIGNACIONES ============
+// Nov-2026 · La malla fija de las auxiliares (antes la hoja HORARIO AUXILIARES
+// del Excel). Hector: la editan gerencia, supervisor, coordinador y directivo.
+r.get('/assistant-matrix', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.get))
+r.put('/assistant-matrix/:assistantId/:weekday', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.saveCell))
 
 // ============ FESTIVOS ============
 r.get('/holidays', wrap(fest.list))

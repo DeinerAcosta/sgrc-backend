@@ -371,6 +371,8 @@ model Resource {
   absences                Absence[]
   backofficeAssignments   BackofficeAssignment[]
   loanRequests            ResourceRequest[]      @relation("SolicitudRecursoRecurso")
+  matrixDays              AssistantMatrixDay[]          @relation("MatrizAuxiliar")
+  matrixAsProfessional    AssistantMatrixProfessional[] @relation("MatrizProfesional")
 
   @@index([type])
   @@index([active])
@@ -848,6 +850,49 @@ model BackofficeExecution {
 }
 
 // ============ FESTIVOS ============
+// ============ MATRIZ DE ASIGNACIONES ============
+// Nov-2026 · Hector: la "malla de auxiliares" (hoja HORARIO AUXILIARES del
+// Excel LISTADO AUXILIARES) pasa al sistema. Es la BASE fija de cada auxiliar:
+// en qué horario va cada día de la semana y con qué profesionales. No depende
+// de ninguna semana concreta — el Programador arma las semanas; esto es la
+// plantilla de referencia. Por ahora solo se consulta y se edita; no alimenta
+// al Programador.
+//
+// Una fila por auxiliar y día. Sin fila = ese día no tiene nada en la malla.
+
+model AssistantMatrixDay {
+  id          String    @id @default(uuid())
+  assistantId String    @map("auxiliar_id")
+  weekday     DiaSemana @map("dia")
+  // Franjas del día en orden: [{"ini":"07:30","fin":"12:00"},{"ini":"13:00","fin":"17:00"}].
+  // El hueco entre franjas es el almuerzo.
+  ranges      Json      @map("franjas")
+  // Lo que no es un profesional: LASER, PRIORITARIA, "saca a almorzar", sede…
+  note        String?   @map("nota") @db.VarChar(500)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  assistant     Resource                      @relation("MatrizAuxiliar", fields: [assistantId], references: [id], onDelete: Cascade)
+  professionals AssistantMatrixProfessional[]
+
+  @@unique([assistantId, weekday])
+  @@map("matriz_auxiliares")
+}
+
+model AssistantMatrixProfessional {
+  dayId      String @map("dia_matriz_id")
+  resourceId String @map("recurso_id")
+  // Orden en que se eligieron, para mostrarlos igual que se escribieron.
+  position   Int    @default(0) @map("orden")
+
+  day      AssistantMatrixDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  resource Resource           @relation("MatrizProfesional", fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@id([dayId, resourceId])
+  @@index([resourceId])
+  @@map("matriz_auxiliares_profesionales")
+}
+
 model Holiday {
   date        DateTime @id @map("fecha") @db.Date
   description String   @map("descripcion") @db.VarChar(200)
