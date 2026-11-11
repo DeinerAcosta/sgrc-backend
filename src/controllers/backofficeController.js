@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
 import { expandirRangoHabil } from '../lib/workdays.js'
+import { assertSedePermitida } from '../lib/siteScope.js'
 
 const emptyToUndef = (v) => (v === '' ? undefined : v)
 
@@ -53,6 +54,9 @@ const registrarSchema = z.object({
  */
 export async function asignar(req, res) {
   const data = asignarSchema.parse(req.body)
+  // Nov-2026 · Era la única escritura del Programador sin el aislamiento por
+  // sede: un coordinador podía cargar backoffice en una sede que no es suya.
+  assertSedePermitida(req.user, data.siteId)
 
   const aux = await prisma.resource.findUnique({ where: { id: data.assistantId } })
   if (!aux) throw errors.notFound('Auxiliar no encontrada')
