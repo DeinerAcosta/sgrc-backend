@@ -195,11 +195,10 @@ export async function shift(req, res) {
         weekId: q.week_id,
         weekday: q.weekday,
         status: { not: 'cancelada' },
-        ...(q.exclude_assignment_id ? { id: { not: q.exclude_assignment_id } } : {}),
         ...whereParticipa(ids),
       },
       select: {
-        resourceId: true, startTime: true, endTime: true,
+        id: true, resourceId: true, startTime: true, endTime: true,
         assistants: SELECT_AUXILIARES,
         room: { select: { name: true, site: { select: { name: true } } } },
       },
@@ -221,13 +220,21 @@ export async function shift(req, res) {
   ])
 
   const items = ids.map((id) => {
+    // Nov-2026 · Hector: al EDITAR un turno, la auxiliar que ya va en él debe
+    // mostrar ese horario, sus horas y su sede ("no marca la hora que tiene
+    // asignada"). Se muestran todos sus turnos del día; el estado se calcula
+    // sin el turno que se edita (si no, saldría "Asignado" en su propio turno).
     const franjas = turnos
       .filter((t) => participaEn(t, id))
       .map((t) => {
         const ef = horarioEfectivoAuxEnAsig(t, id)
-        return { ini: ef.ini, fin: ef.fin, consultorio: t.room?.name ?? null, sede: t.room?.site?.name ?? null }
+        return {
+          ini: ef.ini, fin: ef.fin, consultorio: t.room?.name ?? null, sede: t.room?.site?.name ?? null,
+          esteTurno: !!q.exclude_assignment_id && t.id === q.exclude_assignment_id,
+        }
       })
       .sort((a, b) => (a.ini < b.ini ? -1 : 1))
+    const otras = franjas.filter((f) => !f.esteTurno)
     const susAusencias = ausencias.filter((a) => a.resourceId === id)
     const celda = malla.find((m) => m.assistantId === id)
     const par = celda?.professionals.map((p) => ({ id: p.resource.id, name: p.resource.name })) ?? []
@@ -235,7 +242,7 @@ export async function shift(req, res) {
     const aus = susAusencias[0]
     return {
       id,
-      estado: estadoAuxiliarEnTurno({ ausencias: susAusencias, franjas, ini: q.start_time, fin: q.end_time }),
+      estado: estadoAuxiliarEnTurno({ ausencias: susAusencias, franjas: otras, ini: q.start_time, fin: q.end_time }),
       motivoAusencia: aus ? `${aus.reasonRef?.name ?? aus.type}${aus.status === 'pendiente' ? ' (sin confirmar)' : ''}` : null,
       recursosPar: par,
       preseleccionada: !!q.professional_id && par.some((p) => p.id === q.professional_id),
