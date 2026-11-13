@@ -42,7 +42,10 @@ const aCelda = (d) => ({
 /** Lo que queda en la auditoría, legible sin consultar otras tablas. */
 const resumen = (c) => c && ({
   dia: c.weekday,
-  franjas: (c.ranges ?? []).map((f) => `${f.ini}-${f.fin}`).join(' '),
+  franjas: (c.ranges ?? []).map((f) => {
+    const prof = c.professionals.find((p) => p.id === f.professionalId)?.name
+    return `${f.ini}-${f.fin}${f.lunch ? ` (almuerzo ${f.lunch.ini}-${f.lunch.fin})` : ''}${prof ? ` ${prof}` : ''}`
+  }).join(' · '),
   profesionales: c.professionals.map((p) => p.name).join(', '),
   nota: c.note || null,
 })
@@ -73,7 +76,13 @@ export async function get(req, res) {
 }
 
 const celdaSchema = z.object({
-  ranges: z.array(z.object({ ini: z.string(), fin: z.string() })).default([]),
+  ranges: z.array(z.object({
+    ini: z.string(),
+    fin: z.string(),
+    // Nov-2026 · El profesional de ESA franja y su almuerzo (opcionales).
+    professionalId: z.string().uuid().optional().nullable(),
+    lunch: z.object({ ini: z.string(), fin: z.string() }).optional().nullable(),
+  })).default([]),
   professionalIds: z.array(z.string().uuid()).max(6).default([]),
   note: z.string().trim().max(500).optional().nullable(),
 })
@@ -91,7 +100,10 @@ export async function saveCell(req, res) {
   const { franjas, error } = validarFranjas(body.ranges)
   if (error) throw errors.badRequest(error)
   const nota = body.note?.trim() || null
-  const ids = [...new Set(body.professionalIds)]
+  // Los profesionales del día = los de sus franjas (en orden) + los que lleguen
+  // sueltos (la forma de antes). La tabla de profesionales del día se mantiene
+  // para los filtros y para quien todavía la lea.
+  const ids = [...new Set([...franjas.map((f) => f.professionalId).filter(Boolean), ...body.professionalIds])]
 
   const auxiliar = await prisma.resource.findUnique({ where: { id: assistantId }, select: { id: true, name: true, type: true } })
   if (!auxiliar) throw errors.notFound('No existe esa auxiliar')
@@ -238,6 +250,16 @@ export async function shift(req, res) {
     const susAusencias = ausencias.filter((a) => a.resourceId === id)
     const celda = malla.find((m) => m.assistantId === id)
     const par = celda?.professionals.map((p) => ({ id: p.resource.id, name: p.resource.name })) ?? []
+    // Nov-2026 · Con profesional por franja, es su pareja si una franja CON ESE
+    // profesional toca el horario del turno; y su hora por defecto sale de esas
+    // franjas. Las celdas viejas (sin profesional por franja) siguen igual.
+    const rangos = Array.isArray(celda?.ranges) ? celda.ranges : []
+    const conProf = rangos.some((r) => r.professionalId)
+    const delProf = q.professional_id ? rangos.filter((r) => r.professionalId === q.professional_id) : []
+    const toca = (r) => r.ini < q.end_time && q.start_time < r.fin
+    const esPareja = !!q.professional_id && (conProf
+      ? delProf.some(toca)
+      : par.some((p) => p.id === q.professional_id))
     const horasDia = franjas.reduce((s, f) => s + horasEfectivasConDescanso(f.ini, f.fin, tipoDe.get(id), f.descanso), 0)
     const aus = susAusencias[0]
     return {
@@ -245,14 +267,14 @@ export async function shift(req, res) {
       estado: estadoAuxiliarEnTurno({ ausencias: susAusencias, franjas: otras, ini: q.start_time, fin: q.end_time }),
       motivoAusencia: aus ? `${aus.reasonRef?.name ?? aus.type}${aus.status === 'pendiente' ? ' (sin confirmar)' : ''}` : null,
       recursosPar: par,
-      preseleccionada: !!q.professional_id && par.some((p) => p.id === q.professional_id),
+      preseleccionada: esPareja,
       horasDia: Math.round(horasDia * 10) / 10,
       horario: franjas,
       sedes: [...new Set(franjas.map((f) => f.sede).filter(Boolean))],
       // Nov-2026 · Sus franjas de ese día en la Matriz (la malla fija), para
       // que el Programador proponga el sub-horario con el que entra al turno.
       // Vacío si no tiene celda ese día.
-      franjasMatriz: Array.isArray(celda?.ranges) ? celda.ranges.map((r) => ({ ini: r.ini, fin: r.fin })) : [],
+      franjasMatriz: (conProf && delProf.length ? delProf : rangos).map((r) => ({ ini: r.ini, fin: r.fin, lunch: r.lunch ?? null })),
     }
   })
   res.json(items)

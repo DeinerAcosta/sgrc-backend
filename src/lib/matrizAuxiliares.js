@@ -24,6 +24,10 @@ const aMin = (hhmm) => {
  *
  * Reglas: formato HH:MM, fin después de inicio, sin cruces entre franjas y a lo
  * sumo cuatro (el Excel nunca pasa de tres).
+ *
+ * Nov-2026 · Hector: cada franja con SU profesional (`professionalId`, puede
+ * faltar) y su hora de almuerzo (`lunch: { ini, fin }`, opcional, dentro de
+ * la franja). "De 8 a 12 con uno y de 1 a 5 con otro" son dos franjas.
  */
 export function validarFranjas(entrada) {
   if (!Array.isArray(entrada)) return { error: 'Las franjas deben ser una lista' }
@@ -36,7 +40,18 @@ export function validarFranjas(entrada) {
       return { error: `Franja ${i + 1}: la hora debe ir como HH:MM` }
     }
     if (aMin(fin) <= aMin(ini)) return { error: `Franja ${i + 1}: la hora fin debe ser después de la de inicio` }
-    franjas.push({ ini, fin })
+    const franja = { ini, fin }
+    if (f.professionalId) franja.professionalId = String(f.professionalId)
+    const li = f.lunch?.ini, lf = f.lunch?.fin
+    if (li || lf) {
+      if (!HHMM.test(li ?? '') || !HHMM.test(lf ?? '')) return { error: `Franja ${i + 1}: el almuerzo debe ir como HH:MM` }
+      if (aMin(lf) <= aMin(li)) return { error: `Franja ${i + 1}: el fin del almuerzo debe ser después del inicio` }
+      if (aMin(li) < aMin(ini) || aMin(lf) > aMin(fin)) {
+        return { error: `Franja ${i + 1}: el almuerzo (${li}–${lf}) debe estar dentro de ${ini}–${fin}` }
+      }
+      franja.lunch = { ini: li, fin: lf }
+    }
+    franjas.push(franja)
   }
   franjas.sort((a, b) => aMin(a.ini) - aMin(b.ini))
   for (let i = 1; i < franjas.length; i++) {
@@ -84,10 +99,22 @@ export function estadoAuxiliarEnTurno({ ausencias = [], franjas = [], ini, fin }
  * suman tal cual. Con una sola franja corrida de más de 7h se descuenta 1h de
  * almuerzo. Es la cuenta que ya hacía el Excel: 08:00–16:00 = 7h,
  * 08:00–18:00 = 9h, 07:30–14:30 = 7h, 07:30–12:00 + 13:00–17:00 = 8,5h.
+ *
+ * Nov-2026 · Si una franja trae su almuerzo marcado, se le descuenta ese
+ * almuerzo y ya no el automático de 1h.
  */
 export function horasDelDiaMatriz(franjas = []) {
+  return horasPorFranjaMatriz(franjas).reduce((s, h) => s + h, 0)
+}
+
+/** Las horas de cada franja (las mismas que suma horasDelDiaMatriz). */
+export function horasPorFranjaMatriz(franjas = []) {
   const validas = franjas.filter((f) => HHMM.test(f?.ini ?? '') && HHMM.test(f?.fin ?? '') && aMin(f.fin) > aMin(f.ini))
-  const minutos = validas.reduce((s, f) => s + aMin(f.fin) - aMin(f.ini), 0)
-  const almuerzo = validas.length === 1 && minutos > 7 * 60 ? 60 : 0
-  return (minutos - almuerzo) / 60
+  const unaSola = validas.length === 1
+  return validas.map((f) => {
+    const minutos = aMin(f.fin) - aMin(f.ini)
+    const li = f.lunch?.ini, lf = f.lunch?.fin
+    if (HHMM.test(li ?? '') && HHMM.test(lf ?? '') && aMin(lf) > aMin(li)) return Math.max(0, minutos - (aMin(lf) - aMin(li))) / 60
+    return (minutos - (unaSola && minutos > 7 * 60 ? 60 : 0)) / 60
+  })
 }

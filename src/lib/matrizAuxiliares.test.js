@@ -77,3 +77,26 @@ describe('horasDelDiaMatriz — la misma cuenta del Excel', () => {
     expect(h()).toBe(0)
   })
 })
+
+// Nov-2026 · Hector: cada franja con su profesional y su hora de almuerzo.
+describe('franjas con profesional y almuerzo', () => {
+  it('guarda el profesional y el almuerzo de cada franja', () => {
+    const r = validarFranjas([
+      { ini: '13:00', fin: '17:00', professionalId: 'p2' },
+      { ini: '08:00', fin: '12:00', professionalId: 'p1' },
+    ])
+    expect(r.franjas).toEqual([
+      { ini: '08:00', fin: '12:00', professionalId: 'p1' },
+      { ini: '13:00', fin: '17:00', professionalId: 'p2' },
+    ])
+    expect(validarFranjas([{ ini: '08:00', fin: '17:00', lunch: { ini: '12:00', fin: '13:00' } }]).franjas[0].lunch)
+      .toEqual({ ini: '12:00', fin: '13:00' })
+  })
+  it('el almuerzo va dentro de la franja', () => {
+    expect(validarFranjas([{ ini: '08:00', fin: '12:00', lunch: { ini: '12:00', fin: '13:00' } }]).error).toMatch(/dentro de/)
+  })
+  it('con almuerzo marcado se descuenta ese y no el automático', () => {
+    expect(horasDelDiaMatriz([{ ini: '08:00', fin: '17:00', lunch: { ini: '12:00', fin: '12:30' } }])).toBe(8.5)
+    expect(horasDelDiaMatriz([{ ini: '08:00', fin: '17:00' }])).toBe(8)
+  })
+})
