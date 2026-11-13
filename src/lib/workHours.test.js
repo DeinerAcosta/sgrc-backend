@@ -221,3 +221,20 @@ describe('horasEfectivasConDescanso (nov-2026)', () => {
     expect(horasEfectivasConDescanso('07:00', '16:00', 'auxiliar', null)).toBe(horasEfectivasFranja('07:00', '16:00', 'auxiliar'))
   })
 })
+
+describe('minutosEfectivosDia · almuerzo por bloque continuo (nov-2026)', () => {
+  it('dos turnos con hueco no descuentan: 07:30–12:00 + 13:00–17:00 = 8,5 h', async () => {
+    const { minutosEfectivosDia, horasUnionPorDia } = await import('./workHours.js')
+    const m = (h) => { const [a, b] = h.split(':').map(Number); return a * 60 + b }
+    expect(minutosEfectivosDia([{ start: m('07:30'), end: m('12:00') }, { start: m('13:00'), end: m('17:00') }], 'auxiliar') / 60).toBe(8.5)
+    // Pegados = un solo bloque de 9,5 h → descuenta 1 h.
+    expect(minutosEfectivosDia([{ start: m('07:30'), end: m('12:00') }, { start: m('12:00'), end: m('17:00') }], 'auxiliar') / 60).toBe(8.5)
+    // Oftalmólogo multi-sala: dos salas a la vez cuentan una vez; 30 min de almuerzo.
+    expect(horasUnionPorDia([
+      { weekday: 'lunes', startTime: '07:00', endTime: '13:00' },
+      { weekday: 'lunes', startTime: '07:00', endTime: '13:00' },
+      { weekday: 'martes', startTime: '07:30', endTime: '12:00' },
+      { weekday: 'martes', startTime: '13:00', endTime: '17:00' },
+    ], 'oftalmologo')).toBe(5.5 + 8.5)
+  })
+})

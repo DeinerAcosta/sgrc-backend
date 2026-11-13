@@ -128,13 +128,42 @@ export function minutosUnion(intervalos) {
 }
 
 /**
+ * Nov-2026 · Bloques CONTINUOS del día (unión de intervalos): 07:00–11:00 y
+ * 11:00–13:00 son un solo bloque; 07:30–12:00 y 13:00–17:00 son dos.
+ */
+export function bloquesContinuos(intervalos) {
+  const ivs = intervalos.filter((i) => i.end > i.start).sort((a, b) => a.start - b.start)
+  const bloques = []
+  for (const { start, end } of ivs) {
+    const ult = bloques[bloques.length - 1]
+    if (ult && start <= ult.end) ult.end = Math.max(ult.end, end)
+    else bloques.push({ start, end })
+  }
+  return bloques
+}
+
+/**
+ * Nov-2026 · Minutos EFECTIVOS de un día: el almuerzo se descuenta por cada
+ * bloque continuo (≥ 6h), no sobre el total del día. Hector: 07:30–12:00 +
+ * 13:00–17:00 son 8,5 h — el hueco de 12 a 1 YA es el almuerzo; antes se
+ * restaba otra hora y salían 7,5.
+ */
+export function minutosEfectivosDia(intervalos, tipoRecurso = null) {
+  return bloquesContinuos(intervalos).reduce(
+    (acc, b) => acc + (b.end - b.start) - minutosAlmuerzo(b.end - b.start, b.start, b.end, tipoRecurso),
+    0,
+  )
+}
+
+/**
  * Horas EFECTIVAS de un conjunto de asignaciones agrupando por día y contando
  * los solapes una sola vez. Para cada día: unión de franjas y, sobre ese total,
  * el almuerzo que corresponda al tipo de recurso.
  *
- * El almuerzo se evalúa contra el inicio más temprano y el fin más tardío del
- * día, no contra cada franja suelta: quien cubre 07:00–11:00 y 11:00–13:00 hace
- * un bloque de 6h y le aplica la misma regla que a un 07:00–13:00 seguido.
+ * El almuerzo se evalúa por BLOQUE CONTINUO: quien cubre 07:00–11:00 y
+ * 11:00–13:00 hace un bloque de 6h y le aplica la misma regla que a un
+ * 07:00–13:00 seguido; 07:30–12:00 + 13:00–17:00 son dos bloques sin
+ * descuento (el hueco es el almuerzo).
  *
  * @param {Array<{diaSemana:string, horaInicio:string, horaFin:string}>} asignaciones
  * @param {string|null} tipoRecurso
@@ -151,12 +180,7 @@ export function horasUnionPorDia(asignaciones, tipoRecurso = null) {
   }
 
   let totalMin = 0
-  for (const intervalos of porDia.values()) {
-    const minutosDia = minutosUnion(intervalos)
-    const inicioDia = Math.min(...intervalos.map((iv) => iv.start))
-    const finDia = Math.max(...intervalos.map((iv) => iv.end))
-    totalMin += minutosDia - minutosAlmuerzo(minutosDia, inicioDia, finDia, tipoRecurso)
-  }
+  for (const intervalos of porDia.values()) totalMin += minutosEfectivosDia(intervalos, tipoRecurso)
   return totalMin / 60
 }
 

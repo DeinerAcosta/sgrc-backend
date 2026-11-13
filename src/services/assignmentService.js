@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js'
 import { errors } from '../lib/errors.js'
-import { horasEfectivasFranja as horasEfectivasFranjaLib, minutosAlmuerzo, minutosUnion, hhmmAMinutos } from '../lib/workHours.js'
+import { horasEfectivasFranja as horasEfectivasFranjaLib, minutosAlmuerzo, minutosEfectivosDia, hhmmAMinutos } from '../lib/workHours.js'
 import { SIN_TOPE_DIARIO, ESPECIALIDADES_PERMITEN_APOYO, solapan, solapaConAux, horarioEfectivoAuxEnAsig, participaEn } from '../lib/timeSlots.js'
 import {
   listaAuxiliaresDelBody, filasAuxiliares, errorDeFormaAuxiliares, puedeSerApoyo, tipoDeApoyo,
@@ -431,10 +431,7 @@ export async function editarAsignacion(id, data, userCtx) {
       // Usa minutosAlmuerzo del lib para tener una sola fuente de verdad.
       const aplicarAlmuerzo = (ivs) => {
         if (ivs.length === 0) return 0
-        const total = minutosUnion(ivs)
-        const inicioMin = Math.min(...ivs.map((i) => i.start))
-        const finMin = Math.max(...ivs.map((i) => i.end))
-        return total - minutosAlmuerzo(total, inicioMin, finMin, recurso.type)
+        return minutosEfectivosDia(ivs, recurso.type)
       }
       const intervalosTotal = [
         ...otrasDelDia.map((a) => ({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })),
@@ -486,11 +483,7 @@ export async function editarAsignacion(id, data, userCtx) {
         (porDia[a.weekday] ??= []).push({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })
       }
       horasSemanaTotal = Object.values(porDia).reduce((acc, ivs) => {
-        const minutosBrutos = minutosUnion(ivs)
-        const inicioMin = Math.min(...ivs.map((i) => i.start))
-        const finMin = Math.max(...ivs.map((i) => i.end))
-        const minutosEfectivos = minutosBrutos - minutosAlmuerzo(minutosBrutos, inicioMin, finMin, recurso.type)
-        return acc + minutosEfectivos / 60
+        return acc + minutosEfectivosDia(ivs, recurso.type) / 60
       }, 0)
     } else {
       horasSemanaTotal =
@@ -920,10 +913,7 @@ export async function crearAsignacion(data, userCtx) {
       // minutosAlmuerzo() del lib es la única fuente de verdad.
       const aplicarAlmuerzo = (ivs) => {
         if (ivs.length === 0) return 0
-        const total = minutosUnion(ivs)
-        const inicioMin = Math.min(...ivs.map((i) => i.start))
-        const finMin = Math.max(...ivs.map((i) => i.end))
-        return total - minutosAlmuerzo(total, inicioMin, finMin, recurso.type)
+        return minutosEfectivosDia(ivs, recurso.type)
       }
       const intervalosTotal = [
         ...otrasDelDia.map((a) => ({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })),
@@ -973,11 +963,7 @@ export async function crearAsignacion(data, userCtx) {
         (porDia[a.weekday] ??= []).push({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) })
       }
       horasSemanaTotal = Object.values(porDia).reduce((acc, ivs) => {
-        const minutosBrutos = minutosUnion(ivs)
-        const inicioMin = Math.min(...ivs.map((i) => i.start))
-        const finMin = Math.max(...ivs.map((i) => i.end))
-        const minutosEfectivos = minutosBrutos - minutosAlmuerzo(minutosBrutos, inicioMin, finMin, recurso.type)
-        return acc + minutosEfectivos / 60
+        return acc + minutosEfectivosDia(ivs, recurso.type) / 60
       }, 0)
     } else {
       horasSemanaTotal =

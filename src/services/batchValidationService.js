@@ -9,8 +9,7 @@ import {
 import {
   hhmmAMinutos,
   horasEfectivasFranja,
-  minutosAlmuerzo,
-  minutosUnion,
+  minutosEfectivosDia,
 } from '../lib/workHours.js'
 
 /**
@@ -238,10 +237,7 @@ export function crearValidadorLote({
         // Unión de intervalos: si cubre 3 salas de 7 a 13, son 6h, no 18.
         const conAlmuerzo = (ivs) => {
           if (ivs.length === 0) return 0
-          const total = minutosUnion(ivs)
-          const desde = Math.min(...ivs.map((i) => i.start))
-          const hasta = Math.max(...ivs.map((i) => i.end))
-          return total - minutosAlmuerzo(total, desde, hasta, recurso.type)
+          return minutosEfectivosDia(ivs, recurso.type)
         }
         const previos = suyasHoy.map((a) => ({ start: hhmmAMinutos(a.startTime), end: hhmmAMinutos(a.endTime) }))
         horasActuales = conAlmuerzo(previos) / 60
