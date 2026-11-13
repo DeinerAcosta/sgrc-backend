@@ -78,6 +78,8 @@ export function auxiliaresDe(a) {
       ini: x.startTime || a.startTime,
       fin: x.endTime || a.endTime,
       position: x.position ?? i,
+      descanso: x.breakStartTime && x.breakEndTime ? { ini: x.breakStartTime, fin: x.breakEndTime } : null,
+      cubreDescansoDe: x.coversBreakOf ?? null,
     }))
     .sort((x, y) => x.position - y.position)
 }
@@ -100,8 +102,8 @@ export const participaEn = (a, recursoId) =>
  */
 export function horarioEfectivoAuxEnAsig(a, auxId) {
   const suya = auxiliaresDe(a).find((x) => x.resourceId === auxId)
-  if (suya) return { ini: suya.ini, fin: suya.fin }
-  return { ini: a.startTime, fin: a.endTime }
+  if (suya) return { ini: suya.ini, fin: suya.fin, descanso: suya.descanso }
+  return { ini: a.startTime, fin: a.endTime, descanso: null }
 }
 
 /** ¿La auxiliar `auxId` está ocupada en `a` durante [hi, hf)? */

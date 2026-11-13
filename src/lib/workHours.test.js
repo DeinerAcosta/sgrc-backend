@@ -213,3 +213,11 @@ describe('horasUnionPorDia — la doctora multi-consultorio', () => {
     expect(horasUnionPorDia([], 'oftalmologo')).toBe(0)
   })
 })
+
+describe('horasEfectivasConDescanso (nov-2026)', () => {
+  it('descuenta el descanso en vez del almuerzo automático', async () => {
+    const { horasEfectivasConDescanso, horasEfectivasFranja } = await import('./workHours.js')
+    expect(horasEfectivasConDescanso('07:00', '16:00', 'auxiliar', { ini: '12:00', fin: '12:30' })).toBe(8.5)
+    expect(horasEfectivasConDescanso('07:00', '16:00', 'auxiliar', null)).toBe(horasEfectivasFranja('07:00', '16:00', 'auxiliar'))
+  })
+})

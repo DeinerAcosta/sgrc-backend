@@ -37,7 +37,7 @@ const candidataDesde = (a, semanaId, diaSemana) => ({
   assistants: (a.assistants ?? [])
     .slice()
     .sort((x, y) => (x.position ?? 0) - (y.position ?? 0))
-    .map((x, i) => ({ resourceId: x.resourceId, startTime: x.startTime ?? null, endTime: x.endTime ?? null, position: i })),
+    .map((x, i) => ({ resourceId: x.resourceId, startTime: x.startTime ?? null, endTime: x.endTime ?? null, position: i, breakStartTime: x.breakStartTime ?? null, breakEndTime: x.breakEndTime ?? null, coversBreakOf: x.coversBreakOf ?? null })),
   startTime: a.startTime,
   endTime: a.endTime,
 })
@@ -103,6 +103,11 @@ const crearSchema = z.object({
     resourceId: z.string().uuid(),
     startTime: horaOpt,
     endTime: horaOpt,
+    // Nov-2026 · Descanso de esta auxiliar y, en la que lo cubre, el índice
+    // (en esta misma lista) de la auxiliar cubierta.
+    breakStartTime: horaOpt,
+    breakEndTime: horaOpt,
+    coversBreakOf: z.number().int().min(0).max(19).optional().nullable(),
   })).max(20).optional(),
   // Forma vieja (2 auxiliares fijas), aceptada por compatibilidad: si no viene
   // `assistants`, se convierten a la lista (lib/auxiliaresTurno.js).

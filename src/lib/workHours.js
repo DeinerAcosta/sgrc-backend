@@ -76,6 +76,19 @@ export function minutosAlmuerzo(minutosTotales, inicioMinutos, finMinutos, tipoR
  * @param {string|null} tipoRecurso  Tipo del recurso ('oftalmologo', 'asesor_servicios', etc.)
  * @returns {number}   Horas efectivas (decimal)
  */
+/**
+ * Nov-2026 · Horas de una auxiliar con DESCANSO marcado en el turno: el
+ * descanso se descuenta en lugar del almuerzo automático (Hector). Sin
+ * descanso es lo mismo que horasEfectivasFranja.
+ */
+export function horasEfectivasConDescanso(hi, hf, tipoRecurso = null, descanso = null) {
+  if (!descanso?.ini || !descanso?.fin) return horasEfectivasFranja(hi, hf, tipoRecurso)
+  const minutos = hhmmAMinutos(hf) - hhmmAMinutos(hi)
+  if (minutos <= 0) return 0
+  const pausa = Math.max(0, hhmmAMinutos(descanso.fin) - hhmmAMinutos(descanso.ini))
+  return Math.max(0, minutos - pausa) / 60
+}
+
 export function horasEfectivasFranja(hi, hf, tipoRecurso = null) {
   const inicio = hhmmAMinutos(hi)
   const fin = hhmmAMinutos(hf)

@@ -203,6 +203,10 @@ export async function copiarAsignacionesValidadas(candidatas, { userRol, userSed
     startTime: x.startTime ?? null,
     endTime: x.endTime ?? null,
     position: pos,
+    // Nov-2026 · El descanso de la auxiliar y quién lo cubre van con la copia.
+    breakStartTime: x.breakStartTime ?? null,
+    breakEndTime: x.breakEndTime ?? null,
+    coversBreakOf: x.coversBreakOf ?? null,
   })))
 
   if (filas.length > 0) {

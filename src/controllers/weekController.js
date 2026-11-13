@@ -334,7 +334,7 @@ export async function copiar(req, res) {
   // Nov-2026 · Todas las auxiliares del turno (la lista), no solo dos.
   const asigsACopiar = asigsACopiarFiltradas.map((a) => ({
     resourceId: a.resourceId,
-    assistants: a.assistants.map((x) => ({ resourceId: x.resourceId, startTime: x.startTime, endTime: x.endTime })),
+    assistants: a.assistants.map((x) => ({ resourceId: x.resourceId, startTime: x.startTime, endTime: x.endTime, breakStartTime: x.breakStartTime ?? null, breakEndTime: x.breakEndTime ?? null, coversBreakOf: x.coversBreakOf ?? null })),
     roomId: a.roomId,
     weekday: a.weekday,
     startTime: a.startTime,

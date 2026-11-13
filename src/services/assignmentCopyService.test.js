@@ -235,7 +235,7 @@ describe('campos que se guardan', () => {
     expect(fila.id).toBeTruthy()
     expect(fila).not.toHaveProperty('assistantId')
     const aux = prismaMock.assignmentAssistant.createMany.mock.calls[0][0].data
-    expect(aux).toEqual([
+    expect(aux).toMatchObject([
       { assignmentId: fila.id, resourceId: 'aux', startTime: '08:00', endTime: '10:00', position: 0 },
       { assignmentId: fila.id, resourceId: 'aux2', startTime: null, endTime: null, position: 1 },
     ])

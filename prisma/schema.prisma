@@ -488,6 +488,12 @@ model AssignmentAssistant {
   endTime      String? @map("hora_fin") @db.VarChar(5)
   // Orden en el turno (0 = la primera). Es también el orden en que se muestra.
   position     Int     @default(0) @map("orden")
+  // Nov-2026 · Descanso (almuerzo) de esta auxiliar dentro de su horario; se
+  // le descuenta en vez del almuerzo automático. Lo cubre otra auxiliar.
+  breakStartTime String? @map("descanso_inicio") @db.VarChar(5)
+  breakEndTime   String? @map("descanso_fin") @db.VarChar(5)
+  // En la fila de la que CUBRE un descanso: el `orden` de la auxiliar cubierta.
+  coversBreakOf  Int?    @map("cubre_descanso_de")
 
   assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   resource   Resource   @relation("AuxiliarDeTurno", fields: [resourceId], references: [id], onDelete: Cascade)

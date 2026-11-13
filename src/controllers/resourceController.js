@@ -4,7 +4,7 @@ import { errors } from '../lib/errors.js'
 import { titleCase } from '../lib/strings.js'
 import { getSemanaActual } from '../lib/week.js'
 import { registrarAuditoria, getIp } from '../middleware/audit.js'
-import { horasEfectivasFranja, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
+import { horasEfectivasFranja, horasEfectivasConDescanso, horasDeFranja, horasUnionPorDia, horasPresenciaUnionPorDia, JORNADA_LEGAL_SEMANAL } from '../lib/workHours.js'
 import { TIPOS_RECURSO, ESQUEMAS_PAGO, normalizarEsquemaYTope } from '../lib/resourceTypes.js'
 import { resolverSubespecialidad, nombresDelCatalogo, exigeSubespecialidad } from '../lib/subespecialidades.js'
 import { diasLaborables, ausenciaEnSemana, horasDisponibles } from '../lib/disponibilidadSemana.js'
@@ -252,7 +252,7 @@ export async function list(req, res) {
       .filter((a) => participaEn(a, r.id))
       .map((a) => {
         const ef = horarioEfectivoAuxEnAsig(a, r.id)
-        return { ...a, startTime: ef.ini, endTime: ef.fin }
+        return { ...a, startTime: ef.ini, endTime: ef.fin, _descanso: ef.descanso }
       })
     // Horas EFECTIVAS (descontando almuerzo por franja). Es lo que se compara
     // contra el tope contractual semanal (Ley 2101). Una franja 08:00–17:00
@@ -266,7 +266,7 @@ export async function list(req, res) {
     // productividad ya usaba `horasUnionPorDia`; ahora el dashboard también.
     const horas = r.multiRoom
       ? horasUnionPorDia(propias, r.type)
-      : propias.reduce((acc, a) => acc + horasEfectivasFranja(a.startTime, a.endTime, r.type), 0)
+      : propias.reduce((acc, a) => acc + horasEfectivasConDescanso(a.startTime, a.endTime, r.type, a._descanso), 0)
     // Horas de PRESENCIA (brutas, sin descontar almuerzo). Se expone al frontend
     // como complemento para el dashboard — el coord ve que Grace hace 6h × 6d
     // = 36h de presencia pero 30h efectivas (comparadas vs. tope Ley 2101).

@@ -1382,6 +1382,7 @@ export async function cubrirAuxiliar(req, res) {
     assistants: turno.assistants.map((x) => ({
       resourceId: x.resourceId === ausencia.resourceId ? nueva.id : x.resourceId,
       startTime: x.startTime, endTime: x.endTime,
+      breakStartTime: x.breakStartTime ?? null, breakEndTime: x.breakEndTime ?? null, coversBreakOf: x.coversBreakOf ?? null,
     })),
     expectedPatients: turno.patientCapacity,
   }, { id: req.user.id, role: req.user.role, sites: req.user.sites })

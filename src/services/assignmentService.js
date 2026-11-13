@@ -50,6 +50,7 @@ async function prepararAuxiliares(tx, data, consultorio, anteriores = null) {
   const delBody = listaAuxiliaresDelBody(data)
   const lista = delBody ?? (anteriores ?? []).map((x) => ({
     resourceId: x.resourceId, startTime: x.startTime ?? null, endTime: x.endTime ?? null,
+    breakStartTime: x.breakStartTime ?? null, breakEndTime: x.breakEndTime ?? null, coversBreakOf: x.coversBreakOf ?? null,
   }))
   if (lista.length === 0) return { lista, porId: new Map() }
 

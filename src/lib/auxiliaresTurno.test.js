@@ -18,7 +18,7 @@ const turno = {
 
 describe('auxiliaresDe', () => {
   it('ordena por posición y resuelve la hora heredada del turno', () => {
-    expect(auxiliaresDe(turno)).toEqual([
+    expect(auxiliaresDe(turno)).toMatchObject([
       { resourceId: 'a', ini: '07:00', fin: '09:00', position: 0 },
       { resourceId: 'b', ini: '07:00', fin: '13:00', position: 1 },
       { resourceId: 'c', ini: '11:00', fin: '13:00', position: 2 },
@@ -30,10 +30,10 @@ describe('auxiliaresDe', () => {
   })
 
   it('el horario efectivo de cada una, en cualquier posición', () => {
-    expect(horarioEfectivoAuxEnAsig(turno, 'c')).toEqual({ ini: '11:00', fin: '13:00' })
-    expect(horarioEfectivoAuxEnAsig(turno, 'b')).toEqual({ ini: '07:00', fin: '13:00' })
+    expect(horarioEfectivoAuxEnAsig(turno, 'c')).toMatchObject({ ini: '11:00', fin: '13:00' })
+    expect(horarioEfectivoAuxEnAsig(turno, 'b')).toMatchObject({ ini: '07:00', fin: '13:00' })
     // El profesional (o alguien que no está) toma el del turno
-    expect(horarioEfectivoAuxEnAsig(turno, 'doc')).toEqual({ ini: '07:00', fin: '13:00' })
+    expect(horarioEfectivoAuxEnAsig(turno, 'doc')).toMatchObject({ ini: '07:00', fin: '13:00' })
   })
 
   it('la 3ª ocupada de 11 a 13 choca con 12-14 pero no con 09-11', () => {
@@ -53,7 +53,7 @@ describe('listaAuxiliaresDelBody', () => {
     expect(listaAuxiliaresDelBody({
       assistants: [{ resourceId: 'a', startTime: '07:00', endTime: '09:00' }, { resourceId: 'b' }],
       assistantId: 'x',
-    })).toEqual([
+    })).toMatchObject([
       { resourceId: 'a', startTime: '07:00', endTime: '09:00' },
       { resourceId: 'b', startTime: null, endTime: null },
     ])
@@ -84,7 +84,7 @@ describe('filasAuxiliares', () => {
       { resourceId: 'b', startTime: '07:00', endTime: '13:00' },
       { resourceId: 'c', startTime: null, endTime: '13:00' },
       { resourceId: 'd', startTime: '09:00', endTime: null },
-    ], t)).toEqual([
+    ], t)).toMatchObject([
       { resourceId: 'a', startTime: '07:00', endTime: '09:00', position: 0 },
       { resourceId: 'b', startTime: null, endTime: null, position: 1 },
       { resourceId: 'c', startTime: null, endTime: null, position: 2 },
@@ -162,5 +162,35 @@ describe('textoAuxiliares / whereParticipa', () => {
     expect(whereParticipa(['r1', 'r2'])).toEqual({
       OR: [{ resourceId: { in: ['r1', 'r2'] } }, { assistants: { some: { resourceId: { in: ['r1', 'r2'] } } } }],
     })
+  })
+})
+
+// Nov-2026 · Hector: descanso (almuerzo) de la auxiliar dentro de su horario,
+// cubierto OBLIGATORIAMENTE por otra auxiliar con ese mismo horario.
+describe('descanso de la auxiliar', () => {
+  const t = { resourceId: 'doc', startTime: '07:00', endTime: '16:00' }
+  const conRelevo = [
+    { resourceId: 'a', breakStartTime: '12:00', breakEndTime: '13:00' },
+    { resourceId: 'b', startTime: '12:00', endTime: '13:00', coversBreakOf: 0 },
+  ]
+  it('con quien lo cubre en ese horario, está bien', () => {
+    expect(errorDeFormaAuxiliares(conRelevo, t)).toBeNull()
+  })
+  it('sin quien lo cubra, no deja guardar', () => {
+    expect(errorDeFormaAuxiliares([conRelevo[0]], t)).toMatch(/Falta la auxiliar que cubre el descanso/)
+  })
+  it('quien lo cubre debe tener exactamente el horario del descanso', () => {
+    const l = [conRelevo[0], { ...conRelevo[1], endTime: '14:00' }]
+    expect(errorDeFormaAuxiliares(l, t)).toMatch(/su horario debe ser 12:00–13:00/)
+  })
+  it('el descanso va dentro del horario de la auxiliar', () => {
+    const l = [{ resourceId: 'a', startTime: '07:00', endTime: '12:00', breakStartTime: '12:00', breakEndTime: '13:00' }, conRelevo[1]]
+    expect(errorDeFormaAuxiliares(l, t)).toMatch(/debe estar dentro de su horario/)
+  })
+  it('se guarda y se lee de vuelta', () => {
+    const filas = filasAuxiliares(listaAuxiliaresDelBody({ assistants: conRelevo }), t)
+    expect(filas[0]).toMatchObject({ breakStartTime: '12:00', breakEndTime: '13:00', coversBreakOf: null })
+    expect(filas[1]).toMatchObject({ startTime: '12:00', endTime: '13:00', coversBreakOf: 0 })
+    expect(horarioEfectivoAuxEnAsig({ ...t, assistants: filas }, 'a')).toEqual({ ini: '07:00', fin: '16:00', descanso: { ini: '12:00', fin: '13:00' } })
   })
 })

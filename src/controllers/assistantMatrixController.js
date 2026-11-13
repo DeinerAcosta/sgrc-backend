@@ -6,7 +6,7 @@ import { TIPOS_QUE_IMPACTAN_PACIENTES } from '../lib/resourceTypes.js'
 import { DIAS_MATRIZ, validarFranjas, estadoAuxiliarEnTurno } from '../lib/matrizAuxiliares.js'
 import { horarioEfectivoAuxEnAsig, participaEn } from '../lib/timeSlots.js'
 import { SELECT_AUXILIARES, whereParticipa } from '../lib/auxiliaresTurno.js'
-import { horasEfectivasFranja } from '../lib/workHours.js'
+import { horasEfectivasConDescanso } from '../lib/workHours.js'
 
 /**
  * MATRIZ DE ASIGNACIONES (nov-2026)
@@ -229,7 +229,7 @@ export async function shift(req, res) {
       .map((t) => {
         const ef = horarioEfectivoAuxEnAsig(t, id)
         return {
-          ini: ef.ini, fin: ef.fin, consultorio: t.room?.name ?? null, sede: t.room?.site?.name ?? null,
+          ini: ef.ini, fin: ef.fin, descanso: ef.descanso, consultorio: t.room?.name ?? null, sede: t.room?.site?.name ?? null,
           esteTurno: !!q.exclude_assignment_id && t.id === q.exclude_assignment_id,
         }
       })
@@ -238,7 +238,7 @@ export async function shift(req, res) {
     const susAusencias = ausencias.filter((a) => a.resourceId === id)
     const celda = malla.find((m) => m.assistantId === id)
     const par = celda?.professionals.map((p) => ({ id: p.resource.id, name: p.resource.name })) ?? []
-    const horasDia = franjas.reduce((s, f) => s + horasEfectivasFranja(f.ini, f.fin, tipoDe.get(id)), 0)
+    const horasDia = franjas.reduce((s, f) => s + horasEfectivasConDescanso(f.ini, f.fin, tipoDe.get(id), f.descanso), 0)
     const aus = susAusencias[0]
     return {
       id,

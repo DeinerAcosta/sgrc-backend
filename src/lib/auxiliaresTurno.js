@@ -24,6 +24,7 @@ export const INCLUDE_AUXILIARES = {
   orderBy: { position: 'asc' },
   select: {
     resourceId: true, startTime: true, endTime: true, position: true,
+    breakStartTime: true, breakEndTime: true, coversBreakOf: true,
     resource: { select: { id: true, name: true, type: true } },
   },
 }
@@ -31,7 +32,10 @@ export const INCLUDE_AUXILIARES = {
 /** Para calcular (conflictos, horas): sin el nombre. */
 export const SELECT_AUXILIARES = {
   orderBy: { position: 'asc' },
-  select: { resourceId: true, startTime: true, endTime: true, position: true },
+  select: {
+    resourceId: true, startTime: true, endTime: true, position: true,
+    breakStartTime: true, breakEndTime: true, coversBreakOf: true,
+  },
 }
 
 /** where: el turno tiene a `recursoId` (o a cualquiera de una lista) como auxiliar. */
@@ -68,6 +72,9 @@ export function listaAuxiliaresDelBody(data) {
         resourceId: x.resourceId,
         startTime: x.startTime || null,
         endTime: x.endTime || null,
+        breakStartTime: x.breakStartTime || null,
+        breakEndTime: x.breakEndTime || null,
+        coversBreakOf: Number.isInteger(x.coversBreakOf) ? x.coversBreakOf : null,
       }))
   }
   // `!== undefined` y no `in`: zod deja la clave con undefined cuando llega ""
@@ -101,6 +108,9 @@ export function filasAuxiliares(lista, turno) {
       startTime: propia ? ini : null,
       endTime: propia ? fin : null,
       position: i,
+      breakStartTime: x.breakStartTime || null,
+      breakEndTime: x.breakEndTime || null,
+      coversBreakOf: Number.isInteger(x.coversBreakOf) ? x.coversBreakOf : null,
     }
   })
 }
@@ -132,6 +142,39 @@ export function errorDeFormaAuxiliares(lista, turno, nombres = new Map()) {
     if (ai >= af) return `Horario de auxiliar inválido (${nombre(x.resourceId)}): ${ini}–${fin}`
     if (ai < docIni || af > docFin) {
       return `El horario de la auxiliar ${nombre(x.resourceId)} (${ini}–${fin}) debe estar dentro del horario del recurso principal (${turno.startTime}–${turno.endTime})`
+    }
+  }
+  return errorDeDescansos(lista, turno, nombre)
+}
+
+/**
+ * Nov-2026 · Hector: el descanso (almuerzo) de una auxiliar va dentro de su
+ * horario y es OBLIGATORIO que otra auxiliar del turno lo cubra, con
+ * exactamente ese horario.
+ */
+function errorDeDescansos(lista, turno, nombre) {
+  const l = lista ?? []
+  const horario = (x) => [x.startTime || turno.startTime, x.endTime || turno.endTime]
+  for (const [i, x] of l.entries()) {
+    const di = x.breakStartTime, df = x.breakEndTime
+    if (!di && !df) continue
+    if (!di || !df) return `Falta la hora ${di ? 'de fin' : 'de inicio'} del descanso de ${nombre(x.resourceId)}.`
+    const [ini, fin] = horario(x)
+    if (hhmmAMinutos(di) >= hhmmAMinutos(df)) return `El descanso de ${nombre(x.resourceId)} (${di}–${df}) no es válido.`
+    if (hhmmAMinutos(di) < hhmmAMinutos(ini) || hhmmAMinutos(df) > hhmmAMinutos(fin)) {
+      return `El descanso de ${nombre(x.resourceId)} (${di}–${df}) debe estar dentro de su horario (${ini}–${fin}).`
+    }
+    const relevos = l.filter((y) => y.coversBreakOf === i)
+    if (relevos.length === 0) return `Falta la auxiliar que cubre el descanso de ${nombre(x.resourceId)} (${di}–${df}).`
+    if (relevos.length > 1) return `El descanso de ${nombre(x.resourceId)} lo cubre más de una auxiliar.`
+  }
+  for (const y of l) {
+    if (y.coversBreakOf == null) continue
+    const x = l[y.coversBreakOf]
+    if (!x || !x.breakStartTime) return `${nombre(y.resourceId)} cubre un descanso que no existe.`
+    const [ini, fin] = horario(y)
+    if (ini !== x.breakStartTime || fin !== x.breakEndTime) {
+      return `${nombre(y.resourceId)} cubre el descanso de ${nombre(x.resourceId)}: su horario debe ser ${x.breakStartTime}–${x.breakEndTime}.`
     }
   }
   return null
