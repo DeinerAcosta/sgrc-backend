@@ -8,8 +8,8 @@
  * regla, cambiarla en los dos lados (src/utils/matriz.js en el frontend).
  */
 
-/** Días de la malla. El domingo no se programa en la clínica. */
-export const DIAS_MATRIZ = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+/** Días de la malla. 13-nov · Hector: también el domingo. */
+export const DIAS_MATRIZ = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 const MAX_FRANJAS = 4
