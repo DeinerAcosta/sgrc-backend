@@ -128,6 +128,8 @@ r.put('/assistant-matrix/:assistantId/:weekday', requireRol('coordinador', 'supe
 // Nov-2026 · Para el Programador: estado de cada auxiliar en el día y la hora
 // del turno que se asigna, y cuál sale preseleccionada según la Matriz.
 r.get('/assistant-matrix/shift', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.shift))
+// Nov-2026 · Descargar la Matriz (Excel / PDF) con los filtros de la pantalla.
+r.post('/assistant-matrix/export', requireRol('coordinador', 'supervisor', 'directivo'), wrap(matriz.exportar))
 
 // ============ FESTIVOS ============
 r.get('/holidays', wrap(fest.list))

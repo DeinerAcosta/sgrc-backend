@@ -7,6 +7,7 @@ import { DIAS_MATRIZ, validarFranjas, estadoAuxiliarEnTurno } from '../lib/matri
 import { horarioEfectivoAuxEnAsig, participaEn } from '../lib/timeSlots.js'
 import { SELECT_AUXILIARES, whereParticipa } from '../lib/auxiliaresTurno.js'
 import { horasEfectivasConDescanso } from '../lib/workHours.js'
+import { filasExportMatriz, excelMatriz, pdfMatriz } from '../services/matrizExport.js'
 
 /**
  * MATRIZ DE ASIGNACIONES (nov-2026)
@@ -278,4 +279,58 @@ export async function shift(req, res) {
     }
   })
   res.json(items)
+}
+
+const exportSchema = z.object({
+  format: z.enum(['pdf', 'xlsx']).default('pdf'),
+  // Las auxiliares que se ven en pantalla, ya filtradas y en su orden.
+  assistantIds: z.array(z.string().uuid()).max(500),
+  // Los días que se ven (todos, o el del filtro "Día").
+  days: z.array(z.enum(DIAS_MATRIZ)).min(1).max(7),
+  // Los filtros en texto, para el encabezado del archivo.
+  filtersText: z.string().max(300).optional().nullable(),
+})
+
+/**
+ * POST /assistant-matrix/export
+ * Nov-2026 · Hector: descargar la Matriz en Excel o PDF con cualquier filtro.
+ * Se exporta exactamente lo que se ve: esas auxiliares, en ese orden, esos días.
+ */
+export async function exportar(req, res) {
+  const body = exportSchema.parse(req.body ?? {})
+  const dias = DIAS_MATRIZ.filter((d) => body.days.includes(d))
+  const [auxiliares, celdas] = await Promise.all([
+    prisma.resource.findMany({
+      where: { id: { in: body.assistantIds }, type: 'auxiliar' },
+      select: { id: true, name: true, maxHoursPerWeek: true },
+    }),
+    prisma.assistantMatrixDay.findMany({
+      where: { assistantId: { in: body.assistantIds } },
+      include: diaInclude,
+    }),
+  ])
+  const porId = new Map(auxiliares.map((a) => [a.id, a]))
+  const ordenadas = body.assistantIds.map((id) => porId.get(id)).filter(Boolean)
+  const mapa = new Map(celdas.map((c) => [`${c.assistantId}:${c.weekday}`, aCelda(c)]))
+  const filas = filasExportMatriz(ordenadas, mapa, dias, DIAS_MATRIZ)
+
+  await registrarAuditoria({
+    userId: req.user.id,
+    action: 'exportar_matriz',
+    entity: 'matriz_auxiliares',
+    entityId: body.format,
+    newValue: { formato: body.format, dias, filtros: body.filtersText ?? null, registros: filas.length },
+    ipAddress: getIp(req),
+  })
+
+  const fecha = new Date().toISOString().slice(0, 10)
+  const nombre = `matriz_asignaciones_${dias.length === 1 ? `${dias[0]}_` : ''}${fecha}`
+  if (body.format === 'xlsx') {
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${nombre}.xlsx"`)
+    return res.send(await excelMatriz(filas, dias, body.filtersText))
+  }
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Disposition', `attachment; filename="${nombre}.pdf"`)
+  return res.send(await pdfMatriz(filas, dias, body.filtersText))
 }
