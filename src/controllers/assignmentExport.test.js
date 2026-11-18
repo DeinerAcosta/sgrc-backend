@@ -84,3 +84,46 @@ describe('exportarSemana — un solo día (Nov-2026)', () => {
     expect(texto).not.toContain('undefined')
   })
 })
+
+describe('exportarSemana — filtro de área (Nov-2026)', () => {
+  beforeEach(() => {
+    prismaMock.room.findMany.mockResolvedValue([
+      { id: 'c7', name: 'Consultorio 7', specialty: 'oftalmologia' },
+      { id: 'c8', name: 'Consultorio 8', specialty: 'oftalmologia' },
+      { id: 'as', name: 'AREA ASESORES', specialty: 'asesoria' },
+    ])
+  })
+
+  it('con areas=asesoria la semana trae SOLO los consultorios de Asesoría y lo dice en el encabezado', async () => {
+    const res = respuesta()
+    await exportarSemana({ query: { week_id: 's1', site_id: 'st', format: 'xlsx', areas: 'asesoria' } }, res)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(res.body)
+    const ws = wb.worksheets[0]
+    const texto = JSON.stringify(ws.getSheetValues())
+    expect(texto).toContain('AREA ASESORES')
+    expect(texto).not.toContain('Consultorio 7')
+    expect(texto).not.toContain('Dra. Pérez')
+    expect(ws.getCell('A2').value).toContain('Área: Asesoría')
+  })
+
+  it('el día con filtro solo lista turnos de esa área', async () => {
+    const res = respuesta()
+    await exportarSemana({ query: { week_id: 's1', site_id: 'st', format: 'xlsx', day: 'martes', areas: 'asesoria' } }, res)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(res.body)
+    expect(wb.worksheets[0].rowCount).toBe(4)   // sin turnos: título, fecha, vacío, encabezado
+    expect(wb.worksheets[0].getCell('A2').value).toBe('Martes 2026-11-03 · Área: Asesoría')
+  })
+
+  it('sin areas sale toda la sede', async () => {
+    const res = respuesta()
+    await exportarSemana({ query: { week_id: 's1', site_id: 'st', format: 'xlsx' } }, res)
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(res.body)
+    const texto = JSON.stringify(wb.worksheets[0].getSheetValues())
+    expect(texto).toContain('Consultorio 7')
+    expect(texto).toContain('AREA ASESORES')
+    expect(texto).not.toContain('Área:')
+  })
+})

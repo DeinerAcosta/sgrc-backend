@@ -916,9 +916,15 @@ async function armarGridSemana(weekId, siteId) {
  * Descarga la programación semanal de la sede como PDF o Excel.
  */
 export async function exportarSemana(req, res) {
-  const { week_id: weekId, site_id: siteId, format = 'pdf', day } = req.query
+  const { week_id: weekId, site_id: siteId, format = 'pdf', day, areas } = req.query
   if (day && !DIAS.includes(day)) throw errors.badRequest('Día inválido')
-  const { semana, sede, grid } = await armarGridSemana(weekId, siteId)
+  const { semana, sede, grid: gridSede } = await armarGridSemana(weekId, siteId)
+  // Nov-2026 · Hector: con el filtro de área ("Asesoría") la descarga traía la
+  // sede completa. `areas` = especialidades separadas por coma, las mismas del
+  // filtro del Programador; sin `areas` sale toda la sede.
+  const filtroAreas = String(areas ?? '').split(',').map((a) => a.trim()).filter(Boolean)
+  const grid = filtroAreas.length ? gridSede.filter((row) => filtroAreas.includes(row.room.specialty)) : gridSede
+  const textoAreas = filtroAreas.length ? `Área: ${filtroAreas.map((a) => AREA_NOMBRE[a] ?? a).join(', ')}` : ''
 
   const fechaIni = semana.startDate.toISOString().slice(0, 10)
   const fechaFin = semana.endDate.toISOString().slice(0, 10)
@@ -932,12 +938,12 @@ export async function exportarSemana(req, res) {
     const filas = filasDelDia(grid, day)
     const fileDia = `horarios_${sede.name.replace(/[^\w]/g, '_')}_${fechaDia}`
     if (format === 'xlsx') {
-      const buffer = await generarXLSXDia(sede, day, fechaDia, filas)
+      const buffer = await generarXLSXDia(sede, day, fechaDia, filas, textoAreas)
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
       res.setHeader('Content-Disposition', `attachment; filename="${fileDia}.xlsx"`)
       return res.send(buffer)
     }
-    const buffer = await generarPDFDia(sede, day, fechaDia, filas)
+    const buffer = await generarPDFDia(sede, day, fechaDia, filas, textoAreas)
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="${fileDia}.pdf"`)
     return res.send(buffer)
@@ -946,13 +952,13 @@ export async function exportarSemana(req, res) {
   const fileBase = `horarios_${sede.name.replace(/[^\w]/g, '_')}_${fechaIni}`
 
   if (format === 'xlsx') {
-    const buffer = await generarXLSX(semana, sede, grid)
+    const buffer = await generarXLSX(semana, sede, grid, textoAreas)
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.xlsx"`)
     return res.send(buffer)
   }
 
-  const buffer = await generarPDFSemana(semana, sede, grid, fechaIni, fechaFin)
+  const buffer = await generarPDFSemana(semana, sede, grid, fechaIni, fechaFin, textoAreas)
   res.setHeader('Content-Type', 'application/pdf')
   res.setHeader('Content-Disposition', `attachment; filename="${fileBase}.pdf"`)
   res.send(buffer)
@@ -969,6 +975,12 @@ function celdaText(a) {
   // Nov-2026 · Decía `patientsCapacity` (no existe) y salía "undefined pac.".
   partes.push(`${a.patientCapacity} pac.`)
   return partes.join('\n')
+}
+
+const AREA_NOMBRE = {
+  oftalmologia: 'Oftalmología', optometria: 'Optometría', anestesiologia: 'Anestesiología',
+  diagnostico: 'Diagnóstico', asesoria: 'Asesoría', fonoaudiologia: 'Fonoaudiología',
+  otorrinolaringologia: 'Otorrinolaringología',
 }
 
 const DIA_NOMBRE = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' }
@@ -995,7 +1007,7 @@ const COLS_DIA = [
   { key: 'pacientes', titulo: 'Pac.', ancho: 40 },
 ]
 
-function generarPDFDia(sede, day, fechaDia, filas) {
+function generarPDFDia(sede, day, fechaDia, filas, textoAreas = '') {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' })
@@ -1007,7 +1019,7 @@ function generarPDFDia(sede, day, fechaDia, filas) {
       doc.fillColor('#1B2A6C').fontSize(16).font('Helvetica-Bold').text('SGRC · Horario del día', 25, 25)
       doc.fillColor('#374151').fontSize(11).font('Helvetica')
         .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
-      doc.text(`${DIA_NOMBRE[day]} ${fechaDia}`, 25, 63)
+      doc.text(`${DIA_NOMBRE[day]} ${fechaDia}${textoAreas ? ' · ' + textoAreas : ''}`, 25, 63)
       doc.fillColor('#6B7280').fontSize(8)
         .text(`Generado: ${fechaHora(new Date())}`, 25, 78)
 
@@ -1051,7 +1063,7 @@ function generarPDFDia(sede, day, fechaDia, filas) {
   })
 }
 
-async function generarXLSXDia(sede, day, fechaDia, filas) {
+async function generarXLSXDia(sede, day, fechaDia, filas, textoAreas = '') {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'SGRC'
   const ws = wb.addWorksheet(DIA_NOMBRE[day])
@@ -1060,7 +1072,7 @@ async function generarXLSXDia(sede, day, fechaDia, filas) {
   ws.getCell('A1').value = `Horario del día — ${sede.name}${sede.city ? ' · ' + sede.city : ''}`
   ws.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FF1B2A6C' } }
   ws.mergeCells('A2:E2')
-  ws.getCell('A2').value = `${DIA_NOMBRE[day]} ${fechaDia}`
+  ws.getCell('A2').value = `${DIA_NOMBRE[day]} ${fechaDia}${textoAreas ? ' · ' + textoAreas : ''}`
   ws.getCell('A2').font = { size: 10 }
 
   ws.addRow([])
@@ -1083,7 +1095,7 @@ async function generarXLSXDia(sede, day, fechaDia, filas) {
   return Buffer.from(await wb.xlsx.writeBuffer())
 }
 
-function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {
+function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin, textoAreas = '') {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ margin: 25, size: 'A3', layout: 'landscape' })
@@ -1096,7 +1108,7 @@ function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {
       doc.fillColor('#1B2A6C').fontSize(16).font('Helvetica-Bold').text('SGRC · Horarios semanales', 25, 25)
       doc.fillColor('#374151').fontSize(11).font('Helvetica')
         .text(`Sede: ${sede.name}${sede.city ? ' · ' + sede.city : ''}`, 25, 48)
-      doc.text(`Semana: ${fechaIni} → ${fechaFin}`, 25, 63)
+      doc.text(`Semana: ${fechaIni} → ${fechaFin}${textoAreas ? ' · ' + textoAreas : ''}`, 25, 63)
       doc.fillColor('#6B7280').fontSize(8)
         .text(`Generado: ${fechaHora(new Date())}`, 25, 78)
 
@@ -1152,7 +1164,7 @@ function generarPDFSemana(semana, sede, grid, fechaIni, fechaFin) {
   })
 }
 
-async function generarXLSX(semana, sede, grid) {
+async function generarXLSX(semana, sede, grid, textoAreas = '') {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'SGRC'
   const ws = wb.addWorksheet('Horarios semana')
@@ -1162,7 +1174,7 @@ async function generarXLSX(semana, sede, grid) {
   ws.getCell('A1').value = `Horarios semanales — ${sede.name}${sede.city ? ' · ' + sede.city : ''}`
   ws.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FF1B2A6C' } }
   ws.mergeCells('A2:H2')
-  ws.getCell('A2').value = `Semana: ${semana.startDate.toISOString().slice(0,10)} → ${semana.endDate.toISOString().slice(0,10)}`
+  ws.getCell('A2').value = `Semana: ${semana.startDate.toISOString().slice(0,10)} → ${semana.endDate.toISOString().slice(0,10)}${textoAreas ? ' · ' + textoAreas : ''}`
   ws.getCell('A2').font = { size: 10 }
 
   // Header tabla
